@@ -363,6 +363,9 @@ tr:hover {
     overflow-y: auto;
     overflow-x: auto;
     border: 1px solid #1f2937;
+    border-radius: 12px;
+    background: #0b1220;
+    padding: 8px;
 }
 
 .mapped-fio { background-color: #add8e6; }
