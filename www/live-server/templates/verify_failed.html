@@ -3,13 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <title>Ошибка подтверждения</title>
-  <link rel="stylesheet" href="/static/admin.css">
+  <style>
+    body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#fef2f2;font-family:system-ui,Arial}
+    .box{background:#ef4444;color:white;padding:28px 32px;border-radius:14px;box-shadow:0 10px 24px rgba(239,68,68,.35);text-align:center}
+    a{display:inline-block;margin-top:10px;background:white;color:#ef4444;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:600}
+  </style>
 </head>
-<body class="auth-page">
-  <div class="card status-card error">
+<body>
+  <div class="box">
     <h2>Неверный или устаревший токен ❌</h2>
     <p>Проверьте ссылку или запросите новую.</p>
-    <a href="/register" class="btn btn-secondary">Регистрация</a>
+    <a href="/register">Регистрация</a>
   </div>
 </body>
 </html>
