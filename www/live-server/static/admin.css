@@ -357,6 +357,7 @@ tr:hover {
     color: #374151;
 }
 
+<<<<<<< 8mkdhl-codex/-admin
 .table-container {
     max-height: 500px;
     max-width: 100%;
@@ -364,6 +365,15 @@ tr:hover {
     overflow-x: auto;
     border: 1px solid #1f2937;
 }
+=======
+.table-container {
+    max-height: 500px;
+    max-width: 100%;
+    overflow-y: auto;
+    overflow-x: auto;
+    border: 1px solid #ccc;
+}
+>>>>>>> main
 
 .mapped-fio { background-color: #add8e6; }
 .mapped-territory { background-color: #ffd700; }
@@ -471,6 +481,7 @@ tr:hover {
 .sidebar.collapsed ~ .content {
     margin-left: 64px;
 }
+<<<<<<< 8mkdhl-codex/-admin
 
 .auth-page {
     min-height: 100vh;
@@ -739,3 +750,5 @@ tr:hover {
         grid-template-columns: 1fr;
     }
 }
+=======
+>>>>>>> main
