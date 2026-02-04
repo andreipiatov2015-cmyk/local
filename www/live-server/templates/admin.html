@@ -7,19 +7,50 @@
     <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
-    <div id="sidebar">
-        <h2>Меню</h2>
-        <ul>
-            <li><a href="#" class="active">Редактор</a></li>
-            <li><a href="#" id="autoAddLink">Автоматическое добавление участников</a></li>
-            <li><a href="/competition">Конкурс</a></li>
-            <li><a href="/broadcast">Трансляция</a></li>
-			<li><a href="/staff">Сотрудники</a></li><br>
-            <li><a href="/login">Выход</a></li>
-            <li><a href="#" id="vkStreamButton">Трансляция в VK</a></li>
-        </ul>
-    </div>
-    <button id="toggleSidebar">↑</button>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <span class="logo">🎥 Live Admin</span>
+            <button id="collapseSidebar">❮</button>
+        </div>
+
+        <nav class="sidebar-menu">
+            <a class="menu-item active" href="/admin">
+                <span class="icon">✏️</span>
+                <span class="text">Редактор</span>
+            </a>
+
+            <a class="menu-item" href="#" id="autoAddLink">
+                <span class="icon">📥</span>
+                <span class="text">Автодобавление</span>
+            </a>
+
+            <a class="menu-item" href="/competition">
+                <span class="icon">🏆</span>
+                <span class="text">Конкурс</span>
+            </a>
+
+            <a class="menu-item" href="/broadcast">
+                <span class="icon">📺</span>
+                <span class="text">Трансляция</span>
+            </a>
+
+            <a class="menu-item" href="/staff">
+                <span class="icon">👥</span>
+                <span class="text">Сотрудники</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <button id="vkStreamButton" class="vk-btn">
+                🔴 VK трансляция
+            </button>
+
+            <a href="/logout" class="menu-item logout">
+                <span class="icon">🚪</span>
+                <span class="text">Выход</span>
+            </a>
+        </div>
+    </aside>
 
     <div class="content">
         <div id="preview">

@@ -1,22 +1,21 @@
 document.addEventListener('DOMContentLoaded', () => {
     // Переключение меню
-    const sidebar = document.getElementById('sidebar');
-    const toggleSidebarButton = document.getElementById('toggleSidebar');
-    const editorLink = document.querySelector('#sidebar a[href="#"]');
+    const sidebar = document.querySelector('.sidebar');
+    const collapseSidebarButton = document.getElementById('collapseSidebar');
+    const editorLink = document.querySelector('.sidebar-menu a[href="/admin"]');
     const autoAddLink = document.getElementById('autoAddLink');
     const previewSection = document.getElementById('preview');
     const tableSection = document.querySelector('table');
     const autoAddSection = document.getElementById('autoAddSection');
 
-    toggleSidebarButton.addEventListener('click', () => {
-        sidebar.classList.toggle('hidden');
-        toggleSidebarButton.classList.toggle('rotated');
+    collapseSidebarButton?.addEventListener('click', () => {
+        sidebar?.classList.toggle('collapsed');
     });
 
     // Переключение секций
     editorLink.addEventListener('click', (e) => {
         e.preventDefault();
-        document.querySelectorAll('#sidebar a').forEach(l => l.classList.remove('active'));
+        document.querySelectorAll('.sidebar-menu .menu-item').forEach(l => l.classList.remove('active'));
         editorLink.classList.add('active');
         previewSection.style.display = 'block';
         tableSection.style.display = 'table';
@@ -25,18 +24,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     autoAddLink.addEventListener('click', (e) => {
         e.preventDefault();
-        document.querySelectorAll('#sidebar a').forEach(l => l.classList.remove('active'));
+        document.querySelectorAll('.sidebar-menu .menu-item').forEach(l => l.classList.remove('active'));
         autoAddLink.classList.add('active');
         previewSection.style.display = 'none';
         tableSection.style.display = 'none';
         autoAddSection.style.display = 'block';
     });
-
-    // Проверка загрузки Font Awesome
-    const fontAwesomeLink = document.querySelector('link[href*="font-awesome"]');
-    if (!fontAwesomeLink || !window.FontAwesome) {
-        toggleSidebarButton.classList.add('no-font-awesome');
-    }
 
     // Добавление новой строки
     let rowCount = 1;

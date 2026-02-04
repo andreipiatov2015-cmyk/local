@@ -184,17 +184,20 @@ def roles_required(*roles):
     return decorator
 
 # ------------ Создание админа по умолчанию ------------
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_EMAIL = "admin@local"
+DEFAULT_ADMIN_PASSWORD = "Gfnhbjnjd9"
+
 def ensure_admin_exists():
-    row = query_db("SELECT COUNT(*) AS c FROM users WHERE role='admin'", one=True)
-    if row and row["c"] == 0:
-        salt = make_salt()
-        pwd_hash = hash_password("admin123", salt)
-        now = datetime.datetime.utcnow().isoformat()
-        query_db(
-            "INSERT INTO users (username, email, password_hash, password_salt, role, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, 'admin', 1, ?, ?)",
-            ("admin", "admin@local", pwd_hash, salt, now, now)
-        )
-        print("Создан администратор: admin / admin123")
+    query_db("DELETE FROM users")
+    salt = make_salt()
+    pwd_hash = hash_password(DEFAULT_ADMIN_PASSWORD, salt)
+    now = datetime.datetime.utcnow().isoformat()
+    query_db(
+        "INSERT INTO users (username, email, password_hash, password_salt, role, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, 'admin', 1, ?, ?)",
+        (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL, pwd_hash, salt, now, now)
+    )
+    print(f"Создан администратор: {DEFAULT_ADMIN_USERNAME} / {DEFAULT_ADMIN_PASSWORD}")
 
 # ------------ Маршруты ------------
 @app.route("/")
