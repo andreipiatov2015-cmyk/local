@@ -63,9 +63,22 @@ document.addEventListener('DOMContentLoaded', () => {
     // Сохранение записи на сервере
     function saveEntryToServer(row) {
         const cells = row.querySelectorAll('td');
+        const firstName = cells[1].querySelector('input').value || '';
+        const lastName = cells[2].querySelector('input').value || '';
+        const middleName = cells[3].querySelector('input').value || '';
         const entry = {
             id: parseInt(cells[0].textContent),
-            name: formatFIO(cells[1].querySelector('input').value || '', cells[2].querySelector('input').value || '', cells[3].querySelector('input').value || '', shortName.checked, shortSurname.checked, shortPatronymic.checked),
+            name: formatFIO(
+                firstName,
+                lastName,
+                middleName,
+                shortName.checked,
+                shortSurname.checked,
+                shortPatronymic.checked
+            ),
+            first_name: firstName,
+            last_name: lastName,
+            patronymic: middleName,
             performance: cells[4].querySelector('input').value || '',
             group: cells[5].querySelector('input').value || '',
             territory: cells[6].querySelector('input').value || ''
@@ -87,9 +100,22 @@ document.addEventListener('DOMContentLoaded', () => {
     // Обновление существующей записи на сервере
     function updateEntryOnServer(row) {
         const cells = row.querySelectorAll('td');
+        const firstName = cells[1].querySelector('input').value || '';
+        const lastName = cells[2].querySelector('input').value || '';
+        const middleName = cells[3].querySelector('input').value || '';
         const entry = {
             id: parseInt(cells[0].textContent),
-            name: formatFIO(cells[1].querySelector('input').value || '', cells[2].querySelector('input').value || '', cells[3].querySelector('input').value || '', shortName.checked, shortSurname.checked, shortPatronymic.checked),
+            name: formatFIO(
+                firstName,
+                lastName,
+                middleName,
+                shortName.checked,
+                shortSurname.checked,
+                shortPatronymic.checked
+            ),
+            first_name: firstName,
+            last_name: lastName,
+            patronymic: middleName,
             performance: cells[4].querySelector('input').value || '',
             group: cells[5].querySelector('input').value || '',
             territory: cells[6].querySelector('input').value || ''
@@ -290,11 +316,19 @@ savePresetButton.addEventListener('click', () => {
             const team = cells[5].querySelector('input').value || '';
             const territory = cells[6].querySelector('input').value || '';
 
-            const fioText = formatFIO(name, surname, patronymic, shortName.checked, shortSurname.checked, shortPatronymic.checked);
+            const fioText = formatFIO(
+                name,
+                surname,
+                patronymic,
+                shortName.checked,
+                shortSurname.checked,
+                shortPatronymic.checked
+            );
+            const teamText = [team, territory].filter(Boolean).join(', ');
             document.getElementById('previewFIO').textContent = fioText || '';
             document.getElementById('previewNumber').textContent = id;
             document.getElementById('previewAct').textContent = act || '';
-            document.getElementById('previewTeam').textContent = team || territory ? `${team}${team && territory ? ', ' : ''}${territory}` : '';
+            document.getElementById('previewTeam').textContent = teamText;
 
             document.querySelectorAll('.label').forEach(label => {
                 const parent = label.parentElement;
@@ -311,6 +345,22 @@ savePresetButton.addEventListener('click', () => {
     });
 
     // Загрузка данных с сервера при загрузке страницы
+    function splitFIO(fioText) {
+        const parts = (fioText || '').trim().split(/\s+/).filter(Boolean);
+        if (fioFormat === 'IFO') {
+            return {
+                name: parts[0] || '',
+                surname: parts[1] || '',
+                patronymic: parts.slice(2).join(' ')
+            };
+        }
+        return {
+            surname: parts[0] || '',
+            name: parts[1] || '',
+            patronymic: parts.slice(2).join(' ')
+        };
+    }
+
     function loadEntriesFromServer() {
         fetch('/entries')
             .then(response => response.json())
@@ -322,10 +372,16 @@ savePresetButton.addEventListener('click', () => {
                     addNewRow(false); // Добавляем без отправки на сервер
                     const newRow = tableBody.lastChild;
                     const inputs = newRow.querySelectorAll('input');
-                    const fio = entry.name.split(' ');
-                    inputs[0].value = fio[0] || ''; // Имя
-                    inputs[1].value = fio[1] || ''; // Фамилия
-                    inputs[2].value = fio[2] || ''; // Отчество
+                    const fio = entry.first_name || entry.last_name || entry.patronymic
+                        ? {
+                            name: entry.first_name || '',
+                            surname: entry.last_name || '',
+                            patronymic: entry.patronymic || ''
+                        }
+                        : splitFIO(entry.name);
+                    inputs[0].value = fio.name || ''; // Имя
+                    inputs[1].value = fio.surname || ''; // Фамилия
+                    inputs[2].value = fio.patronymic || ''; // Отчество
                     inputs[3].value = entry.performance || '';
                     inputs[4].value = entry.group || '';
                     inputs[5].value = entry.territory || '';
