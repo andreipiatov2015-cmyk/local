@@ -11,6 +11,11 @@
         <div class="sidebar-header">
             <span class="logo">🎥 Live Admin</span>
             <button id="collapseSidebar" aria-label="Свернуть меню">❮</button>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <span class="logo">🎥 Live Admin</span>
+            <button id="collapseSidebar">❮</button>
         </div>
 
         <nav class="sidebar-menu">
@@ -216,6 +221,26 @@
             </div>
         </div>
     </div>
+
+</body>
+    <script src="../static/admin.js"></script>
+
+    <!-- VK Modal -->
+<div id="vkModal" class="vk-modal hidden" style="position:fixed;left:0;top:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:9999;">
+  <div style="background:#fff;padding:20px;border-radius:8px;width:420px;max-width:95%;">
+    <h3>Трансляция в VK</h3>
+    <label>Название: <input id="vkTitle" type="text" style="width:100%"></label><br><br>
+    <label>Дата (YYYY-MM-DD): <input id="vkDate" type="date" style="width:100%"></label><br><br>
+    <label>Время (HH:MM): <input id="vkTime" type="time" style="width:100%"></label><br><br>
+    <label>Превью (jpg/png): <input id="vkImage" type="file" accept="image/*"></label><br><br>
+    <div style="display:flex;gap:8px;">
+      <button id="vkStartNowBtn">Начать сейчас</button>
+      <button id="vkScheduleBtn">Запланировать</button>
+      <button id="vkStopBtn">Остановить</button>
+      <button id="vkCloseBtn">Закрыть</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

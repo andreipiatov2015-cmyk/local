@@ -367,6 +367,13 @@ tr:hover {
     background: #0b1220;
     padding: 8px;
 }
+.table-container {
+    max-height: 500px;
+    max-width: 100%;
+    overflow-y: auto;
+    overflow-x: auto;
+    border: 1px solid #ccc;
+}
 
 .mapped-fio { background-color: #add8e6; }
 .mapped-territory { background-color: #ffd700; }
