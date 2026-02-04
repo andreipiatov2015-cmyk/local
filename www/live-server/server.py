@@ -37,6 +37,8 @@ DB_FILE = os.path.join(BASE_DIR, "app.db")
 ENTRIES_FILE = os.path.join(BASE_DIR, "entries.json")
 PRESETS_FILE = os.path.join(BASE_DIR, "presets.json")
 VK_SETTINGS_FILE = os.path.join(BASE_DIR, "vk_settings.json")
+STREAM_TARGETS_FILE = os.path.join(BASE_DIR, "stream_targets.json")
+STREAM_URL = os.environ.get("HLS_STREAM_URL", "http://192.168.31.18:8080/hls/stream.m3u8")
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
@@ -184,17 +186,20 @@ def roles_required(*roles):
     return decorator
 
 # ------------ Создание админа по умолчанию ------------
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_EMAIL = "admin@local"
+DEFAULT_ADMIN_PASSWORD = "Gfnhbjnjd9"
+
 def ensure_admin_exists():
-    row = query_db("SELECT COUNT(*) AS c FROM users WHERE role='admin'", one=True)
-    if row and row["c"] == 0:
-        salt = make_salt()
-        pwd_hash = hash_password("admin123", salt)
-        now = datetime.datetime.utcnow().isoformat()
-        query_db(
-            "INSERT INTO users (username, email, password_hash, password_salt, role, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, 'admin', 1, ?, ?)",
-            ("admin", "admin@local", pwd_hash, salt, now, now)
-        )
-        print("Создан администратор: admin / admin123")
+    query_db("DELETE FROM users")
+    salt = make_salt()
+    pwd_hash = hash_password(DEFAULT_ADMIN_PASSWORD, salt)
+    now = datetime.datetime.utcnow().isoformat()
+    query_db(
+        "INSERT INTO users (username, email, password_hash, password_salt, role, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, 'admin', 1, ?, ?)",
+        (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL, pwd_hash, salt, now, now)
+    )
+    print(f"Создан администратор: {DEFAULT_ADMIN_USERNAME} / {DEFAULT_ADMIN_PASSWORD}")
 
 # ------------ Маршруты ------------
 @app.route("/")
@@ -204,27 +209,27 @@ def index():
 @app.route("/admin")
 @login_required
 def admin():
-    return render_template("admin.html", user=get_current_user())
+    return render_template("admin.html", user=get_current_user(), stream_url=STREAM_URL)
 
 @app.route("/staff")
 @roles_required("admin")
 def staff():
     users = query_db("SELECT id, username, email, role, is_verified FROM users ORDER BY id")
-    return render_template("staff.html", users=users)
+    return render_template("staff.html", users=users, stream_url=STREAM_URL)
 
 @app.route("/broadcast")
 def broadcast():
-    return render_template("broadcast.html")
+    return render_template("broadcast.html", stream_url=STREAM_URL)
 
 @app.route("/competition")
 def competition():
-    return render_template("competition.html")
+    return render_template("competition.html", stream_url=STREAM_URL)
 
 # --- Мероприятия ---
 @app.route("/editor")
 @login_required
 def editor_list():
-    return render_template("editor.html")
+    return render_template("editor.html", stream_url=STREAM_URL)
 
 @app.route("/events")
 def get_events():
@@ -244,7 +249,65 @@ def create_event():
 @app.route("/editor/<int:event_id>")
 @login_required
 def editor_event(event_id):
-    return render_template("admin.html", event_id=event_id)
+    return render_template("admin.html", event_id=event_id, stream_url=STREAM_URL)
+
+# --- Участники / пресеты ---
+@app.route("/entries")
+def get_entries():
+    return jsonify(entries)
+
+@app.route("/add_entry", methods=["POST"])
+def add_entry():
+    data = request.json or {}
+    new_id = max([entry.get("id", 0) for entry in entries], default=0) + 1
+    data["id"] = new_id
+    entries.append(data)
+    save_entries(entries)
+    return jsonify({"message": "Запись добавлена"}), 200
+
+@app.route("/update_entry/<int:id>", methods=["PUT"])
+def update_entry(id):
+    data = request.json or {}
+    for entry in entries:
+        if entry.get("id") == id:
+            entry.update(data)
+            save_entries(entries)
+            return jsonify({"message": "Запись обновлена"}), 200
+    return jsonify({"error": "Запись не найдена"}), 404
+
+@app.route("/delete_entry/<int:id>", methods=["DELETE"])
+def delete_entry(id):
+    global entries
+    entries = [entry for entry in entries if entry.get("id") != id]
+    save_entries(entries)
+    return jsonify({"message": "Запись удалена"}), 200
+
+@app.route("/save_all_entries", methods=["POST"])
+def save_all_entries():
+    data = request.json or []
+    entries.clear()
+    entries.extend(data)
+    save_entries(entries)
+    return jsonify({"message": "Все записи сохранены"}), 200
+
+@app.route("/reorder_entries", methods=["POST"])
+def reorder_entries():
+    data = request.json or []
+    entries.clear()
+    entries.extend(data)
+    save_entries(entries)
+    return jsonify({"message": "Порядок обновлён"}), 200
+
+@app.route("/presets")
+def get_presets():
+    return jsonify(presets)
+
+@app.route("/save_preset", methods=["POST"])
+def save_preset():
+    data = request.json or {}
+    presets.append(data)
+    save_presets(presets)
+    return jsonify({"message": "Пресет сохранён"}), 200
 
 # --- Управление пользователями ---
 @app.route("/staff/change_role/<int:user_id>", methods=["POST"])
@@ -375,6 +438,7 @@ def load_vk_settings():
         "vk_rtmp_url": "",
         "scheduled_start": None,
         "title": "",
+        "target_ids": [],
         "preview_path": os.path.join(BASE_DIR, "static", "vk_preview.jpg")
     }
     if not os.path.exists(VK_SETTINGS_FILE):
@@ -407,10 +471,61 @@ def save_vk_settings(data):
         # В лог можно записать, но мы возвращаем ошибку клиенту
         raise
 
+def load_stream_targets():
+    default_targets = [
+        {"id": "tv", "name": "Телевизоры", "url": "", "enabled": True},
+        {"id": "vk-main", "name": "VK группа", "url": "", "enabled": True}
+    ]
+    if not os.path.exists(STREAM_TARGETS_FILE):
+        try:
+            with open(STREAM_TARGETS_FILE, "w", encoding="utf-8") as f:
+                json.dump(default_targets, f, ensure_ascii=False, indent=4)
+        except Exception:
+            pass
+        return default_targets
+    try:
+        with open(STREAM_TARGETS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default_targets
+
+def save_stream_targets(targets):
+    os.makedirs(os.path.dirname(STREAM_TARGETS_FILE), exist_ok=True)
+    with open(STREAM_TARGETS_FILE, "w", encoding="utf-8") as f:
+        json.dump(targets, f, ensure_ascii=False, indent=4)
+
+def preview_url_for(settings):
+    preview_path = settings.get("preview_path")
+    if not preview_path:
+        return ""
+    if not os.path.isabs(preview_path):
+        preview_path = os.path.join(BASE_DIR, preview_path)
+    static_dir = os.path.join(BASE_DIR, "static")
+    try:
+        if os.path.commonpath([static_dir, preview_path]) == static_dir:
+            return "/static/" + os.path.basename(preview_path)
+    except ValueError:
+        return ""
+    return preview_path
+
 @app.route("/vk/status", methods=["GET"])
 @login_required
 def vk_status():
-    return jsonify(load_vk_settings())
+    settings = load_vk_settings()
+    settings["preview_url"] = preview_url_for(settings)
+    settings["stream_url"] = STREAM_URL
+    settings["targets"] = load_stream_targets()
+    settings.setdefault("target_ids", [])
+    return jsonify(settings)
+
+@app.route("/vk/public_status", methods=["GET"])
+def vk_public_status():
+    settings = load_vk_settings()
+    return jsonify({
+        "enabled": settings.get("enabled", False),
+        "preview_url": preview_url_for(settings),
+        "stream_url": STREAM_URL
+    })
 
 @app.route("/vk/start_now", methods=["POST"])
 @login_required
@@ -418,10 +533,13 @@ def vk_status():
 def vk_start_now():
     s = load_vk_settings()
     title = ""
+    target_ids = []
 
     # поддерживаем и JSON payload, и form
     if request.is_json:
-        title = (request.get_json(silent=True) or {}).get("title", "")
+        payload = request.get_json(silent=True) or {}
+        title = payload.get("title", "")
+        target_ids = payload.get("target_ids") or []
     else:
         title = request.form.get("title", "")
 
@@ -429,6 +547,7 @@ def vk_start_now():
     s["scheduled_start"] = None
     if title:
         s["title"] = title
+    s["target_ids"] = target_ids
 
     try:
         save_vk_settings(s)
@@ -459,12 +578,14 @@ def vk_schedule():
     title = ""
     date = ""
     time_val = ""
+    target_ids = []
 
     # поддерживаем два варианта: multipart/form-data (с файлом) и application/json
     if request.content_type and request.content_type.startswith("application/json"):
         body = request.get_json(silent=True) or {}
         title = body.get("title", "")
         iso = body.get("iso") or body.get("scheduled_start")
+        target_ids = body.get("target_ids") or []
         if iso:
             scheduled = iso
         else:
@@ -476,6 +597,7 @@ def vk_schedule():
             title = request.form.get("title", "")
             date = request.form.get("date", "")
             time_val = request.form.get("time", "")
+            target_ids = request.form.getlist("target_ids")
         except Exception:
             # если парсинг формы упал — вернём ошибку
             return jsonify({"status": "error", "message": "Ошибка при чтении формы"}), 400
@@ -508,6 +630,7 @@ def vk_schedule():
     s["title"] = title
     s["scheduled_start"] = scheduled
     s["enabled"] = True
+    s["target_ids"] = target_ids
 
     try:
         save_vk_settings(s)
@@ -515,6 +638,60 @@ def vk_schedule():
         return jsonify({"status": "error", "message": f"Не удалось сохранить настройки: {e}"}), 500
 
     return jsonify({"status": "ok", "scheduled": scheduled})
+
+@app.route("/vk/targets", methods=["POST"])
+@login_required
+@roles_required("admin", "editor")
+def vk_targets():
+    data = request.get_json(silent=True) or {}
+    target_ids = data.get("target_ids") or []
+    s = load_vk_settings()
+    s["target_ids"] = target_ids
+    try:
+        save_vk_settings(s)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Не удалось сохранить настройки: {e}"}), 500
+    return jsonify({"status": "ok"})
+
+@app.route("/stream/targets", methods=["GET", "POST"])
+@login_required
+@roles_required("admin", "editor")
+def stream_targets():
+    if request.method == "GET":
+        return jsonify(load_stream_targets())
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    url_val = (data.get("url") or "").strip()
+    if not name:
+        return jsonify({"status": "error", "message": "Название обязательно"}), 400
+    targets = load_stream_targets()
+    target_id = secrets.token_hex(4)
+    targets.append({"id": target_id, "name": name, "url": url_val, "enabled": True})
+    save_stream_targets(targets)
+    return jsonify({"status": "ok", "target": {"id": target_id, "name": name, "url": url_val, "enabled": True}})
+
+@app.route("/stream/targets/<target_id>", methods=["PUT", "DELETE"])
+@login_required
+@roles_required("admin", "editor")
+def stream_targets_update(target_id):
+    targets = load_stream_targets()
+    target = next((t for t in targets if t.get("id") == target_id), None)
+    if not target:
+        return jsonify({"status": "error", "message": "Цель не найдена"}), 404
+
+    if request.method == "DELETE":
+        targets = [t for t in targets if t.get("id") != target_id]
+        save_stream_targets(targets)
+        return jsonify({"status": "ok"})
+
+    data = request.get_json(silent=True) or {}
+    target["name"] = (data.get("name") or target["name"]).strip()
+    target["url"] = (data.get("url") or target["url"]).strip()
+    if "enabled" in data:
+        target["enabled"] = bool(data.get("enabled"))
+    save_stream_targets(targets)
+    return jsonify({"status": "ok", "target": target})
 
 # =====================================================
 #                   END VK STREAMING
