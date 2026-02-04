@@ -1,0 +1,14 @@
+[
+  {
+    "id": "tv",
+    "name": "Телевизоры",
+    "url": "",
+    "enabled": true
+  },
+  {
+    "id": "vk-main",
+    "name": "VK группа",
+    "url": "",
+    "enabled": true
+  }
+]

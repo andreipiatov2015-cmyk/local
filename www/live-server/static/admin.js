@@ -915,68 +915,199 @@ setIFOButton.addEventListener('click', () => {
     });
 
     // VK modal handlers
-const vkStreamButton = document.getElementById("vkStreamButton");
-const vkModal = document.getElementById("vkModal");
-const vkCloseBtn = document.getElementById("vkCloseBtn");
-const vkStartNowBtn = document.getElementById("vkStartNowBtn");
-const vkScheduleBtn = document.getElementById("vkScheduleBtn");
-const vkStopBtn = document.getElementById("vkStopBtn");
+    const vkStreamButton = document.getElementById("vkStreamButton");
+    const vkModal = document.getElementById("vkModal");
+    const vkCloseBtn = document.getElementById("vkCloseBtn");
+    const vkStartNowBtn = document.getElementById("vkStartNowBtn");
+    const vkScheduleBtn = document.getElementById("vkScheduleBtn");
+    const vkStopBtn = document.getElementById("vkStopBtn");
+    const vkTabs = document.querySelectorAll(".vk-tab");
+    const vkTabPanels = document.querySelectorAll(".vk-tab-panel");
+    const vkPreviewVideo = document.getElementById("vkPreviewVideo");
+    const vkPreviewImage = document.getElementById("vkPreviewImage");
+    const vkTargetsList = document.getElementById("vkTargetsList");
+    const vkTargetName = document.getElementById("vkTargetName");
+    const vkTargetUrl = document.getElementById("vkTargetUrl");
+    const vkAddTargetBtn = document.getElementById("vkAddTargetBtn");
+    const vkSaveTargetsBtn = document.getElementById("vkSaveTargetsBtn");
+    let streamUrl = "";
+    let vkTargets = [];
+    let selectedTargetIds = [];
+    let hlsInstance = null;
 
-vkStreamButton && vkStreamButton.addEventListener("click", (e) => {
-    e.preventDefault();
-    vkModal.style.display = "flex";
-});
-
-vkCloseBtn && vkCloseBtn.addEventListener("click", () => {
-    vkModal.style.display = "none";
-});
-
-vkStartNowBtn && vkStartNowBtn.addEventListener("click", async () => {
-    const title = document.getElementById("vkTitle").value || "";
-    const resp = await fetch("/vk/start_now", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title })
-    });
-    if (resp.ok) {
-        alert("VK: старт активирован (начать сейчас).");
-        vkModal.style.display = "none";
-    } else {
-        alert("Ошибка старта.");
+    function setVkPreviewImage(url) {
+        if (!vkPreviewImage) return;
+        if (url) {
+            vkPreviewImage.src = url;
+            vkPreviewImage.classList.add("visible");
+        } else {
+            vkPreviewImage.classList.remove("visible");
+        }
     }
-});
 
-vkStopBtn && vkStopBtn.addEventListener("click", async () => {
-    const resp = await fetch("/vk/stop", { method: "POST" });
-    if (resp.ok) {
-        alert("VK: публикация отключена.");
-        vkModal.style.display = "none";
-    } else alert("Ошибка.");
-});
-
-vkScheduleBtn && vkScheduleBtn.addEventListener("click", async () => {
-    const title = document.getElementById("vkTitle").value || "";
-    const date = document.getElementById("vkDate").value || "";
-    const time = document.getElementById("vkTime").value || "";
-    const file = document.getElementById("vkImage").files[0];
-
-    const form = new FormData();
-    form.append("title", title);
-    form.append("date", date);
-    form.append("time", time);
-    if (file) form.append("image", file);
-
-    const resp = await fetch("/vk/schedule", {
-        method: "POST",
-        body: form
-    });
-    if (resp.ok) {
-        const j = await resp.json();
-        alert("VK: запланировано на " + j.scheduled);
-        vkModal.style.display = "none";
-    } else {
-        alert("Ошибка планирования.");
+    function initVkPreviewPlayer(nextStreamUrl) {
+        if (!vkPreviewVideo || !nextStreamUrl) return;
+        if (hlsInstance) {
+            hlsInstance.destroy();
+            hlsInstance = null;
+        }
+        if (window.Hls && window.Hls.isSupported()) {
+            hlsInstance = new Hls();
+            hlsInstance.loadSource(nextStreamUrl);
+            hlsInstance.attachMedia(vkPreviewVideo);
+            hlsInstance.on(Hls.Events.ERROR, () => {
+                setVkPreviewImage(vkPreviewImage?.src || "");
+            });
+        } else if (vkPreviewVideo.canPlayType("application/vnd.apple.mpegurl")) {
+            vkPreviewVideo.src = nextStreamUrl;
+        }
     }
-});
+
+    function renderVkTargets() {
+        if (!vkTargetsList) return;
+        vkTargetsList.innerHTML = "";
+        vkTargets.forEach(target => {
+            const wrapper = document.createElement("div");
+            wrapper.className = "vk-target";
+
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = selectedTargetIds.includes(target.id);
+            checkbox.addEventListener("change", () => {
+                if (checkbox.checked) {
+                    selectedTargetIds = [...new Set([...selectedTargetIds, target.id])];
+                } else {
+                    selectedTargetIds = selectedTargetIds.filter(id => id !== target.id);
+                }
+            });
+
+            const content = document.createElement("div");
+            const nameInput = document.createElement("input");
+            nameInput.type = "text";
+            nameInput.value = target.name || "";
+            nameInput.addEventListener("change", () => updateTarget(target.id, { name: nameInput.value }));
+
+            const urlInput = document.createElement("input");
+            urlInput.type = "text";
+            urlInput.value = target.url || "";
+            urlInput.placeholder = "rtmp://...";
+            urlInput.addEventListener("change", () => updateTarget(target.id, { url: urlInput.value }));
+
+            content.appendChild(nameInput);
+            content.appendChild(urlInput);
+            wrapper.appendChild(checkbox);
+            wrapper.appendChild(content);
+            vkTargetsList.appendChild(wrapper);
+        });
+    }
+
+    async function updateTarget(targetId, payload) {
+        await fetch(`/stream/targets/${targetId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+    }
+
+    async function loadVkStatus() {
+        const resp = await fetch("/vk/status");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        selectedTargetIds = data.target_ids || [];
+        vkTargets = data.targets || [];
+        streamUrl = data.stream_url || "";
+        document.getElementById("vkTitle").value = data.title || "";
+        setVkPreviewImage(data.preview_url || "");
+        initVkPreviewPlayer(streamUrl);
+        renderVkTargets();
+    }
+
+    vkTabs.forEach(tab => {
+        tab.addEventListener("click", () => {
+            vkTabs.forEach(item => item.classList.remove("active"));
+            vkTabPanels.forEach(panel => panel.classList.remove("active"));
+            tab.classList.add("active");
+            const target = tab.dataset.tab;
+            document.querySelector(`.vk-tab-panel[data-panel="${target}"]`)?.classList.add("active");
+        });
+    });
+
+    vkStreamButton && vkStreamButton.addEventListener("click", (e) => {
+        e.preventDefault();
+        vkModal.classList.add("visible");
+        loadVkStatus();
+    });
+
+    vkCloseBtn && vkCloseBtn.addEventListener("click", () => {
+        vkModal.classList.remove("visible");
+    });
+
+    vkAddTargetBtn && vkAddTargetBtn.addEventListener("click", async () => {
+        const name = vkTargetName.value.trim();
+        if (!name) return;
+        const resp = await fetch("/stream/targets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, url: vkTargetUrl.value.trim() })
+        });
+        if (resp.ok) {
+            vkTargetName.value = "";
+            vkTargetUrl.value = "";
+            loadVkStatus();
+        }
+    });
+
+    vkSaveTargetsBtn && vkSaveTargetsBtn.addEventListener("click", async () => {
+        await fetch("/vk/targets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target_ids: selectedTargetIds })
+        });
+    });
+
+    vkStartNowBtn && vkStartNowBtn.addEventListener("click", async () => {
+        const title = document.getElementById("vkTitle").value || "";
+        const resp = await fetch("/vk/start_now", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title, target_ids: selectedTargetIds })
+        });
+        if (resp.ok) {
+            vkModal.classList.remove("visible");
+        } else {
+            alert("Ошибка старта.");
+        }
+    });
+
+    vkStopBtn && vkStopBtn.addEventListener("click", async () => {
+        const resp = await fetch("/vk/stop", { method: "POST" });
+        if (resp.ok) {
+            vkModal.classList.remove("visible");
+        } else alert("Ошибка.");
+    });
+
+    vkScheduleBtn && vkScheduleBtn.addEventListener("click", async () => {
+        const title = document.getElementById("vkTitle").value || "";
+        const date = document.getElementById("vkDate").value || "";
+        const time = document.getElementById("vkTime").value || "";
+        const file = document.getElementById("vkImage").files[0];
+
+        const form = new FormData();
+        form.append("title", title);
+        form.append("date", date);
+        form.append("time", time);
+        selectedTargetIds.forEach(id => form.append("target_ids", id));
+        if (file) form.append("image", file);
+
+        const resp = await fetch("/vk/schedule", {
+            method: "POST",
+            body: form
+        });
+        if (resp.ok) {
+            vkModal.classList.remove("visible");
+        } else {
+            alert("Ошибка планирования.");
+        }
+    });
 
 });
