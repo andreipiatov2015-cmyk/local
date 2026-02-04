@@ -368,3 +368,105 @@ tr:hover {
 .mapped-territory { background-color: #ffd700; }
 .mapped-act { background-color: #ffb6c1; }
 .mapped-team { background-color: #dda0dd; }
+
+/* ===== Sidebar ===== */
+.sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 260px;
+    background: #0f172a;
+    color: #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    z-index: 1000;
+    transition: width 0.2s ease;
+}
+
+.sidebar.collapsed {
+    width: 64px;
+}
+
+.sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px;
+    font-weight: bold;
+    border-bottom: 1px solid #1e293b;
+}
+
+.sidebar-header .logo {
+    white-space: nowrap;
+}
+
+.sidebar-menu {
+    flex: 1;
+    padding: 8px;
+}
+
+.menu-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    margin-bottom: 4px;
+    border-radius: 8px;
+    color: #e5e7eb;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.menu-item:hover {
+    background: #1e293b;
+}
+
+.menu-item.active {
+    background: #2563eb;
+}
+
+.menu-item .icon {
+    width: 24px;
+    text-align: center;
+}
+
+.sidebar-footer {
+    padding: 10px;
+    border-top: 1px solid #1e293b;
+}
+
+.vk-btn {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: none;
+    background: #ef4444;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+    margin-bottom: 10px;
+}
+
+.vk-btn:hover {
+    background: #dc2626;
+}
+
+.logout {
+    opacity: 0.7;
+}
+
+.sidebar.collapsed .text,
+.sidebar.collapsed .logo {
+    display: none;
+}
+
+.content {
+    margin-left: 260px;
+    transition: margin-left 0.2s ease;
+}
+
+.sidebar.collapsed ~ .content {
+    margin-left: 64px;
+}
