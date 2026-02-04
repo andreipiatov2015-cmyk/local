@@ -1,0 +1,370 @@
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f1f5f9;
+    margin: 0;
+}
+
+#sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 250px;
+    background-color: #1f2937;
+    color: white;
+    padding: 20px;
+    transition: transform 0.3s ease-in-out;
+    z-index: 1000;
+}
+
+#sidebar.hidden {
+    transform: translateX(-100%);
+}
+
+#sidebar:not(.hidden) {
+    transform: translateX(0);
+}
+
+#sidebar h2 {
+    font-size: 24px;
+    margin-bottom: 20px;
+}
+
+#sidebar ul {
+    list-style: none;
+    padding: 0;
+}
+
+/* Стили для меню пресетов */
+#presetSelect {
+    margin-left: 5px;
+    padding: 5px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background-color: #fff;
+    cursor: pointer;
+}
+
+#savePresetButton {
+    padding: 5px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background-color: #fff;
+    cursor: pointer;
+    margin-left: 10px;
+}
+
+#savePresetButton:hover {
+    background-color: #e5e7eb;
+}
+
+#syncButton {
+    padding: 5px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background-color: #fff;
+    cursor: pointer;
+    margin-left: 10px;
+}
+
+#syncButton:hover {
+    background-color: #e5e7eb;
+}
+
+#clearEmptyRowsButton {
+    padding: 5px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background-color: #fff;
+    cursor: pointer;
+    margin-left: 10px;
+}
+
+#clearEmptyRowsButton:hover {
+    background-color: #e5e7eb;
+}
+
+#sidebar a {
+    display: block;
+    padding: 10px;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+}
+
+#sidebar a:hover {
+    background-color: #374151;
+}
+
+#sidebar a.active {
+    background-color: #4b5563;
+}
+
+#toggleSidebar {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3000;
+    padding: 10px;
+    background-color: #1f2937;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 20px;
+    transition: transform 0.3s ease-in-out;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#toggleSidebar.rotated {
+    transform: translateX(-50%) rotate(180deg);
+}
+
+#toggleSidebar .fallback {
+    display: none;
+}
+
+#toggleSidebar .fa-arrow-up {
+    display: inline-block;
+}
+
+#toggleSidebar.no-font-awesome .fa-arrow-up {
+    display: none;
+}
+
+#toggleSidebar.no-font-awesome .fallback {
+    display: inline-block;
+}
+
+.content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-left: 0;
+    padding: 20px;
+}
+
+@media (min-width: 769px) {
+    .content {
+        margin-left: 250px;
+    }
+    #sidebar {
+        transform: translateX(0);
+    }
+    #toggleSidebar {
+        display: none;
+    }
+}
+
+#preview {
+    background-color: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+    position: relative;
+    width: fit-content;
+}
+
+#preview h2 {
+    font-size: 20px;
+    margin-bottom: 15px;
+}
+
+#previewContent {
+    position: relative;
+    border: 1px dashed #ccc;
+    overflow: hidden;
+    resize: both;
+    min-width: 200px;
+    min-height: 200px;
+}
+
+#previewContent.grid::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: linear-gradient(to right, #e5e7eb 1px, transparent 1px),
+                      linear-gradient(to bottom, #e5e7eb 1px, transparent 1px);
+    background-size: var(--grid-size-x) var(--grid-size-y);
+    pointer-events: none;
+}
+
+.draggable {
+    position: absolute;
+    padding: 10px;
+    background-color: #f9fafb;
+    border: 1px solid #e5e7eb;
+    cursor: move;
+    user-select: none;
+    resize: both;
+    overflow: auto;
+    display: flex;
+    align-items: flex-start;
+}
+
+.draggable p {
+    margin: 0;
+    width: 100%;
+}
+
+.draggable.dragging {
+    opacity: 0.7;
+    border: 2px solid #3b82f6;
+}
+
+
+.label.hidden {
+    display: none;
+}
+
+.edit-panel {
+    margin-top: 20px;
+    padding: 10px;
+    background-color: #f3f4f6;
+    border-radius: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.edit-panel label {
+    margin-right: 15px;
+}
+
+.edit-panel input, .edit-panel select, .edit-panel button {
+    margin-left: 5px;
+}
+
+.edit-panel button {
+    padding: 5px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background-color: #fff;
+    cursor: pointer;
+}
+
+.edit-panel button:hover {
+    background-color: #e5e7eb;
+}
+
+#fioSettings {
+    margin-top: 10px;
+    padding: 10px;
+    background-color: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+}
+
+#fioSettings.hidden {
+    display: none;
+}
+
+table {
+    width: 100%;
+    max-width: 1000px;
+    border-collapse: collapse;
+    background-color: #fff;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+}
+
+th, td {
+    border: 1px solid #e5e7eb;
+    padding: 8px;
+    text-align: left;
+}
+
+th {
+    background-color: #e5e7eb;
+    font-weight: bold;
+}
+
+td input {
+    width: 100%;
+    border: none;
+    padding: 4px;
+    outline: none;
+}
+
+tr:hover {
+    background-color: #f9fafb;
+    cursor: pointer;
+}
+
+#autoAddSection {
+    width: 100%;
+    max-width: 1000px;
+    background-color: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+}
+
+.upload-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+.upload-table th, .upload-table td {
+    border: 1px solid #e5e7eb;
+    padding: 8px;
+    text-align: left;
+}
+
+.upload-table th {
+    background-color: #e5e7eb;
+}
+
+#mappingSection {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#mappingSection label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+#importButton {
+    margin-top: 20px;
+    padding: 10px 20px;
+    background-color: #4b5563;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#importButton:hover {
+    background-color: #374151;
+}
+
+#importMessage {
+    margin-top: 10px;
+    color: #374151;
+}
+
+.table-container {
+    max-height: 500px;
+    max-width: 100%;
+    overflow-y: auto;
+    overflow-x: auto;
+    border: 1px solid #ccc;
+}
+
+.mapped-fio { background-color: #add8e6; }
+.mapped-territory { background-color: #ffd700; }
+.mapped-act { background-color: #ffb6c1; }
+.mapped-team { background-color: #dda0dd; }

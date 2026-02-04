@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Редактор мероприятий</title>
+    <link rel="stylesheet" href="../static/admin.css">
+    <style>
+        .content { padding:20px; }
+        h1 { margin-bottom:20px; }
+        button { padding:10px 15px; border:none; border-radius:5px; background:#3b82f6; color:white; cursor:pointer; }
+        button:hover { background:#2563eb; }
+        table { width:100%; border-collapse:collapse; margin-top:20px; background:white; }
+        th, td { border:1px solid #ddd; padding:10px; text-align:left; }
+        th { background:#f3f4f6; }
+        tr:nth-child(even) { background:#f9fafb; }
+
+        /* Модальное окно */
+        .modal {
+            display:none; 
+            position:fixed; 
+            z-index:1000; 
+            left:0; top:0; width:100%; height:100%;
+            background:rgba(0,0,0,0.5);
+            justify-content:center; align-items:center;
+        }
+        .modal-content {
+            background:#fff; padding:20px; border-radius:10px; width:400px;
+            box-shadow:0 5px 15px rgba(0,0,0,0.3);
+        }
+        .modal-content h2 { margin-top:0; }
+        .modal-content input { width:100%; padding:8px; margin:5px 0 15px; border:1px solid #ccc; border-radius:5px; }
+    </style>
+</head>
+<body>
+    <!-- Боковое меню -->
+    <div id="sidebar">
+        <h2>Меню</h2>
+        <ul>
+            <li><a href="/editor" class="active">Редактор</a></li>
+            <li><a href="#" id="autoAddLink">Автоматическое добавление участников</a></li>
+            <li><a href="/competition">Конкурс</a></li>
+            <li><a href="/broadcast">Трансляция</a></li>
+            <li><a href="/staff">Сотрудники</a></li><br>
+            <li><a href="/logout">Выход</a></li>
+        </ul>
+    </div>
+    <button id="toggleSidebar">↑</button>
+
+    <!-- Контент -->
+    <div class="content">
+        <h1>Редактор мероприятий</h1>
+        <button id="openModal">Создать мероприятие</button>
+
+        <table id="eventsTable">
+            <thead>
+                <tr><th>ID</th><th>Название</th><th>Адрес</th><th>Дата начала</th><th>Дата окончания</th><th>Действие</th></tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <!-- Модальное окно -->
+    <div id="eventModal" class="modal">
+        <div class="modal-content">
+            <h2>Новое мероприятие</h2>
+            <label>Название:</label>
+            <input type="text" id="title" required>
+            <label>Адрес:</label>
+            <input type="text" id="address" required>
+            <label>Дата начала:</label>
+            <input type="date" id="start_date" required>
+            <label>Дата окончания:</label>
+            <input type="date" id="end_date" required>
+            <button id="saveEvent">Сохранить</button>
+            <button onclick="closeModal()">Отмена</button>
+        </div>
+    </div>
+
+    <script>
+        const modal = document.getElementById("eventModal");
+        const openModalBtn = document.getElementById("openModal");
+        const saveEventBtn = document.getElementById("saveEvent");
+        const tableBody = document.querySelector("#eventsTable tbody");
+
+        openModalBtn.onclick = () => modal.style.display = "flex";
+        function closeModal() { modal.style.display = "none"; }
+
+        async function loadEvents() {
+            const res = await fetch("/events");
+            const events = await res.json();
+            tableBody.innerHTML = "";
+            events.forEach(e => {
+                let row = `<tr>
+                    <td>${e.id}</td>
+                    <td>${e.title}</td>
+                    <td>${e.address}</td>
+                    <td>${e.start_date}</td>
+                    <td>${e.end_date}</td>
+                    <td><a href="/editor/${e.id}"><button>Открыть</button></a></td>
+                </tr>`;
+                tableBody.innerHTML += row;
+            });
+        }
+
+        saveEventBtn.onclick = async () => {
+            const title = document.getElementById("title").value;
+            const address = document.getElementById("address").value;
+            const start_date = document.getElementById("start_date").value;
+            const end_date = document.getElementById("end_date").value;
+
+            const res = await fetch("/create_event", {
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({title, address, start_date, end_date})
+            });
+
+            if(res.ok){
+                closeModal();
+                loadEvents();
+            }
+        };
+
+        loadEvents();
+    </script>
+</body>
+</html>
