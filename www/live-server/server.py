@@ -462,7 +462,10 @@ def load_vk_settings():
 
     try:
         with open(VK_SETTINGS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            data.setdefault("show_preview", False)
+            data.setdefault("preview_path", os.path.join(BASE_DIR, "static", "vk_preview.jpg"))
+            return data
     except Exception:
         # если файл кривой — перезаписываем дефолтом
         try:
