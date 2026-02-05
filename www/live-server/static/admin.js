@@ -1123,6 +1123,12 @@ setIFOButton.addEventListener('click', () => {
     applyOverlayState();
   });
 
+  vkOverlayToggleBtn?.addEventListener("click", () => {
+    overlayEnabled = !overlayEnabled;
+    localStorage.setItem("vkOverlayEnabled", String(overlayEnabled));
+    applyOverlayState();
+  });
+
   vkAddTargetBtn?.addEventListener("click", async () => {
     const name = vkTargetName?.value.trim() || "";
     if (!name) return;
