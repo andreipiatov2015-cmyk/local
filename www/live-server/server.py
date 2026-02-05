@@ -448,7 +448,8 @@ def load_vk_settings():
         "scheduled_start": None,
         "title": "",
         "target_ids": [],
-        "preview_path": os.path.join(BASE_DIR, "static", "vk_preview.jpg")
+        "preview_path": os.path.join(BASE_DIR, "static", "vk_preview.jpg"),
+        "show_preview": False
     }
     if not os.path.exists(VK_SETTINGS_FILE):
         try:
@@ -525,6 +526,7 @@ def vk_status():
     settings["stream_url"] = STREAM_URL
     settings["targets"] = load_stream_targets()
     settings.setdefault("target_ids", [])
+    settings.setdefault("show_preview", False)
     return jsonify(settings)
 
 @app.route("/vk/register_key", methods=["POST"])
@@ -549,8 +551,44 @@ def vk_public_status():
     return jsonify({
         "enabled": settings.get("enabled", False),
         "preview_url": preview_url_for(settings),
-        "stream_url": STREAM_URL
+        "stream_url": STREAM_URL,
+        "show_preview": settings.get("show_preview", False)
     })
+
+@app.route("/vk/preview", methods=["POST"])
+@login_required
+@roles_required("admin", "editor")
+def vk_preview_upload():
+    file = request.files.get("image")
+    if not file:
+        return jsonify({"status": "error", "message": "Файл не выбран"}), 400
+
+    s = load_vk_settings()
+    try:
+        preview_dir = os.path.join(BASE_DIR, "static")
+        os.makedirs(preview_dir, exist_ok=True)
+        preview_path = os.path.join(preview_dir, "vk_preview.jpg")
+        file.save(preview_path)
+        s["preview_path"] = preview_path
+        save_vk_settings(s)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Не удалось сохранить превью: {e}"}), 500
+
+    return jsonify({"status": "ok", "preview_url": preview_url_for(s)})
+
+@app.route("/vk/preview_visibility", methods=["POST"])
+@login_required
+@roles_required("admin", "editor")
+def vk_preview_visibility():
+    data = request.get_json(silent=True) or {}
+    show_preview = bool(data.get("show_preview"))
+    s = load_vk_settings()
+    s["show_preview"] = show_preview
+    try:
+        save_vk_settings(s)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Не удалось сохранить настройки: {e}"}), 500
+    return jsonify({"status": "ok", "show_preview": s.get("show_preview", False)})
 
 @app.route("/vk/start_now", methods=["POST"])
 @login_required
@@ -573,6 +611,7 @@ def vk_start_now():
     if title:
         s["title"] = title
     s["target_ids"] = target_ids
+    s["show_preview"] = False
 
     try:
         save_vk_settings(s)
@@ -656,6 +695,7 @@ def vk_schedule():
     s["scheduled_start"] = scheduled
     s["enabled"] = True
     s["target_ids"] = target_ids
+    s["show_preview"] = False
 
     try:
         save_vk_settings(s)
