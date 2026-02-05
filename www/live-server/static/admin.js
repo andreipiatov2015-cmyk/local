@@ -956,10 +956,23 @@ setIFOButton.addEventListener('click', () => {
   let vkTargets = [];
   let selectedTargetIds = [];
   let hlsInstance = null;
+  let lastVkPreviewUrl = "";
+
+  function stopVkPreviewPlayer() {
+    if (!vkPreviewVideo) return;
+    if (hlsInstance) {
+      hlsInstance.destroy();
+      hlsInstance = null;
+    }
+    vkPreviewVideo.pause();
+    vkPreviewVideo.removeAttribute("src");
+    vkPreviewVideo.load();
+  }
 
   function setVkPreviewImage(url) {
     if (!vkPreviewImage) return;
     if (url) {
+      lastVkPreviewUrl = url;
       vkPreviewImage.src = url;
       vkPreviewImage.classList.add("visible");
     } else {
@@ -967,8 +980,22 @@ setIFOButton.addEventListener('click', () => {
     }
   }
 
+  function showVkPreviewImage(url) {
+    setVkPreviewImage(url || lastVkPreviewUrl);
+    vkPreviewVideo?.classList.add("hidden");
+  }
+
+  function showVkPreviewVideo() {
+    vkPreviewVideo?.classList.remove("hidden");
+    vkPreviewImage?.classList.remove("visible");
+  }
+
   function initVkPreviewPlayer(nextStreamUrl) {
-    if (!vkPreviewVideo || !nextStreamUrl) return;
+    if (!vkPreviewVideo || !nextStreamUrl) {
+      stopVkPreviewPlayer();
+      showVkPreviewImage(lastVkPreviewUrl);
+      return;
+    }
 
     if (hlsInstance) {
       hlsInstance.destroy();
@@ -981,11 +1008,13 @@ setIFOButton.addEventListener('click', () => {
       hlsInstance.loadSource(nextStreamUrl);
       hlsInstance.attachMedia(vkPreviewVideo);
       hlsInstance.on(HlsCtor.Events.ERROR, () => {
-        setVkPreviewImage(vkPreviewImage?.src || "");
+        stopVkPreviewPlayer();
+        showVkPreviewImage(lastVkPreviewUrl);
       });
     } else if (vkPreviewVideo.canPlayType("application/vnd.apple.mpegurl")) {
       vkPreviewVideo.src = nextStreamUrl;
     }
+    showVkPreviewVideo();
   }
 
   function renderVkTargets() {
@@ -1049,8 +1078,14 @@ setIFOButton.addEventListener('click', () => {
     const titleInput = document.getElementById("vkTitle");
     if (titleInput) titleInput.value = data.title || "";
 
-    setVkPreviewImage(data.preview_url || "");
-    initVkPreviewPlayer(streamUrl);
+    if (data.preview_url) setVkPreviewImage(data.preview_url);
+    if (streamUrl) {
+      showVkPreviewVideo();
+      initVkPreviewPlayer(streamUrl);
+    } else {
+      stopVkPreviewPlayer();
+      showVkPreviewImage(data.preview_url || lastVkPreviewUrl);
+    }
     renderVkTargets();
   }
 
@@ -1107,7 +1142,11 @@ setIFOButton.addEventListener('click', () => {
 
   vkStopBtn?.addEventListener("click", async () => {
     const resp = await fetch("/vk/stop", { method: "POST" });
-    if (resp.ok) vkModal?.classList.remove("visible");
+    if (resp.ok) {
+      stopVkPreviewPlayer();
+      showVkPreviewImage(lastVkPreviewUrl);
+      vkModal?.classList.remove("visible");
+    }
     else alert("Ошибка.");
   });
 
@@ -1150,4 +1189,10 @@ setIFOButton.addEventListener('click', () => {
     if (resp.ok) vkModal?.classList.remove("visible");
     else alert("Ошибка планирования.");
   });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initAdmin);
+} else {
+  initAdmin();
 }
