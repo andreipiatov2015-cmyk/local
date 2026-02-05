@@ -42,7 +42,7 @@
     </nav>
 
     <div class="sidebar-footer">
-      <button id="vkStreamButton" class="vk-btn">🔴 VK трансляция</button>
+      <button id="vkStreamButton" class="vk-btn">⚙️ Настройка трансляции</button>
 
       <a href="/logout" class="menu-item logout">
         <span class="icon">🚪</span>
@@ -176,7 +176,7 @@
   <div id="vkModal" class="vk-modal">
     <div class="vk-modal-content">
       <div class="vk-modal-header">
-        <h3>Трансляция в VK</h3>
+        <h3>Настройка трансляции</h3>
         <button id="vkCloseBtn" class="icon-btn" type="button">✕</button>
       </div>
 
@@ -214,8 +214,11 @@
             </div>
 
             <div class="vk-actions">
+              <button id="vkUploadPreview" class="btn btn-secondary" type="button">Загрузить изображение</button>
               <button id="vkScheduleBtn" class="btn btn-secondary" type="button">Запланировать</button>
               <button id="vkStopBtn" class="btn btn-danger" type="button">Остановить</button>
+              <button id="vkOverlayToggle" class="btn btn-primary" type="button">Показать изображение</button>
+              <button id="vkStartTargetsBtn" class="btn btn-primary" type="button">Начать трансляцию</button>
             </div>
           </div>
         </div>
@@ -239,7 +242,6 @@
             <div class="vk-actions">
               <button id="vkAddTargetBtn" class="btn btn-secondary" type="button">Добавить</button>
               <button id="vkSaveTargetsBtn" class="btn btn-primary" type="button">Сохранить выбор</button>
-              <button id="vkStartTargetsBtn" class="btn btn-primary" type="button">Начать трансляцию в</button>
             </div>
           </div>
 
