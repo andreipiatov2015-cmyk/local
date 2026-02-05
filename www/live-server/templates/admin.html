@@ -115,6 +115,7 @@
             <button id="savePresetButton">Сохранить пресет</button>
             <button id="syncButton">Синхронизировать</button>
             <button id="clearEmptyRowsButton">Удалить пустые строки</button>
+            <button id="clearEntriesButton" class="btn btn-danger" type="button">Очистить список выступающих</button>
         </div>
 
         <div class="table-container">
@@ -186,10 +187,15 @@
                             <label for="vkImage">Превью (jpg/png)</label>
                             <input id="vkImage" type="file" accept="image/*">
                         </div>
+                        <div class="form-field">
+                            <label for="vkRtmpKey">Ключ трансляции VK (RTMP URL)</label>
+                            <input id="vkRtmpKey" type="text" placeholder="rtmp://...">
+                        </div>
                         <div class="vk-actions">
                             <button id="vkStartNowBtn" class="btn btn-primary" type="button">Начать сейчас</button>
                             <button id="vkScheduleBtn" class="btn btn-secondary" type="button">Запланировать</button>
                             <button id="vkStopBtn" class="btn btn-danger" type="button">Остановить</button>
+                            <button id="vkSaveKeyBtn" class="btn btn-secondary" type="button">Сохранить ключ</button>
                         </div>
                     </div>
                 </div>

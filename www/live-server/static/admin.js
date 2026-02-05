@@ -404,6 +404,20 @@ savePresetButton.addEventListener('click', () => {
         cleanEmptyRows();
     });
 
+    const clearEntriesButton = document.getElementById('clearEntriesButton');
+    clearEntriesButton?.addEventListener('click', async () => {
+        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
+            return;
+        }
+        const resp = await fetch('/entries/clear', { method: 'POST' });
+        if (resp.ok) {
+            loadEntriesFromServer();
+            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
+        } else {
+            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
+        }
+    });
+
 // Управление областью предпросмотра и сеткой
 const previewContent = document.getElementById('previewContent');
 const previewWidthInput = document.getElementById('previewWidth');
@@ -929,6 +943,8 @@ setIFOButton.addEventListener('click', () => {
     const vkTabPanels = document.querySelectorAll(".vk-tab-panel");
     const vkPreviewVideo = document.getElementById("vkPreviewVideo");
     const vkPreviewImage = document.getElementById("vkPreviewImage");
+    const vkRtmpKey = document.getElementById("vkRtmpKey");
+    const vkSaveKeyBtn = document.getElementById("vkSaveKeyBtn");
     const vkTargetsList = document.getElementById("vkTargetsList");
     const vkTargetName = document.getElementById("vkTargetName");
     const vkTargetUrl = document.getElementById("vkTargetUrl");
@@ -1021,6 +1037,9 @@ setIFOButton.addEventListener('click', () => {
         vkTargets = data.targets || [];
         streamUrl = data.stream_url || "";
         document.getElementById("vkTitle").value = data.title || "";
+        if (vkRtmpKey) {
+            vkRtmpKey.value = data.vk_rtmp_url || "";
+        }
         setVkPreviewImage(data.preview_url || "");
         initVkPreviewPlayer(streamUrl);
         renderVkTargets();
@@ -1088,6 +1107,24 @@ setIFOButton.addEventListener('click', () => {
         if (resp.ok) {
             vkModal.classList.remove("visible");
         } else alert("Ошибка.");
+    });
+
+    vkSaveKeyBtn && vkSaveKeyBtn.addEventListener("click", async () => {
+        const keyValue = vkRtmpKey?.value.trim();
+        if (!keyValue) {
+            alert("Введите RTMP ключ VK.");
+            return;
+        }
+        const resp = await fetch("/vk/register_key", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ vk_rtmp_url: keyValue })
+        });
+        if (resp.ok) {
+            alert("Ключ VK сохранён.");
+        } else {
+            alert("Не удалось сохранить ключ.");
+        }
     });
 
     vkScheduleBtn && vkScheduleBtn.addEventListener("click", async () => {

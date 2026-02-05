@@ -61,6 +61,10 @@ def save_entries(entries):
     with open(ENTRIES_FILE, "w", encoding="utf-8") as f:
         json.dump(entries, f, ensure_ascii=False, indent=4)
 
+def clear_entries():
+    entries.clear()
+    save_entries(entries)
+
 def load_presets():
     if os.path.exists(PRESETS_FILE):
         try:
@@ -255,6 +259,11 @@ def editor_event(event_id):
 @app.route("/entries")
 def get_entries():
     return jsonify(entries)
+
+@app.route("/entries/clear", methods=["POST"])
+def clear_entries_route():
+    clear_entries()
+    return jsonify({"status": "ok", "count": 0})
 
 @app.route("/add_entry", methods=["POST"])
 def add_entry():
@@ -517,6 +526,22 @@ def vk_status():
     settings["targets"] = load_stream_targets()
     settings.setdefault("target_ids", [])
     return jsonify(settings)
+
+@app.route("/vk/register_key", methods=["POST"])
+@login_required
+@roles_required("admin", "editor")
+def vk_register_key():
+    data = request.get_json(silent=True) or {}
+    vk_rtmp_url = (data.get("vk_rtmp_url") or "").strip()
+    if not vk_rtmp_url:
+        return jsonify({"status": "error", "message": "Ключ обязателен"}), 400
+    settings = load_vk_settings()
+    settings["vk_rtmp_url"] = vk_rtmp_url
+    try:
+        save_vk_settings(settings)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Не удалось сохранить ключ: {e}"}), 500
+    return jsonify({"status": "ok"})
 
 @app.route("/vk/public_status", methods=["GET"])
 def vk_public_status():
