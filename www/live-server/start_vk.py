@@ -186,6 +186,7 @@ def main():
         vk_urls = [vk_key]
     else:
         vk_urls = [t.get("url") for t in active_targets if t.get("url")]
+    vk_urls = [t.get("url") for t in active_targets if t.get("url")]
 
     if not enabled or not vk_urls:
         log("VK пуш отключён или не задан vk_rtmp_url")
