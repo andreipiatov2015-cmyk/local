@@ -938,11 +938,13 @@ setIFOButton.addEventListener('click', () => {
   const vkCloseBtn = document.getElementById("vkCloseBtn");
   const vkScheduleBtn = document.getElementById("vkScheduleBtn");
   const vkStopBtn = document.getElementById("vkStopBtn");
+  const vkOverlayToggleBtn = document.getElementById("vkOverlayToggle");
   const vkTabs = document.querySelectorAll(".vk-tab");
   const vkTabPanels = document.querySelectorAll(".vk-tab-panel");
 
   const vkPreviewVideo = document.getElementById("vkPreviewVideo");
   const vkPreviewImage = document.getElementById("vkPreviewImage");
+  const vkPreviewMedia = document.querySelector(".vk-preview-media");
   const vkImageInput = document.getElementById("vkImage");
 
   const vkTargetsList = document.getElementById("vkTargetsList");
@@ -1113,6 +1115,12 @@ setIFOButton.addEventListener('click', () => {
 
   vkCloseBtn?.addEventListener("click", () => {
     vkModal?.classList.remove("visible");
+  });
+
+  vkOverlayToggleBtn?.addEventListener("click", () => {
+    overlayEnabled = !overlayEnabled;
+    localStorage.setItem("vkOverlayEnabled", String(overlayEnabled));
+    applyOverlayState();
   });
 
   vkAddTargetBtn?.addEventListener("click", async () => {
