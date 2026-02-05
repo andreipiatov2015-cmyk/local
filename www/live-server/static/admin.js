@@ -959,26 +959,6 @@ setIFOButton.addEventListener('click', () => {
   let selectedTargetIds = [];
   let hlsInstance = null;
   let lastVkPreviewUrl = "";
-  let overlayEnabled = false;
-
-  function updateOverlayToggleButton() {
-    if (!vkOverlayToggleBtn) return;
-    vkOverlayToggleBtn.classList.toggle("active", overlayEnabled);
-    vkOverlayToggleBtn.textContent = overlayEnabled
-      ? "Показывать изображение: включено"
-      : "Показывать изображение: выключено";
-  }
-
-  function applyOverlayState() {
-    if (!vkPreviewMedia) return;
-    vkPreviewMedia.classList.toggle("overlay-enabled", overlayEnabled);
-    if (overlayEnabled) {
-      if (vkPreviewImage?.src) vkPreviewImage.classList.add("visible");
-    } else if (streamUrl) {
-      vkPreviewImage?.classList.remove("visible");
-    }
-    updateOverlayToggleButton();
-  }
 
   function stopVkPreviewPlayer() {
     if (!vkPreviewVideo) return;
@@ -1005,15 +985,11 @@ setIFOButton.addEventListener('click', () => {
   function showVkPreviewImage(url) {
     setVkPreviewImage(url || lastVkPreviewUrl);
     vkPreviewVideo?.classList.add("hidden");
-    applyOverlayState();
   }
 
   function showVkPreviewVideo() {
     vkPreviewVideo?.classList.remove("hidden");
-    if (!overlayEnabled) {
-      vkPreviewImage?.classList.remove("visible");
-    }
-    applyOverlayState();
+    vkPreviewImage?.classList.remove("visible");
   }
 
   function initVkPreviewPlayer(nextStreamUrl) {
@@ -1105,8 +1081,6 @@ setIFOButton.addEventListener('click', () => {
     if (titleInput) titleInput.value = data.title || "";
 
     if (data.preview_url) setVkPreviewImage(data.preview_url);
-    overlayEnabled = localStorage.getItem("vkOverlayEnabled") === "true";
-    applyOverlayState();
     if (streamUrl) {
       showVkPreviewVideo();
       initVkPreviewPlayer(streamUrl);
@@ -1141,6 +1115,12 @@ setIFOButton.addEventListener('click', () => {
 
   vkCloseBtn?.addEventListener("click", () => {
     vkModal?.classList.remove("visible");
+  });
+
+  vkOverlayToggleBtn?.addEventListener("click", () => {
+    overlayEnabled = !overlayEnabled;
+    localStorage.setItem("vkOverlayEnabled", String(overlayEnabled));
+    applyOverlayState();
   });
 
   vkOverlayToggleBtn?.addEventListener("click", () => {
