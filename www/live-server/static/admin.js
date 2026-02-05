@@ -944,6 +944,7 @@ setIFOButton.addEventListener('click', () => {
 
   const vkPreviewVideo = document.getElementById("vkPreviewVideo");
   const vkPreviewImage = document.getElementById("vkPreviewImage");
+  const vkPreviewMedia = document.querySelector(".vk-preview-media");
   const vkImageInput = document.getElementById("vkImage");
 
   const vkTargetsList = document.getElementById("vkTargetsList");
@@ -958,26 +959,6 @@ setIFOButton.addEventListener('click', () => {
   let selectedTargetIds = [];
   let hlsInstance = null;
   let lastVkPreviewUrl = "";
-  let showPreviewOnly = false;
-
-  function updateOverlayToggleButton() {
-    if (!vkOverlayToggleBtn) return;
-    vkOverlayToggleBtn.classList.toggle("active", showPreviewOnly);
-    vkOverlayToggleBtn.textContent = showPreviewOnly
-      ? "Показать изображение: включено"
-      : "Показать изображение: выключено";
-  }
-
-  function applyPreviewVisibility() {
-    if (showPreviewOnly) {
-      showVkPreviewImage(lastVkPreviewUrl);
-    } else if (streamUrl) {
-      showVkPreviewVideo();
-    } else {
-      showVkPreviewImage(lastVkPreviewUrl);
-    }
-    updateOverlayToggleButton();
-  }
 
   function stopVkPreviewPlayer() {
     if (!vkPreviewVideo) return;
@@ -1100,12 +1081,12 @@ setIFOButton.addEventListener('click', () => {
     if (titleInput) titleInput.value = data.title || "";
 
     if (data.preview_url) setVkPreviewImage(data.preview_url);
-    showPreviewOnly = Boolean(data.show_preview);
-    applyPreviewVisibility();
-    if (streamUrl && !showPreviewOnly) {
+    if (streamUrl) {
+      showVkPreviewVideo();
       initVkPreviewPlayer(streamUrl);
-    } else if (!streamUrl) {
+    } else {
       stopVkPreviewPlayer();
+      showVkPreviewImage(data.preview_url || lastVkPreviewUrl);
     }
     renderVkTargets();
   }
@@ -1165,6 +1146,18 @@ setIFOButton.addEventListener('click', () => {
     }
   });
 
+  vkOverlayToggleBtn?.addEventListener("click", () => {
+    overlayEnabled = !overlayEnabled;
+    localStorage.setItem("vkOverlayEnabled", String(overlayEnabled));
+    applyOverlayState();
+  });
+
+  vkOverlayToggleBtn?.addEventListener("click", () => {
+    overlayEnabled = !overlayEnabled;
+    localStorage.setItem("vkOverlayEnabled", String(overlayEnabled));
+    applyOverlayState();
+  });
+
   vkAddTargetBtn?.addEventListener("click", async () => {
     const name = vkTargetName?.value.trim() || "";
     if (!name) return;
@@ -1213,11 +1206,7 @@ setIFOButton.addEventListener('click', () => {
       body: JSON.stringify({ title, target_ids: selectedTargetIds }),
     });
 
-    if (resp.ok) {
-      showPreviewOnly = false;
-      applyPreviewVisibility();
-      vkModal?.classList.remove("visible");
-    }
+    if (resp.ok) vkModal?.classList.remove("visible");
     else alert("Ошибка старта.");
   });
 
