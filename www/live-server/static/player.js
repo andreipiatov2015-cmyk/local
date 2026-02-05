@@ -1,24 +1,31 @@
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', () => {
     // Проверяем, доступна ли библиотека Hls
-    if (typeof Hls === 'undefined') {
+    if (typeof globalThis.Hls === 'undefined') {
         console.error('Hls.js не загружен!');
         return;
     }
 
-    var video = document.getElementById('video');
-    
+    const video = document.getElementById('video');
+    const streamUrl = 'http://192.168.31.18:8080/hls/test.m3u8';
+    let hls = null;
+
+    if (!video) {
+        console.error('Элемент video не найден.');
+        return;
+    }
+
     // Проверяем, поддерживается ли HLS в текущем браузере
-    if (Hls.isSupported()) {
-        var hls = new Hls();
+    if (globalThis.Hls.isSupported()) {
+        hls = new globalThis.Hls();
 
         // Укажите URL вашего HLS-потока (файл .m3u8)
-        hls.loadSource('http://192.168.31.18:8080/hls/test.m3u8');
+        hls.loadSource(streamUrl);
 
         // Подключаем HLS к видеоплееру
         hls.attachMedia(video);
 
         // Запускаем воспроизведение, когда поток готов
-        hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        hls.on(globalThis.Hls.Events.MANIFEST_PARSED, () => {
             video.play().catch(e => {
                 console.error('Автовоспроизведение запрещено:', e);
                 // Можно показать кнопку для ручного запуска
@@ -27,8 +34,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     // Если браузер поддерживает HLS из коробки (например, Safari)
     else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = 'http://192.168.31.18:8080/hls/test.m3u8';
-        video.addEventListener('loadedmetadata', function() {
+        video.src = streamUrl;
+        video.addEventListener('loadedmetadata', () => {
             video.play().catch(e => {
                 console.error('Автовоспроизведение запрещено:', e);
             });
@@ -41,10 +48,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Заглушка для списка участников
-    document.getElementById('participants-list').innerHTML = `
-        <li>Участник 1</li>
-        <li>Участник 2</li>
-        <li>Участник 3</li>
-        <li>Участник 4</li>
-    `;
+    const participantsList = document.getElementById('participants-list');
+    if (participantsList) {
+        participantsList.innerHTML = `
+            <li>Участник 1</li>
+            <li>Участник 2</li>
+            <li>Участник 3</li>
+            <li>Участник 4</li>
+        `;
+    }
 });
