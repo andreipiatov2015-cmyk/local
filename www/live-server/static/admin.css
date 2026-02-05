@@ -657,6 +657,22 @@ tr:hover {
     object-fit: cover;
 }
 
+.vk-preview-media.overlay-enabled video {
+    position: relative;
+    z-index: 1;
+}
+
+.vk-preview-media.overlay-enabled img.visible {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+}
+
+.vk-preview-media video.hidden {
+    display: none;
+}
+
 .vk-preview-media img {
     display: none;
 }
