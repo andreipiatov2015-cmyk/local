@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Трансляция</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        /* ... твои стили без изменений ... */
+    </style>
+</head>
+<body>
+    <div class="video-container">
+        <video id="video" controls></video>
+    </div>
+    <div id="resizer"></div>
+    <div class="list-container">
+        <h2>Список выступающих</h2>
+        <div id="entries"></div>
+    </div>
+    <script>
+        const video = document.getElementById('video');
+
+        if (Hls.isSupported()) {
+            const hls = new Hls();
+            hls.loadSource('http://192.168.31.18:8080/hls/stream.m3u8');
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                video.play();
+            });
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = 'http://192.168.31.18:8080/hls/stream.m3u8';
+            video.addEventListener('loadedmetadata', function() {
+                video.play();
+            });
+        } else {
+            alert('Ваш браузер не поддерживает HLS-потоки.');
+        }  // ← вот этой закрывающей скобки не хватало
+
+        // ====== Ниже всё остальное, как было ======
+        function loadEntries() {
+            fetch('/entries')
+                .then(response => response.json())
+                .then(data => {
+                    const entriesContainer = document.getElementById('entries');
+                    entriesContainer.innerHTML = '';
+                    data.forEach(entry => {
+                        const entryDiv = document.createElement('div');
+                        entryDiv.classList.add('entry');
+                        entryDiv.innerHTML = `
+                            <span class="entry-field" id="entry-number-${entry.id}">№${entry.id}</span>
+                            <span class="entry-field" id="entry-fio-${entry.id}">${entry.name || ''}</span>
+                            <span class="entry-field" id="entry-act-${entry.id}">${entry.performance || ''}</span>
+                            <span class="entry-field" id="entry-team-${entry.id}">${entry.group || ''}${entry.territory ? ', ' + entry.territory : ''}</span>
+                        `;
+                        entriesContainer.appendChild(entryDiv);
+                    });
+                    applyPreviewLayout();
+                })
+                .catch(error => {
+                    document.getElementById('entries').innerHTML = '<p>Ошибка загрузки данных.</p>';
+                });
+        }
+
+        function applyPreviewLayout() {
+            const layout = JSON.parse(localStorage.getItem('previewLayout') || '{}');
+            document.querySelectorAll('.entry').forEach(entry => {
+                const id = entry.querySelector('.entry-field').id.split('-')[2];
+                const fields = [
+                    { selector: `#entry-number-${id}`, key: 'number' },
+                    { selector: `#entry-fio-${id}`, key: 'fio' },
+                    { selector: `#entry-act-${id}`, key: 'act' },
+                    { selector: `#entry-team-${id}`, key: 'team' }
+                ];
+                fields.forEach(field => {
+                    const element = entry.querySelector(field.selector);
+                    if (element && layout[field.key]) {
+                        Object.assign(element.style, {
+                            left: layout[field.key].left || '0px',
+                            top: layout[field.key].top || '0px',
+                            fontSize: layout[field.key].fontSize || '16px',
+                            fontFamily: layout[field.key].fontFamily || 'Arial',
+                            fontWeight: layout[field.key].fontWeight || 'normal',
+                            fontStyle: layout[field.key].fontStyle || 'normal',
+                            textAlign: layout[field.key].textAlign || 'left',
+                            alignItems: layout[field.key].alignItems || 'flex-start',
+                        });
+                    }
+                });
+            });
+        }
+
+        loadEntries();
+        setInterval(loadEntries, 10000);
+
+        const resizer = document.getElementById('resizer');
+        const leftPanel = document.querySelector('.video-container');
+        const rightPanel = document.querySelector('.list-container');
+        let isResizing = false;
+
+        resizer.addEventListener('mousedown', function(event) {
+            isResizing = true;
+            document.addEventListener('mousemove', resizePanels);
+            document.addEventListener('mouseup', stopResizing);
+        });
+
+        function resizePanels(event) {
+            if (!isResizing) return;
+            let newLeftWidth = event.clientX;
+            let newRightWidth = window.innerWidth - newLeftWidth - resizer.offsetWidth;
+            if (newLeftWidth > 200 && newRightWidth > 200) {
+                leftPanel.style.flex = `0 0 ${newLeftWidth}px`;
+                rightPanel.style.flex = `0 0 ${newRightWidth}px`;
+            }
+        }
+
+        function stopResizing() {
+            isResizing = false;
+            document.removeEventListener('mousemove', resizePanels);
+            document.removeEventListener('mouseup', stopResizing);
+        }
+    </script>
+</body>
+</html>
