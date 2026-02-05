@@ -1,40 +1,40 @@
 function initAdmin() {
-    // Переключение меню
-    const sidebar = document.querySelector('.sidebar');
-    const collapseSidebarButton = document.getElementById('collapseSidebar');
-    const editorLink = document.querySelector('.sidebar-menu a[href="/admin"]');
-    const autoAddLink = document.getElementById('autoAddLink');
-    const previewSection = document.getElementById('preview');
-    const tableSection = document.querySelector('table');
-    const autoAddSection = document.getElementById('autoAddSection');
+  // Переключение меню
+  const sidebar = document.querySelector(".sidebar");
+  const collapseSidebarButton = document.getElementById("collapseSidebar");
+  const editorLink = document.querySelector('.sidebar-menu a[href="/admin"]');
+  const autoAddLink = document.getElementById("autoAddLink");
+  const previewSection = document.getElementById("preview");
+  const tableSection = document.querySelector("table");
+  const autoAddSection = document.getElementById("autoAddSection");
 
-    collapseSidebarButton?.addEventListener('click', () => {
-        sidebar?.classList.toggle('collapsed');
+  collapseSidebarButton?.addEventListener("click", () => {
+    sidebar?.classList.toggle("collapsed");
+  });
+
+  // Переключение секций
+  if (!editorLink || !autoAddLink || !previewSection || !tableSection || !autoAddSection) {
+    console.warn("Admin UI: missing required section elements.");
+  } else {
+    editorLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      document.querySelectorAll(".sidebar-menu .menu-item").forEach((l) => l.classList.remove("active"));
+      editorLink.classList.add("active");
+      previewSection.style.display = "block";
+      tableSection.style.display = "table";
+      autoAddSection.style.display = "none";
     });
 
-    // Переключение секций
-    if (!editorLink || !autoAddLink || !previewSection || !tableSection || !autoAddSection) {
-        console.warn('Admin UI: missing required section elements.');
-    } else {
-        editorLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            document.querySelectorAll('.sidebar-menu .menu-item').forEach(l => l.classList.remove('active'));
-            editorLink.classList.add('active');
-            previewSection.style.display = 'block';
-            tableSection.style.display = 'table';
-            autoAddSection.style.display = 'none';
-        });
-
-        autoAddLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            document.querySelectorAll('.sidebar-menu .menu-item').forEach(l => l.classList.remove('active'));
-            autoAddLink.classList.add('active');
-            previewSection.style.display = 'none';
-            tableSection.style.display = 'none';
-            autoAddSection.style.display = 'block';
-        });
-    }
-
+    autoAddLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      document.querySelectorAll(".sidebar-menu .menu-item").forEach((l) => l.classList.remove("active"));
+      autoAddLink.classList.add("active");
+      previewSection.style.display = "none";
+      tableSection.style.display = "none";
+      autoAddSection.style.display = "block";
+    });
+  }
+  
     // Добавление новой строки
     let rowCount = 1;
     function addNewRow(sendToServer = false) {
@@ -402,6 +402,89 @@ savePresetButton.addEventListener('click', () => {
     const clearEmptyRowsButton = document.getElementById('clearEmptyRowsButton');
     clearEmptyRowsButton.addEventListener('click', () => {
         cleanEmptyRows();
+    });
+
+    const clearEntriesButton = document.getElementById('clearEntriesButton');
+    clearEntriesButton?.addEventListener('click', async () => {
+        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
+            return;
+        }
+        const resp = await fetch('/entries/clear', { method: 'POST' });
+        if (resp.ok) {
+            loadEntriesFromServer();
+            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
+        } else {
+            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
+        }
+    });
+
+    const clearEntriesButton = document.getElementById("clearEntriesButton");
+  clearEntriesButton?.addEventListener("click", async () => {
+    if (!confirm("Очистить список выступающих? Это действие нельзя отменить.")) return;
+
+    const resp = await fetch("/entries/clear", { method: "POST" });
+    if (resp.ok) {
+      loadEntriesFromServer();
+      document.getElementById("importMessage").textContent = "Список выступающих очищен.";
+    } else {
+      document.getElementById("importMessage").textContent = "Не удалось очистить список.";
+    }
+  });
+
+    window.clearEntriesButton = document.getElementById('clearEntriesButton');
+    window.clearEntriesButton?.addEventListener('click', async () => {
+        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
+            return;
+        }
+        const resp = await fetch('/entries/clear', { method: 'POST' });
+        if (resp.ok) {
+            loadEntriesFromServer();
+            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
+        } else {
+            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
+        }
+    });
+
+    var clearEntriesButton = document.getElementById('clearEntriesButton');
+    clearEntriesButton?.addEventListener('click', async () => {
+        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
+            return;
+        }
+        const resp = await fetch('/entries/clear', { method: 'POST' });
+        if (resp.ok) {
+            loadEntriesFromServer();
+            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
+        } else {
+            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
+        }
+    });
+
+    const clearEntriesButton = document.getElementById('clearEntriesButton');
+    clearEntriesButton?.addEventListener('click', async () => {
+        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
+            return;
+        }
+        const resp = await fetch('/entries/clear', { method: 'POST' });
+        if (resp.ok) {
+            loadEntriesFromServer();
+            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
+        } else {
+            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
+        }
+    });
+
+    const clearEntriesButton = document.getElementById('clearEntriesButton');
+    clearEntriesButton?.addEventListener('click', async () => {
+        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
+            return;
+        }
+        const resp = await fetch('/entries/clear', { method: 'POST' });
+        if (resp.ok) {
+            loadEntriesFromServer();
+            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
+        } else {
+            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
+        }
     });
 
     const clearEntriesButton = document.getElementById('clearEntriesButton');
@@ -932,224 +1015,221 @@ setIFOButton.addEventListener('click', () => {
         document.getElementById('importMessage').textContent = `Импортировано ${importedCount} участников.`;
     });
 
-    // VK modal handlers
-    const vkStreamButton = document.getElementById("vkStreamButton");
-    const vkModal = document.getElementById("vkModal");
-    const vkCloseBtn = document.getElementById("vkCloseBtn");
-    const vkScheduleBtn = document.getElementById("vkScheduleBtn");
-    const vkStopBtn = document.getElementById("vkStopBtn");
-    const vkTabs = document.querySelectorAll(".vk-tab");
-    const vkTabPanels = document.querySelectorAll(".vk-tab-panel");
-    const vkPreviewVideo = document.getElementById("vkPreviewVideo");
-    const vkPreviewImage = document.getElementById("vkPreviewImage");
-    const vkImageInput = document.getElementById("vkImage");
-    const vkTargetsList = document.getElementById("vkTargetsList");
-    const vkTargetName = document.getElementById("vkTargetName");
-    const vkTargetUrl = document.getElementById("vkTargetUrl");
-    const vkAddTargetBtn = document.getElementById("vkAddTargetBtn");
-    const vkSaveTargetsBtn = document.getElementById("vkSaveTargetsBtn");
-    const vkStartTargetsBtn = document.getElementById("vkStartTargetsBtn");
-    let streamUrl = "";
-    let vkTargets = [];
-    let selectedTargetIds = [];
-    let hlsInstance = null;
+  // ===== VK modal handlers =====
+  const vkStreamButton = document.getElementById("vkStreamButton");
+  const vkModal = document.getElementById("vkModal");
+  const vkCloseBtn = document.getElementById("vkCloseBtn");
+  const vkScheduleBtn = document.getElementById("vkScheduleBtn");
+  const vkStopBtn = document.getElementById("vkStopBtn");
+  const vkTabs = document.querySelectorAll(".vk-tab");
+  const vkTabPanels = document.querySelectorAll(".vk-tab-panel");
 
-    function setVkPreviewImage(url) {
-        if (!vkPreviewImage) return;
-        if (url) {
-            vkPreviewImage.src = url;
-            vkPreviewImage.classList.add("visible");
+  const vkPreviewVideo = document.getElementById("vkPreviewVideo");
+  const vkPreviewImage = document.getElementById("vkPreviewImage");
+  const vkImageInput = document.getElementById("vkImage");
+
+  const vkTargetsList = document.getElementById("vkTargetsList");
+  const vkTargetName = document.getElementById("vkTargetName");
+  const vkTargetUrl = document.getElementById("vkTargetUrl");
+  const vkAddTargetBtn = document.getElementById("vkAddTargetBtn");
+  const vkSaveTargetsBtn = document.getElementById("vkSaveTargetsBtn");
+  const vkStartTargetsBtn = document.getElementById("vkStartTargetsBtn");
+
+  let streamUrl = "";
+  let vkTargets = [];
+  let selectedTargetIds = [];
+  let hlsInstance = null;
+
+  function setVkPreviewImage(url) {
+    if (!vkPreviewImage) return;
+    if (url) {
+      vkPreviewImage.src = url;
+      vkPreviewImage.classList.add("visible");
+    } else {
+      vkPreviewImage.classList.remove("visible");
+    }
+  }
+
+  function initVkPreviewPlayer(nextStreamUrl) {
+    if (!vkPreviewVideo || !nextStreamUrl) return;
+
+    if (hlsInstance) {
+      hlsInstance.destroy();
+      hlsInstance = null;
+    }
+
+    const HlsCtor = globalThis.Hls;
+    if (HlsCtor && HlsCtor.isSupported()) {
+      hlsInstance = new HlsCtor();
+      hlsInstance.loadSource(nextStreamUrl);
+      hlsInstance.attachMedia(vkPreviewVideo);
+      hlsInstance.on(HlsCtor.Events.ERROR, () => {
+        setVkPreviewImage(vkPreviewImage?.src || "");
+      });
+    } else if (vkPreviewVideo.canPlayType("application/vnd.apple.mpegurl")) {
+      vkPreviewVideo.src = nextStreamUrl;
+    }
+  }
+
+  function renderVkTargets() {
+    if (!vkTargetsList) return;
+    vkTargetsList.innerHTML = "";
+
+    vkTargets.forEach((target) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "vk-target";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = selectedTargetIds.includes(target.id);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) {
+          selectedTargetIds = [...new Set([...selectedTargetIds, target.id])];
         } else {
-            vkPreviewImage.classList.remove("visible");
+          selectedTargetIds = selectedTargetIds.filter((id) => id !== target.id);
         }
+      });
+
+      const content = document.createElement("div");
+
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.value = target.name || "";
+      nameInput.addEventListener("change", () => updateTarget(target.id, { name: nameInput.value }));
+
+      const urlInput = document.createElement("input");
+      urlInput.type = "text";
+      urlInput.value = target.url || "";
+      urlInput.placeholder = "rtmp://...";
+      urlInput.addEventListener("change", () => updateTarget(target.id, { url: urlInput.value }));
+
+      content.appendChild(nameInput);
+      content.appendChild(urlInput);
+
+      wrapper.appendChild(checkbox);
+      wrapper.appendChild(content);
+      vkTargetsList.appendChild(wrapper);
+    });
+  }
+
+  async function updateTarget(targetId, payload) {
+    await fetch(`/stream/targets/${targetId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async function loadVkStatus() {
+    const resp = await fetch("/vk/status");
+    if (!resp.ok) return;
+
+    const data = await resp.json();
+    selectedTargetIds = data.target_ids || [];
+    vkTargets = data.targets || [];
+    streamUrl = data.stream_url || "";
+
+    const titleInput = document.getElementById("vkTitle");
+    if (titleInput) titleInput.value = data.title || "";
+
+    setVkPreviewImage(data.preview_url || "");
+    initVkPreviewPlayer(streamUrl);
+    renderVkTargets();
+  }
+
+  // Tabs switching
+  vkTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      vkTabs.forEach((t) => t.classList.remove("active"));
+      vkTabPanels.forEach((p) => p.classList.remove("active"));
+      tab.classList.add("active");
+      const key = tab.dataset.tab;
+      document.querySelector(`.vk-tab-panel[data-panel="${key}"]`)?.classList.add("active");
+    });
+  });
+
+  vkStreamButton?.addEventListener("click", (e) => {
+    e.preventDefault();
+    vkModal?.classList.add("visible");
+    loadVkStatus();
+  });
+
+  vkImageInput?.addEventListener("change", () => {
+    const file = vkImageInput.files?.[0];
+    if (file) setVkPreviewImage(URL.createObjectURL(file));
+  });
+
+  vkCloseBtn?.addEventListener("click", () => {
+    vkModal?.classList.remove("visible");
+  });
+
+  vkAddTargetBtn?.addEventListener("click", async () => {
+    const name = vkTargetName?.value.trim() || "";
+    if (!name) return;
+
+    const resp = await fetch("/stream/targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, url: vkTargetUrl?.value.trim() || "" }),
+    });
+
+    if (resp.ok) {
+      if (vkTargetName) vkTargetName.value = "";
+      if (vkTargetUrl) vkTargetUrl.value = "";
+      loadVkStatus();
+    }
+  });
+
+  vkSaveTargetsBtn?.addEventListener("click", async () => {
+    await fetch("/vk/targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_ids: selectedTargetIds }),
+    });
+  });
+
+  vkStopBtn?.addEventListener("click", async () => {
+    const resp = await fetch("/vk/stop", { method: "POST" });
+    if (resp.ok) vkModal?.classList.remove("visible");
+    else alert("Ошибка.");
+  });
+
+  vkStartTargetsBtn?.addEventListener("click", async () => {
+    const title = document.getElementById("vkTitle")?.value || "";
+    if (selectedTargetIds.length === 0) {
+      alert("Выберите хотя бы одно направление трансляции.");
+      return;
     }
 
-    function initVkPreviewPlayer(nextStreamUrl) {
-        if (!vkPreviewVideo || !nextStreamUrl) return;
-        if (hlsInstance) {
-            hlsInstance.destroy();
-            hlsInstance = null;
-        }
-        if (globalThis.Hls && globalThis.Hls.isSupported()) {
-            hlsInstance = new globalThis.Hls();
-            hlsInstance.loadSource(nextStreamUrl);
-            hlsInstance.attachMedia(vkPreviewVideo);
-            hlsInstance.on(globalThis.Hls.Events.ERROR, () => {
-                setVkPreviewImage(vkPreviewImage?.src || "");
-            });
-        } else if (vkPreviewVideo.canPlayType("application/vnd.apple.mpegurl")) {
-            vkPreviewVideo.src = nextStreamUrl;
-        }
+    const resp = await fetch("/vk/start_now", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, target_ids: selectedTargetIds }),
+    });
+
+    if (resp.ok) vkModal?.classList.remove("visible");
+    else alert("Ошибка старта.");
+  });
+
+  vkScheduleBtn?.addEventListener("click", async () => {
+    const title = document.getElementById("vkTitle")?.value || "";
+    const date = document.getElementById("vkDate")?.value || "";
+    const time = document.getElementById("vkTime")?.value || "";
+    const file = document.getElementById("vkImage")?.files?.[0];
+
+    if (!date || !time) {
+      alert("Укажите дату и время трансляции.");
+      return;
     }
 
-    function renderVkTargets() {
-        if (!vkTargetsList) return;
-        vkTargetsList.innerHTML = "";
-        vkTargets.forEach(target => {
-            const wrapper = document.createElement("div");
-            wrapper.className = "vk-target";
+    const form = new FormData();
+    form.append("title", title);
+    form.append("date", date);
+    form.append("time", time);
+    selectedTargetIds.forEach((id) => form.append("target_ids", id));
+    if (file) form.append("image", file);
 
-            const checkbox = document.createElement("input");
-            checkbox.type = "checkbox";
-            checkbox.checked = selectedTargetIds.includes(target.id);
-            checkbox.addEventListener("change", () => {
-                if (checkbox.checked) {
-                    selectedTargetIds = [...new Set([...selectedTargetIds, target.id])];
-                } else {
-                    selectedTargetIds = selectedTargetIds.filter(id => id !== target.id);
-                }
-            });
-
-            const content = document.createElement("div");
-            const nameInput = document.createElement("input");
-            nameInput.type = "text";
-            nameInput.value = target.name || "";
-            nameInput.addEventListener("change", () => updateTarget(target.id, { name: nameInput.value }));
-
-            const urlInput = document.createElement("input");
-            urlInput.type = "text";
-            urlInput.value = target.url || "";
-            urlInput.placeholder = "rtmp://...";
-            urlInput.addEventListener("change", () => updateTarget(target.id, { url: urlInput.value }));
-
-            content.appendChild(nameInput);
-            content.appendChild(urlInput);
-            wrapper.appendChild(checkbox);
-            wrapper.appendChild(content);
-            vkTargetsList.appendChild(wrapper);
-        });
-    }
-
-    async function updateTarget(targetId, payload) {
-        await fetch(`/stream/targets/${targetId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
-    }
-
-    async function loadVkStatus() {
-        const resp = await fetch("/vk/status");
-        if (!resp.ok) return;
-        const data = await resp.json();
-        selectedTargetIds = data.target_ids || [];
-        vkTargets = data.targets || [];
-        streamUrl = data.stream_url || "";
-        document.getElementById("vkTitle").value = data.title || "";
-        setVkPreviewImage(data.preview_url || "");
-        initVkPreviewPlayer(streamUrl);
-        renderVkTargets();
-    }
-
-    vkTabs.forEach(tab => {
-        tab.addEventListener("click", () => {
-            vkTabs.forEach(item => item.classList.remove("active"));
-            vkTabPanels.forEach(panel => panel.classList.remove("active"));
-            tab.classList.add("active");
-            const target = tab.dataset.tab;
-            document.querySelector(`.vk-tab-panel[data-panel="${target}"]`)?.classList.add("active");
-        });
-    });
-
-    vkStreamButton && vkStreamButton.addEventListener("click", (e) => {
-        e.preventDefault();
-        vkModal.classList.add("visible");
-        loadVkStatus();
-    });
-
-    vkImageInput?.addEventListener("change", () => {
-        const file = vkImageInput.files?.[0];
-        if (file) {
-            const localUrl = URL.createObjectURL(file);
-            setVkPreviewImage(localUrl);
-        }
-    });
-
-    vkCloseBtn && vkCloseBtn.addEventListener("click", () => {
-        vkModal.classList.remove("visible");
-    });
-
-    vkAddTargetBtn && vkAddTargetBtn.addEventListener("click", async () => {
-        const name = vkTargetName.value.trim();
-        if (!name) return;
-        const resp = await fetch("/stream/targets", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, url: vkTargetUrl.value.trim() })
-        });
-        if (resp.ok) {
-            vkTargetName.value = "";
-            vkTargetUrl.value = "";
-            loadVkStatus();
-        }
-    });
-
-    vkSaveTargetsBtn && vkSaveTargetsBtn.addEventListener("click", async () => {
-        await fetch("/vk/targets", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target_ids: selectedTargetIds })
-        });
-    });
-
-    vkStopBtn && vkStopBtn.addEventListener("click", async () => {
-        const resp = await fetch("/vk/stop", { method: "POST" });
-        if (resp.ok) {
-            vkModal.classList.remove("visible");
-        } else alert("Ошибка.");
-    });
-
-    vkStartTargetsBtn && vkStartTargetsBtn.addEventListener("click", async () => {
-        const title = document.getElementById("vkTitle").value || "";
-        if (selectedTargetIds.length === 0) {
-            alert("Выберите хотя бы одно направление трансляции.");
-            return;
-        }
-        const resp = await fetch("/vk/start_now", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ title, target_ids: selectedTargetIds })
-        });
-        if (resp.ok) {
-            vkModal.classList.remove("visible");
-        } else {
-            alert("Ошибка старта.");
-        }
-    });
-
-    vkScheduleBtn && vkScheduleBtn.addEventListener("click", async () => {
-        const title = document.getElementById("vkTitle").value || "";
-        const date = document.getElementById("vkDate").value || "";
-        const time = document.getElementById("vkTime").value || "";
-        const file = document.getElementById("vkImage").files[0];
-        if (!date || !time) {
-            alert("Укажите дату и время трансляции.");
-            return;
-        }
-
-        const form = new FormData();
-        form.append("title", title);
-        form.append("date", date);
-        form.append("time", time);
-        selectedTargetIds.forEach(id => form.append("target_ids", id));
-        if (file) form.append("image", file);
-
-        const resp = await fetch("/vk/schedule", {
-            method: "POST",
-            body: form
-        });
-        if (resp.ok) {
-            vkModal.classList.remove("visible");
-        } else {
-            alert("Ошибка планирования.");
-        }
-    });
-
-}
-
-if (globalThis.__adminScriptLoaded) {
-    console.warn('admin.js already loaded; skipping duplicate initialization.');
-} else {
-    globalThis.__adminScriptLoaded = true;
-    document.addEventListener('DOMContentLoaded', initAdmin, { once: true });
-}
+    const resp = await fetch("/vk/schedule", { method: "POST", body: form });
+    if (resp.ok) vkModal?.classList.remove("visible");
+    else alert("Ошибка планирования.");
+  });

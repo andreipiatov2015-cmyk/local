@@ -1,60 +1,56 @@
-document.addEventListener('DOMContentLoaded', () => {
-    // Проверяем, доступна ли библиотека Hls
-    if (typeof globalThis.Hls === 'undefined') {
-        console.error('Hls.js не загружен!');
-        return;
-    }
+document.addEventListener("DOMContentLoaded", () => {
+  // Проверяем, загружен ли hls.js
+  const HlsCtor = globalThis.Hls;
+  if (!HlsCtor) {
+    console.error("Hls.js не загружен");
+    return;
+  }
 
-    const video = document.getElementById('video');
-    const streamUrl = 'http://192.168.31.18:8080/hls/test.m3u8';
-    let hls = null;
+  const video = document.getElementById("video");
+  if (!video) {
+    console.error("Элемент <video> не найден");
+    return;
+  }
 
-    if (!video) {
-        console.error('Элемент video не найден.');
-        return;
-    }
+  const streamUrl = "http://192.168.31.18:8080/hls/test.m3u8";
+  let hls = null;
 
-    // Проверяем, поддерживается ли HLS в текущем браузере
-    if (globalThis.Hls.isSupported()) {
-        hls = new globalThis.Hls();
+  function initPlayer(url) {
+    if (!url) return;
 
-        // Укажите URL вашего HLS-потока (файл .m3u8)
-        hls.loadSource(streamUrl);
+    // Chrome / Firefox / Edge
+    if (HlsCtor.isSupported()) {
+      hls = new HlsCtor();
+      hls.loadSource(url);
+      hls.attachMedia(video);
 
-        // Подключаем HLS к видеоплееру
-        hls.attachMedia(video);
-
-        // Запускаем воспроизведение, когда поток готов
-        hls.on(globalThis.Hls.Events.MANIFEST_PARSED, () => {
-            video.play().catch(e => {
-                console.error('Автовоспроизведение запрещено:', e);
-                // Можно показать кнопку для ручного запуска
-            });
+      hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {
+          console.warn("Автовоспроизведение запрещено браузером");
         });
-    }
-    // Если браузер поддерживает HLS из коробки (например, Safari)
-    else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = streamUrl;
-        video.addEventListener('loadedmetadata', () => {
-            video.play().catch(e => {
-                console.error('Автовоспроизведение запрещено:', e);
-            });
-        });
-    }
-    // Если HLS не поддерживается
-    else {
-        alert('Ваш браузер не поддерживает HLS-потоки.');
-        video.innerHTML = '<p>Ваш браузер не поддерживает HLS-потоки. Пожалуйста, используйте современный браузер.</p>';
+      });
+
+      hls.on(HlsCtor.Events.ERROR, (event, data) => {
+        console.error("HLS error:", data);
+      });
+
+      return;
     }
 
-    // Заглушка для списка участников
-    const participantsList = document.getElementById('participants-list');
-    if (participantsList) {
-        participantsList.innerHTML = `
-            <li>Участник 1</li>
-            <li>Участник 2</li>
-            <li>Участник 3</li>
-            <li>Участник 4</li>
-        `;
+    // Safari / iOS
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = url;
+      video.addEventListener("loadedmetadata", () => {
+        video.play().catch(() => {
+          console.warn("Автовоспроизведение запрещено браузером");
+        });
+      });
+      video.addEventListener("error", (e) => console.error("Video error:", e));
+      return;
     }
+
+    alert("Ваш браузер не поддерживает HLS");
+  }
+
+  initPlayer(streamUrl);
 });
