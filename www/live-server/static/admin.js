@@ -404,20 +404,6 @@ savePresetButton.addEventListener('click', () => {
         cleanEmptyRows();
     });
 
-    const clearEntriesButton = document.getElementById('clearEntriesButton');
-    clearEntriesButton?.addEventListener('click', async () => {
-        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
-            return;
-        }
-        const resp = await fetch('/entries/clear', { method: 'POST' });
-        if (resp.ok) {
-            loadEntriesFromServer();
-            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
-        } else {
-            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
-        }
-    });
-
     const clearEntriesButton = document.getElementById("clearEntriesButton");
   clearEntriesButton?.addEventListener("click", async () => {
     if (!confirm("Очистить список выступающих? Это действие нельзя отменить.")) return;
@@ -431,75 +417,6 @@ savePresetButton.addEventListener('click', () => {
     }
   });
 
-    window.clearEntriesButton = document.getElementById('clearEntriesButton');
-    window.clearEntriesButton?.addEventListener('click', async () => {
-        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
-            return;
-        }
-        const resp = await fetch('/entries/clear', { method: 'POST' });
-        if (resp.ok) {
-            loadEntriesFromServer();
-            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
-        } else {
-            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
-        }
-    });
-
-    var clearEntriesButton = document.getElementById('clearEntriesButton');
-    clearEntriesButton?.addEventListener('click', async () => {
-        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
-            return;
-        }
-        const resp = await fetch('/entries/clear', { method: 'POST' });
-        if (resp.ok) {
-            loadEntriesFromServer();
-            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
-        } else {
-            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
-        }
-    });
-
-    const clearEntriesButton = document.getElementById('clearEntriesButton');
-    clearEntriesButton?.addEventListener('click', async () => {
-        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
-            return;
-        }
-        const resp = await fetch('/entries/clear', { method: 'POST' });
-        if (resp.ok) {
-            loadEntriesFromServer();
-            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
-        } else {
-            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
-        }
-    });
-
-    const clearEntriesButton = document.getElementById('clearEntriesButton');
-    clearEntriesButton?.addEventListener('click', async () => {
-        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
-            return;
-        }
-        const resp = await fetch('/entries/clear', { method: 'POST' });
-        if (resp.ok) {
-            loadEntriesFromServer();
-            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
-        } else {
-            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
-        }
-    });
-
-    const clearEntriesButton = document.getElementById('clearEntriesButton');
-    clearEntriesButton?.addEventListener('click', async () => {
-        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
-            return;
-        }
-        const resp = await fetch('/entries/clear', { method: 'POST' });
-        if (resp.ok) {
-            loadEntriesFromServer();
-            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
-        } else {
-            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
-        }
-    });
 
 // Управление областью предпросмотра и сеткой
 const previewContent = document.getElementById('previewContent');
@@ -1233,3 +1150,4 @@ setIFOButton.addEventListener('click', () => {
     if (resp.ok) vkModal?.classList.remove("visible");
     else alert("Ошибка планирования.");
   });
+}
