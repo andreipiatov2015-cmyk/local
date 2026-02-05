@@ -21,6 +21,7 @@
         <span class="text">Редактор</span>
       </a>
 
+      <!-- ВАЖНО: если "Автодобавление" — это секция внутри /admin, то ссылка должна вести на /admin -->
       <a class="menu-item" href="/admin">
         <span class="icon">📥</span>
         <span class="text">Автодобавление</span>
@@ -69,118 +70,145 @@
 
   <script src="/static/layout.js"></script>
   <script>
-    const video = document.getElementById('video');
-    const previewImage = document.getElementById('broadcastPreview');
+    document.addEventListener("DOMContentLoaded", () => {
+      const video = document.getElementById("video");
+      const previewImage = document.getElementById("broadcastPreview");
 
-    function showPreviewImage(url) {
-      if (!url) return;
-      previewImage.src = url;
-      previewImage.classList.add('visible');
-      video.style.display = 'none';
-    }
-
-    function initPlayer(streamUrl, previewUrl) {
-      if (!streamUrl) {
-        showPreviewImage(previewUrl);
-        return;
+      function showPreviewImage(url) {
+        if (!previewImage) return;
+        if (!url) return;
+        previewImage.src = url;
+        previewImage.classList.add("visible");
+        if (video) video.style.display = "none";
       }
 
-      if (Hls.isSupported()) {
-        const hls = new Hls();
-        hls.loadSource(streamUrl);
-        hls.attachMedia(video);
+      function initPlayer(streamUrl, previewUrl) {
+        if (!video) return;
 
-        hls.on(Hls.Events.MANIFEST_PARSED, function () {
-          video.play();
-        });
-
-        hls.on(Hls.Events.ERROR, function () {
+        if (!streamUrl) {
           showPreviewImage(previewUrl);
-        });
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = streamUrl;
+          return;
+        }
 
-        video.addEventListener('loadedmetadata', function () {
-          video.play();
-        });
+        const HlsCtor = globalThis.Hls;
 
-        video.addEventListener('error', function () {
-          showPreviewImage(previewUrl);
-        });
-      } else {
-        showPreviewImage(previewUrl);
-      }
-    }
+        // Chrome/Firefox/Edge через hls.js
+        if (HlsCtor && HlsCtor.isSupported()) {
+          const hls = new HlsCtor();
+          hls.loadSource(streamUrl);
+          hls.attachMedia(video);
 
-    fetch('/vk/public_status')
-      .then(response => response.json())
-      .then(status => {
-        initPlayer(status.stream_url || '', status.preview_url || '');
-      })
-      .catch(() => {
-        initPlayer('', '');
-      });
-
-    // ====== Ниже всё остальное, как было ======
-    function loadEntries() {
-      fetch('/entries')
-        .then(response => response.json())
-        .then(data => {
-          const entriesContainer = document.getElementById('entries');
-          entriesContainer.innerHTML = '';
-
-          data.forEach(entry => {
-            const entryDiv = document.createElement('div');
-            entryDiv.classList.add('entry');
-            entryDiv.innerHTML = `
-              <span class="entry-field" id="entry-number-${entry.id}">№${entry.id}</span>
-              <span class="entry-field" id="entry-fio-${entry.id}">${entry.name || ''}</span>
-              <span class="entry-field" id="entry-act-${entry.id}">${entry.performance || ''}</span>
-              <span class="entry-field" id="entry-team-${entry.id}">${entry.group || ''}${entry.territory ? ', ' + entry.territory : ''}</span>
-            `;
-            entriesContainer.appendChild(entryDiv);
+          hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
+            video.play().catch(() => {
+              // автоплей может быть запрещён — это не критично
+            });
           });
 
-          applyPreviewLayout();
+          hls.on(HlsCtor.Events.ERROR, () => {
+            showPreviewImage(previewUrl);
+          });
+
+          return;
+        }
+
+        // Safari/iOS: нативный HLS
+        if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = streamUrl;
+
+          video.addEventListener("loadedmetadata", () => {
+            video.play().catch(() => {});
+          });
+
+          video.addEventListener("error", () => {
+            showPreviewImage(previewUrl);
+          });
+
+          return;
+        }
+
+        // если совсем никак
+        showPreviewImage(previewUrl);
+      }
+
+      // Получаем публичный статус VK (stream_url / preview_url)
+      fetch("/vk/public_status")
+        .then((r) => r.json())
+        .then((status) => {
+          initPlayer(status.stream_url || "", status.preview_url || "");
         })
         .catch(() => {
-          document.getElementById('entries').innerHTML = '<p>Ошибка загрузки данных.</p>';
+          initPlayer("", "");
         });
-    }
 
-    function applyPreviewLayout() {
-      const layout = JSON.parse(localStorage.getItem('previewLayout') || '{}');
+      function loadEntries() {
+        fetch("/entries")
+          .then((r) => r.json())
+          .then((data) => {
+            const entriesContainer = document.getElementById("entries");
+            if (!entriesContainer) return;
 
-      document.querySelectorAll('.entry').forEach(entry => {
-        const id = entry.querySelector('.entry-field').id.split('-')[2];
+            entriesContainer.innerHTML = "";
 
-        const fields = [
-          { selector: `#entry-number-${id}`, key: 'number' },
-          { selector: `#entry-fio-${id}`, key: 'fio' },
-          { selector: `#entry-act-${id}`, key: 'act' },
-          { selector: `#entry-team-${id}`, key: 'team' }
-        ];
-
-        fields.forEach(field => {
-          const element = entry.querySelector(field.selector);
-          if (element && layout[field.key]) {
-            Object.assign(element.style, {
-              left: layout[field.key].left || '0px',
-              top: layout[field.key].top || '0px',
-              fontSize: layout[field.key].fontSize || '16px',
-              fontFamily: layout[field.key].fontFamily || 'Arial',
-              fontWeight: layout[field.key].fontWeight || 'normal',
-              fontStyle: layout[field.key].fontStyle || 'normal',
-              textAlign: layout[field.key].textAlign || 'left',
-              alignItems: layout[field.key].alignItems || 'flex-start',
+            data.forEach((entry) => {
+              const entryDiv = document.createElement("div");
+              entryDiv.classList.add("entry");
+              entryDiv.innerHTML = `
+                <span class="entry-field" id="entry-number-${entry.id}">№${entry.id}</span>
+                <span class="entry-field" id="entry-fio-${entry.id}">${entry.name || ""}</span>
+                <span class="entry-field" id="entry-act-${entry.id}">${entry.performance || ""}</span>
+                <span class="entry-field" id="entry-team-${entry.id}">
+                  ${entry.group || ""}${entry.territory ? ", " + entry.territory : ""}
+                </span>
+              `;
+              entriesContainer.appendChild(entryDiv);
             });
-          }
-        });
-      });
-    }
 
-    loadEntries();
-    setInterval(loadEntries, 10000);
+            applyPreviewLayout();
+          })
+          .catch(() => {
+            const entriesContainer = document.getElementById("entries");
+            if (entriesContainer) entriesContainer.innerHTML = "<p>Ошибка загрузки данных.</p>";
+          });
+      }
+
+      function applyPreviewLayout() {
+        const layout = JSON.parse(localStorage.getItem("previewLayout") || "{}");
+
+        document.querySelectorAll(".entry").forEach((entry) => {
+          const firstField = entry.querySelector(".entry-field");
+          if (!firstField) return;
+
+          const id = firstField.id.split("-")[2];
+
+          const fields = [
+            { selector: `#entry-number-${id}`, key: "number" },
+            { selector: `#entry-fio-${id}`, key: "fio" },
+            { selector: `#entry-act-${id}`, key: "act" },
+            { selector: `#entry-team-${id}`, key: "team" },
+          ];
+
+          fields.forEach((field) => {
+            const element = entry.querySelector(field.selector);
+            if (!element) return;
+            if (!layout[field.key]) return;
+
+            Object.assign(element.style, {
+              left: layout[field.key].left || "0px",
+              top: layout[field.key].top || "0px",
+              fontSize: layout[field.key].fontSize || "16px",
+              fontFamily: layout[field.key].fontFamily || "Arial",
+              fontWeight: layout[field.key].fontWeight || "normal",
+              fontStyle: layout[field.key].fontStyle || "normal",
+              textAlign: layout[field.key].textAlign || "left",
+              alignItems: layout[field.key].alignItems || "flex-start",
+            });
+          });
+        });
+      }
+
+      loadEntries();
+      setInterval(loadEntries, 10000);
+    });
   </script>
 </body>
 </html>

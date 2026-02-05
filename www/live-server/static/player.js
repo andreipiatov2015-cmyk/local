@@ -30,6 +30,10 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       });
 
+      hls.on(HlsCtor.Events.ERROR, (event, data) => {
+        console.error("HLS error:", data);
+      });
+
       return;
     }
 
@@ -41,6 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
           console.warn("Автовоспроизведение запрещено браузером");
         });
       });
+      video.addEventListener("error", (e) => console.error("Video error:", e));
       return;
     }
 

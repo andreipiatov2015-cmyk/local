@@ -404,6 +404,20 @@ savePresetButton.addEventListener('click', () => {
         cleanEmptyRows();
     });
 
+    const clearEntriesButton = document.getElementById('clearEntriesButton');
+    clearEntriesButton?.addEventListener('click', async () => {
+        if (!confirm('Очистить список выступающих? Это действие нельзя отменить.')) {
+            return;
+        }
+        const resp = await fetch('/entries/clear', { method: 'POST' });
+        if (resp.ok) {
+            loadEntriesFromServer();
+            document.getElementById('importMessage').textContent = 'Список выступающих очищен.';
+        } else {
+            document.getElementById('importMessage').textContent = 'Не удалось очистить список.';
+        }
+    });
+
     const clearEntriesButton = document.getElementById("clearEntriesButton");
   clearEntriesButton?.addEventListener("click", async () => {
     if (!confirm("Очистить список выступающих? Это действие нельзя отменить.")) return;
@@ -1001,11 +1015,14 @@ setIFOButton.addEventListener('click', () => {
         document.getElementById('importMessage').textContent = `Импортировано ${importedCount} участников.`;
     });
 
-const vkStreamButton = document.getElementById("vkStreamButton");
+  // ===== VK modal handlers =====
+  const vkStreamButton = document.getElementById("vkStreamButton");
   const vkModal = document.getElementById("vkModal");
   const vkCloseBtn = document.getElementById("vkCloseBtn");
   const vkScheduleBtn = document.getElementById("vkScheduleBtn");
   const vkStopBtn = document.getElementById("vkStopBtn");
+  const vkTabs = document.querySelectorAll(".vk-tab");
+  const vkTabPanels = document.querySelectorAll(".vk-tab-panel");
 
   const vkPreviewVideo = document.getElementById("vkPreviewVideo");
   const vkPreviewImage = document.getElementById("vkPreviewImage");
@@ -1046,7 +1063,9 @@ const vkStreamButton = document.getElementById("vkStreamButton");
       hlsInstance = new HlsCtor();
       hlsInstance.loadSource(nextStreamUrl);
       hlsInstance.attachMedia(vkPreviewVideo);
-      hlsInstance.on(HlsCtor.Events.ERROR, () => setVkPreviewImage(vkPreviewImage?.src || ""));
+      hlsInstance.on(HlsCtor.Events.ERROR, () => {
+        setVkPreviewImage(vkPreviewImage?.src || "");
+      });
     } else if (vkPreviewVideo.canPlayType("application/vnd.apple.mpegurl")) {
       vkPreviewVideo.src = nextStreamUrl;
     }
@@ -1117,6 +1136,17 @@ const vkStreamButton = document.getElementById("vkStreamButton");
     initVkPreviewPlayer(streamUrl);
     renderVkTargets();
   }
+
+  // Tabs switching
+  vkTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      vkTabs.forEach((t) => t.classList.remove("active"));
+      vkTabPanels.forEach((p) => p.classList.remove("active"));
+      tab.classList.add("active");
+      const key = tab.dataset.tab;
+      document.querySelector(`.vk-tab-panel[data-panel="${key}"]`)?.classList.add("active");
+    });
+  });
 
   vkStreamButton?.addEventListener("click", (e) => {
     e.preventDefault();
@@ -1203,12 +1233,3 @@ const vkStreamButton = document.getElementById("vkStreamButton");
     if (resp.ok) vkModal?.classList.remove("visible");
     else alert("Ошибка планирования.");
   });
-}
-
-// ===== Единственный запуск admin.js =====
-if (globalThis.__adminScriptLoaded) {
-  console.warn("admin.js already loaded; skipping duplicate initialization.");
-} else {
-  globalThis.__adminScriptLoaded = true;
-  document.addEventListener("DOMContentLoaded", initAdmin, { once: true });
-}
