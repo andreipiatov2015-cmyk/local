@@ -19,6 +19,7 @@ import signal
 
 BASE_DIR = Path(__file__).resolve().parent
 SETTINGS_FILE = BASE_DIR / "vk_settings.json"
+TARGETS_FILE = BASE_DIR / "stream_targets.json"
 FFMPEG = os.environ.get("FFMPEG_PATH", "ffmpeg")
 LOCAL_RTMP_TEMPLATE = "rtmp://127.0.0.1/live/{stream}"
 LOGFILE = BASE_DIR / "start_vk.log"
@@ -40,6 +41,15 @@ def load_settings():
             log(f"Ошибка чтения настроек: {e}")
             return {}
     return {}
+
+def load_targets():
+    if TARGETS_FILE.exists():
+        try:
+            return json.loads(TARGETS_FILE.read_text(encoding="utf-8"))
+        except Exception as e:
+            log(f"Ошибка чтения целей трансляции: {e}")
+            return []
+    return []
 
 def to_dt(s):
     if not s:
@@ -115,7 +125,7 @@ def run_live_push(vk_url, stream_name):
         log(f"Ошибка запуска live ffmpeg: {e}")
         return None
 
-def wait_and_switch(preview_proc, vk_url, stream_name, start_dt):
+def wait_and_switch(preview_procs, vk_urls, stream_name, start_dt):
     """
     Ждём до start_dt, затем убиваем preview_proc и запускаем live push.
     """
@@ -133,18 +143,22 @@ def wait_and_switch(preview_proc, vk_url, stream_name, start_dt):
             slept += min(5, secs - slept)
     # время пришло
     log("Время старта наступило — переключаем на live")
-    try:
-        if preview_proc and preview_proc.poll() is None:
-            os.killpg(os.getpgid(preview_proc.pid), signal.SIGTERM)
-            log("Остановлен preview ffmpeg")
-    except Exception as e:
-        log("Ошибка при остановке preview: " + str(e))
-
-    live_proc = run_live_push(vk_url, stream_name)
-    # дождёмся завершения live_proc — он закончится, когда поток закончится
-    if live_proc:
+    for proc in preview_procs:
         try:
-            live_proc.wait()
+            if proc and proc.poll() is None:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                log("Остановлен preview ffmpeg")
+        except Exception as e:
+            log("Ошибка при остановке preview: " + str(e))
+
+    live_procs = []
+    for url in vk_urls:
+        live_proc = run_live_push(url, stream_name)
+        if live_proc:
+            live_procs.append(live_proc)
+    for proc in live_procs:
+        try:
+            proc.wait()
             log("Live push процесс завершился")
         except Exception as e:
             log("Live push wait error: " + str(e))
@@ -156,13 +170,24 @@ def main():
 
     stream_name = sys.argv[1]
     settings = load_settings()
+    targets = load_targets()
     enabled = settings.get("enabled", False)
-    vk_url = settings.get("vk_rtmp_url")
     preview_path = settings.get("preview_path")  # относительный или абсолютный путь
     start_str = settings.get("scheduled_start")  # ISO string
     title = settings.get("title")
+    target_ids = settings.get("target_ids") or []
 
-    if not enabled or not vk_url:
+    active_targets = [t for t in targets if t.get("enabled", True)]
+    if target_ids:
+        active_targets = [t for t in active_targets if t.get("id") in target_ids]
+    active_targets = [t for t in active_targets if t.get("id") != "tv"]
+    vk_key = settings.get("vk_rtmp_url")
+    if vk_key:
+        vk_urls = [vk_key]
+    else:
+        vk_urls = [t.get("url") for t in active_targets if t.get("url")]
+
+    if not enabled or not vk_urls:
         log("VK пуш отключён или не задан vk_rtmp_url")
         return
 
@@ -172,15 +197,21 @@ def main():
     # если есть scheduled_start и оно в будущем => пушим preview и ждём
     if start_dt and start_dt > now:
         # запустить preview push
-        p_preview = run_preview_push(vk_url, preview_path, start_dt, title)
+        preview_procs = []
+        for url in vk_urls:
+            preview_procs.append(run_preview_push(url, preview_path, start_dt, title))
         # ждать и переключиться
-        wait_and_switch(p_preview, vk_url, stream_name, start_dt)
+        wait_and_switch(preview_procs, vk_urls, stream_name, start_dt)
     else:
         # start_dt отсутствует или уже в прошлом -> пушим live сразу
-        p_live = run_live_push(vk_url, stream_name)
-        if p_live:
-            p_live.wait()
-            log("Live push finished")
+        live_procs = []
+        for url in vk_urls:
+            p_live = run_live_push(url, stream_name)
+            if p_live:
+                live_procs.append(p_live)
+        for proc in live_procs:
+            proc.wait()
+        log("Live push finished")
 
 if __name__ == "__main__":
     try:
