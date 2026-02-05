@@ -1151,3 +1151,9 @@ setIFOButton.addEventListener('click', () => {
     else alert("Ошибка планирования.");
   });
 }
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initAdmin);
+} else {
+  initAdmin();
+}
