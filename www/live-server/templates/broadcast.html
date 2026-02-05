@@ -147,10 +147,14 @@
       fetch("/vk/public_status")
         .then((r) => r.json())
         .then((status) => {
-          initPlayer(status.stream_url || "", status.preview_url || "");
+          initPlayer(
+            status.stream_url || "",
+            status.preview_url || "",
+            Boolean(status.show_preview)
+          );
         })
         .catch(() => {
-          initPlayer("", "");
+          initPlayer("", "", true);
         });
 
       function loadEntries() {

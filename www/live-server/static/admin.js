@@ -1108,13 +1108,42 @@ setIFOButton.addEventListener('click', () => {
     loadVkStatus();
   });
 
-  vkImageInput?.addEventListener("change", () => {
+  vkImageInput?.addEventListener("change", async () => {
     const file = vkImageInput.files?.[0];
-    if (file) setVkPreviewImage(URL.createObjectURL(file));
+    if (!file) return;
+
+    const form = new FormData();
+    form.append("image", file);
+
+    const resp = await fetch("/vk/preview", { method: "POST", body: form });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.preview_url) {
+        setVkPreviewImage(data.preview_url);
+        lastVkPreviewUrl = data.preview_url;
+        applyPreviewVisibility();
+      }
+    } else {
+      document.getElementById("importMessage").textContent = "Не удалось сохранить превью.";
+    }
   });
 
   vkCloseBtn?.addEventListener("click", () => {
     vkModal?.classList.remove("visible");
+  });
+
+  vkOverlayToggleBtn?.addEventListener("click", async () => {
+    const nextValue = !showPreviewOnly;
+    const resp = await fetch("/vk/preview_visibility", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ show_preview: nextValue }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      showPreviewOnly = Boolean(data.show_preview);
+      applyPreviewVisibility();
+    }
   });
 
   vkOverlayToggleBtn?.addEventListener("click", () => {
