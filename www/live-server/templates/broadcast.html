@@ -4,38 +4,107 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Трансляция</title>
+    <link rel="stylesheet" href="/static/admin.css">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <style>
-        /* ... твои стили без изменений ... */
-    </style>
 </head>
 <body>
-    <div class="video-container">
-        <video id="video" controls></video>
-    </div>
-    <div id="resizer"></div>
-    <div class="list-container">
-        <h2>Список выступающих</h2>
-        <div id="entries"></div>
-    </div>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <span class="logo">🎥 Live Admin</span>
+            <button id="collapseSidebar">❮</button>
+        </div>
+        <nav class="sidebar-menu">
+            <a class="menu-item" href="/admin">
+                <span class="icon">✏️</span>
+                <span class="text">Редактор</span>
+            </a>
+            <a class="menu-item" href="/admin">
+                <span class="icon">📥</span>
+                <span class="text">Автодобавление</span>
+            </a>
+            <a class="menu-item" href="/competition">
+                <span class="icon">🏆</span>
+                <span class="text">Конкурс</span>
+            </a>
+            <a class="menu-item active" href="/broadcast">
+                <span class="icon">📺</span>
+                <span class="text">Трансляция</span>
+            </a>
+            <a class="menu-item" href="/staff">
+                <span class="icon">👥</span>
+                <span class="text">Сотрудники</span>
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <a href="/logout" class="menu-item logout">
+                <span class="icon">🚪</span>
+                <span class="text">Выход</span>
+            </a>
+        </div>
+    </aside>
+
+    <main class="content">
+        <div class="broadcast-layout">
+            <div class="broadcast-player card">
+                <h2 class="page-title">Трансляция</h2>
+                <div class="broadcast-media">
+                    <video id="video" controls></video>
+                    <img id="broadcastPreview" alt="Превью трансляции">
+                </div>
+            </div>
+            <div class="broadcast-list card">
+                <h2 class="page-title">Список выступающих</h2>
+                <div id="entries" class="entries-list"></div>
+            </div>
+        </div>
+    </main>
+    <script src="/static/layout.js"></script>
     <script>
         const video = document.getElementById('video');
+        const previewImage = document.getElementById('broadcastPreview');
+        function showPreviewImage(url) {
+            if (!url) return;
+            previewImage.src = url;
+            previewImage.classList.add('visible');
+            video.style.display = 'none';
+        }
 
-        if (Hls.isSupported()) {
-            const hls = new Hls();
-            hls.loadSource('http://192.168.31.18:8080/hls/stream.m3u8');
-            hls.attachMedia(video);
-            hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                video.play();
+        function initPlayer(streamUrl, previewUrl) {
+            if (!streamUrl) {
+                showPreviewImage(previewUrl);
+                return;
+            }
+            if (Hls.isSupported()) {
+                const hls = new Hls();
+                hls.loadSource(streamUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                });
+                hls.on(Hls.Events.ERROR, function() {
+                    showPreviewImage(previewUrl);
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = streamUrl;
+                video.addEventListener('loadedmetadata', function() {
+                    video.play();
+                });
+                video.addEventListener('error', function() {
+                    showPreviewImage(previewUrl);
+                });
+            } else {
+                showPreviewImage(previewUrl);
+            }
+        }
+
+        fetch('/vk/public_status')
+            .then(response => response.json())
+            .then(status => {
+                initPlayer(status.stream_url || '', status.preview_url || '');
+            })
+            .catch(() => {
+                initPlayer('', '');
             });
-        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            video.src = 'http://192.168.31.18:8080/hls/stream.m3u8';
-            video.addEventListener('loadedmetadata', function() {
-                video.play();
-            });
-        } else {
-            alert('Ваш браузер не поддерживает HLS-потоки.');
-        }  // ← вот этой закрывающей скобки не хватало
 
         // ====== Ниже всё остальное, как было ======
         function loadEntries() {
@@ -93,32 +162,6 @@
         loadEntries();
         setInterval(loadEntries, 10000);
 
-        const resizer = document.getElementById('resizer');
-        const leftPanel = document.querySelector('.video-container');
-        const rightPanel = document.querySelector('.list-container');
-        let isResizing = false;
-
-        resizer.addEventListener('mousedown', function(event) {
-            isResizing = true;
-            document.addEventListener('mousemove', resizePanels);
-            document.addEventListener('mouseup', stopResizing);
-        });
-
-        function resizePanels(event) {
-            if (!isResizing) return;
-            let newLeftWidth = event.clientX;
-            let newRightWidth = window.innerWidth - newLeftWidth - resizer.offsetWidth;
-            if (newLeftWidth > 200 && newRightWidth > 200) {
-                leftPanel.style.flex = `0 0 ${newLeftWidth}px`;
-                rightPanel.style.flex = `0 0 ${newRightWidth}px`;
-            }
-        }
-
-        function stopResizing() {
-            isResizing = false;
-            document.removeEventListener('mousemove', resizePanels);
-            document.removeEventListener('mouseup', stopResizing);
-        }
     </script>
 </body>
 </html>
