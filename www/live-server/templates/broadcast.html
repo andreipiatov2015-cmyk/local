@@ -87,15 +87,10 @@
         previewImage?.classList.remove("visible");
       }
 
-      function initPlayer(streamUrl, previewUrl, forcePreview) {
+      function initPlayer(streamUrl, previewUrl) {
         if (!video) return;
 
         if (previewUrl) showPreviewImage(previewUrl);
-
-        if (forcePreview) {
-          showPreviewImage(previewUrl);
-          return;
-        }
 
         if (!streamUrl) {
           showPreviewImage(previewUrl);
