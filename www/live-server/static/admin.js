@@ -1054,10 +1054,51 @@ setIFOButton.addEventListener('click', () => {
       content.appendChild(nameInput);
       content.appendChild(urlInput);
 
-      wrapper.appendChild(checkbox);
+      const selectBtn = document.createElement("button");
+      selectBtn.type = "button";
+      selectBtn.className = "btn btn-secondary";
+      selectBtn.textContent = "Выбрать";
+      selectBtn.addEventListener("click", async () => {
+        selectedTargetId = target.id;
+        await fetch("/vk/targets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target_ids: [selectedTargetId] }),
+        });
+        renderVkTargets();
+      });
+
       wrapper.appendChild(content);
+      wrapper.appendChild(selectBtn);
       vkTargetsList.appendChild(wrapper);
     });
+  }
+
+  function renderBroadcastTargets() {
+    if (!vkBroadcastList) return;
+    vkBroadcastList.innerHTML = "";
+
+    vkTargets.forEach((target) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "vk-target vk-target-select";
+      item.textContent = target.name || "Без названия";
+      item.dataset.targetId = target.id;
+      if (target.id === selectedTargetId) {
+        item.classList.add("active");
+      }
+      item.addEventListener("click", () => {
+        selectedTargetId = target.id;
+        renderBroadcastTargets();
+        if (vkBroadcastConfirm) vkBroadcastConfirm.disabled = false;
+        if (vkBroadcastNotice) {
+          vkBroadcastNotice.textContent = `Начать трансляцию в ${target.name || "направление"}?`;
+        }
+      });
+      vkBroadcastList.appendChild(item);
+    });
+
+    if (vkBroadcastConfirm) vkBroadcastConfirm.disabled = !selectedTargetId;
   }
 
   async function updateTarget(targetId, payload) {
