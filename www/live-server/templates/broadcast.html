@@ -82,8 +82,20 @@
         if (video) video.style.display = "none";
       }
 
-      function initPlayer(streamUrl, previewUrl) {
+      function showVideo() {
+        if (video) video.style.display = "";
+        previewImage?.classList.remove("visible");
+      }
+
+      function initPlayer(streamUrl, previewUrl, forcePreview) {
         if (!video) return;
+
+        if (previewUrl) showPreviewImage(previewUrl);
+
+        if (forcePreview) {
+          showPreviewImage(previewUrl);
+          return;
+        }
 
         if (!streamUrl) {
           showPreviewImage(previewUrl);
@@ -99,6 +111,7 @@
           hls.attachMedia(video);
 
           hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
+            showVideo();
             video.play().catch(() => {
               // автоплей может быть запрещён — это не критично
             });
@@ -116,10 +129,15 @@
           video.src = streamUrl;
 
           video.addEventListener("loadedmetadata", () => {
+            showVideo();
             video.play().catch(() => {});
           });
 
           video.addEventListener("error", () => {
+            showPreviewImage(previewUrl);
+          });
+
+          video.addEventListener("ended", () => {
             showPreviewImage(previewUrl);
           });
 
@@ -134,10 +152,14 @@
       fetch("/vk/public_status")
         .then((r) => r.json())
         .then((status) => {
-          initPlayer(status.stream_url || "", status.preview_url || "");
+          initPlayer(
+            status.stream_url || "",
+            status.preview_url || "",
+            Boolean(status.show_preview)
+          );
         })
         .catch(() => {
-          initPlayer("", "");
+          initPlayer("", "", true);
         });
 
       function loadEntries() {
