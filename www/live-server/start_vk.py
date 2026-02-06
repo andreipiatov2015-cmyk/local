@@ -18,6 +18,7 @@ LOGFILE = BASE_DIR / "logs" / "start_vk.log"
 LOCK_DIR = Path("/tmp")
 
 def log(msg):
+    os.makedirs(LOGFILE.parent, exist_ok=True)
     s = f"[{datetime.datetime.utcnow().isoformat()}] {msg}"
     try:
         with open(LOGFILE, "a", encoding="utf-8") as f:
@@ -57,15 +58,38 @@ def to_dt(s):
 
 def acquire_lock(stream_name: str) -> Path | None:
     lock = LOCK_DIR / f"start_vk_{stream_name}.lock"
-    try:
+
+    def _write_lock() -> Path | None:
         fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         os.write(fd, str(os.getpid()).encode("utf-8"))
         os.close(fd)
         return lock
+
+    try:
+        return _write_lock()
     except FileExistsError:
-        # можно проверить жив ли PID внутри, но пока просто не запускаем второй раз
-        log(f"LOCK exists ({lock}), skip запуск для {stream_name}")
-        return None
+        old_pid = None
+        try:
+            old_pid = int(lock.read_text(encoding="utf-8").strip())
+        except Exception:
+            pass
+
+        if old_pid:
+            try:
+                os.kill(old_pid, 0)
+                log(f"LOCK exists ({lock}) и PID {old_pid} жив, skip запуск для {stream_name}")
+                return None
+            except ProcessLookupError:
+                log(f"Найден stale lock ({lock}), PID {old_pid} не жив — удаляю")
+            except Exception as e:
+                log(f"Не удалось проверить PID из lock {lock}: {e}")
+
+        try:
+            lock.unlink(missing_ok=True)
+            return _write_lock()
+        except Exception as e:
+            log(f"Не удалось переcоздать lock {lock}: {e}")
+            return None
 
 def release_lock(lock: Path | None):
     if not lock:
@@ -82,6 +106,7 @@ def popen_ffmpeg(cmd, stream_name: str, kind: str):
     Запуск ffmpeg с выводом в файл, чтобы видеть ошибки VK.
     """
     fflog = BASE_DIR / "logs" / f"ffmpeg_{kind}_{stream_name}.log"
+    os.makedirs(fflog.parent, exist_ok=True)
     try:
         logf = open(fflog, "a", encoding="utf-8")
     except Exception as e:
@@ -148,6 +173,23 @@ def run_live_push(vk_url, stream_name):
     ]
     return popen_ffmpeg(cmd, stream_name, "live")
 
+def already_pushing(stream_name: str) -> bool:
+    pattern = f"ffmpeg.*rtmp://127.0.0.1/live/{stream_name}"
+    try:
+        res = subprocess.run(
+            ["pgrep", "-f", pattern],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            log(f"Найден активный ffmpeg для {stream_name}: {res.stdout.strip().replace(chr(10), ', ')}")
+            return True
+    except Exception as e:
+        log(f"Не удалось проверить существующий ffmpeg: {e}")
+    return False
+
 def kill_proc(proc, name="proc"):
     try:
         if proc and proc.poll() is None:
@@ -210,6 +252,10 @@ def main():
             log("VK пуш отключён или цели не выбраны")
             return
 
+        if already_pushing(stream_name):
+            log("Повторный запуск пропущен: ретрансляция уже идёт")
+            return
+
         start_dt = to_dt(start_str) if start_str else None
         now = datetime.datetime.utcnow()
 
@@ -229,6 +275,8 @@ def main():
             for proc, logpath in live_procs:
                 rc = proc.wait()
                 log(f"Live ffmpeg завершился rc={rc}, log={logpath}")
+                if rc != 0:
+                    log("ffmpeg завершился с ошибкой, подробности в лог-файле выше")
 
     finally:
         release_lock(lock)

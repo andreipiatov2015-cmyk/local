@@ -397,6 +397,9 @@ def verify():
 VK_SETTINGS_FILE = os.path.join(BASE_DIR, "vk_settings.json")
 PREVIEW_PID_FILE = os.path.join(BASE_DIR, "start_vk_preview.pid")
 START_VK_SCRIPT = os.path.join(BASE_DIR, "start_vk.py")  # путь к скрипту, который мы писали
+VK_LOCK_TEMPLATE = "/tmp/start_vk_{stream}.lock"
+DEFAULT_STREAM_NAME = os.environ.get("RTMP_STREAM_NAME", "stream")
+
 
 def start_preview_process():
     """Запустить start_vk.py как отдельный процесс (режим preview)."""
@@ -590,6 +593,21 @@ def vk_preview_visibility():
         return jsonify({"status": "error", "message": f"Не удалось сохранить настройки: {e}"}), 500
     return jsonify({"status": "ok", "show_preview": s.get("show_preview", False)})
 
+def _start_vk_process(stream_name):
+    cmd = ["/usr/bin/python3", START_VK_SCRIPT, stream_name]
+    run_as_nobody = bool(os.environ.get("VK_START_AS_NOBODY", "1") == "1")
+    if run_as_nobody:
+        cmd = ["sudo", "-u", "nobody", *cmd]
+
+    p = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        preexec_fn=os.setsid,
+    )
+    return p, cmd
+
+
 @app.route("/vk/start_now", methods=["POST"])
 @login_required
 def vk_start_now():
@@ -597,13 +615,17 @@ def vk_start_now():
     title = ""
     target_ids = []
 
-    # поддерживаем и JSON payload, и form
     if request.is_json:
         payload = request.get_json(silent=True) or {}
         title = payload.get("title", "")
         target_ids = payload.get("target_ids") or []
     else:
         title = request.form.get("title", "")
+
+    selected_target = None
+    targets = load_stream_targets()
+    if target_ids:
+        selected_target = next((t for t in targets if t.get("id") == target_ids[0]), None)
 
     s["enabled"] = True
     s["scheduled_start"] = None
@@ -617,7 +639,33 @@ def vk_start_now():
     except Exception as e:
         return jsonify({"status": "error", "message": f"Не удалось сохранить настройки: {e}"}), 500
 
-    return jsonify({"status": "ok", "msg": "VK stream started now"})
+    stream_name = DEFAULT_STREAM_NAME
+    lock_file = VK_LOCK_TEMPLATE.format(stream=stream_name)
+    lock_removed = False
+    try:
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
+            lock_removed = True
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Не удалось снять lock {lock_file}: {e}"}), 500
+
+    try:
+        proc, cmd = _start_vk_process(stream_name)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Не удалось запустить ретрансляцию: {e}"}), 500
+
+    return jsonify({
+        "status": "ok",
+        "ok": True,
+        "msg": "VK stream start requested",
+        "stream_name": stream_name,
+        "target": selected_target,
+        "target_ids": target_ids,
+        "lock_removed": lock_removed,
+        "pid": proc.pid,
+        "command": cmd,
+    })
+
 
 @app.route("/vk/stop", methods=["POST"])
 @login_required
