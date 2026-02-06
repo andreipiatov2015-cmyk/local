@@ -180,12 +180,11 @@ def main():
     active_targets = [t for t in targets if t.get("enabled", True)]
     if target_ids:
         active_targets = [t for t in active_targets if t.get("id") in target_ids]
-    active_targets = [t for t in active_targets if t.get("id") != "tv"]
-    vk_key = settings.get("vk_rtmp_url")
-    if vk_key:
-        vk_urls = [vk_key]
-    else:
-        vk_urls = [t.get("url") for t in active_targets if t.get("url")]
+    vk_urls = [t.get("url") for t in active_targets if t.get("url")]
+    if not vk_urls:
+        vk_key = settings.get("vk_rtmp_url")
+        if vk_key:
+            vk_urls = [vk_key]
 
     if not enabled or not vk_urls:
         log("VK пуш отключён или не задан vk_rtmp_url")
