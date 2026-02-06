@@ -936,22 +936,16 @@ setIFOButton.addEventListener('click', () => {
   const vkStreamButton = document.getElementById("vkStreamButton");
   const vkModal = document.getElementById("vkModal");
   const vkCloseBtn = document.getElementById("vkCloseBtn");
+  const vkScheduleBtn = document.getElementById("vkScheduleBtn");
   const vkStopBtn = document.getElementById("vkStopBtn");
-  const vkBroadcastToBtn = document.getElementById("vkBroadcastToBtn");
   const vkOverlayToggleBtn = document.getElementById("vkOverlayToggle");
   const vkTabs = document.querySelectorAll(".vk-tab");
   const vkTabPanels = document.querySelectorAll(".vk-tab-panel");
 
   const vkPreviewVideo = document.getElementById("vkPreviewVideo");
   const vkPreviewImage = document.getElementById("vkPreviewImage");
+  const vkPreviewMedia = document.querySelector(".vk-preview-media");
   const vkImageInput = document.getElementById("vkImage");
-  const vkUploadPreviewBtn = document.getElementById("vkUploadPreview");
-  const vkBroadcastModal = document.getElementById("vkBroadcastModal");
-  const vkBroadcastClose = document.getElementById("vkBroadcastClose");
-  const vkBroadcastCancel = document.getElementById("vkBroadcastCancel");
-  const vkBroadcastConfirm = document.getElementById("vkBroadcastConfirm");
-  const vkBroadcastList = document.getElementById("vkBroadcastList");
-  const vkBroadcastNotice = document.getElementById("vkBroadcastNotice");
 
   const vkTargetsList = document.getElementById("vkTargetsList");
   const vkTargetName = document.getElementById("vkTargetName");
@@ -962,29 +956,9 @@ setIFOButton.addEventListener('click', () => {
 
   let streamUrl = "";
   let vkTargets = [];
-  let selectedTargetId = "";
+  let selectedTargetIds = [];
   let hlsInstance = null;
   let lastVkPreviewUrl = "";
-  let showPreviewOnly = false;
-
-  function updateOverlayToggleButton() {
-    if (!vkOverlayToggleBtn) return;
-    vkOverlayToggleBtn.classList.toggle("active", showPreviewOnly);
-    vkOverlayToggleBtn.textContent = showPreviewOnly
-      ? "Показать изображение: включено"
-      : "Показать изображение: выключено";
-  }
-
-  function applyPreviewVisibility() {
-    if (showPreviewOnly) {
-      showVkPreviewImage(lastVkPreviewUrl);
-    } else if (streamUrl) {
-      showVkPreviewVideo();
-    } else {
-      showVkPreviewImage(lastVkPreviewUrl);
-    }
-    updateOverlayToggleButton();
-  }
 
   function stopVkPreviewPlayer() {
     if (!vkPreviewVideo) return;
@@ -1052,9 +1026,17 @@ setIFOButton.addEventListener('click', () => {
     vkTargets.forEach((target) => {
       const wrapper = document.createElement("div");
       wrapper.className = "vk-target";
-      if (target.id === selectedTargetId) {
-        wrapper.classList.add("active");
-      }
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = selectedTargetIds.includes(target.id);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) {
+          selectedTargetIds = [...new Set([...selectedTargetIds, target.id])];
+        } else {
+          selectedTargetIds = selectedTargetIds.filter((id) => id !== target.id);
+        }
+      });
 
       const content = document.createElement("div");
 
@@ -1132,7 +1114,7 @@ setIFOButton.addEventListener('click', () => {
     if (!resp.ok) return;
 
     const data = await resp.json();
-    selectedTargetId = (data.target_ids && data.target_ids[0]) || "";
+    selectedTargetIds = data.target_ids || [];
     vkTargets = data.targets || [];
     streamUrl = data.stream_url || "";
 
@@ -1140,12 +1122,12 @@ setIFOButton.addEventListener('click', () => {
     if (titleInput) titleInput.value = data.title || "";
 
     if (data.preview_url) setVkPreviewImage(data.preview_url);
-    showPreviewOnly = Boolean(data.show_preview);
-    applyPreviewVisibility();
-    if (streamUrl && !showPreviewOnly) {
+    if (streamUrl) {
+      showVkPreviewVideo();
       initVkPreviewPlayer(streamUrl);
-    } else if (!streamUrl) {
+    } else {
       stopVkPreviewPlayer();
+      showVkPreviewImage(data.preview_url || lastVkPreviewUrl);
     }
     renderVkTargets();
   }
@@ -1167,18 +1149,8 @@ setIFOButton.addEventListener('click', () => {
     loadVkStatus();
   });
 
-  vkBroadcastToBtn?.addEventListener("click", () => {
-    renderBroadcastTargets();
-    if (vkBroadcastNotice) {
-      vkBroadcastNotice.textContent = selectedTargetId
-        ? `Начать трансляцию в ${vkTargets.find((t) => t.id === selectedTargetId)?.name || "направление"}?`
-        : "Выберите направление трансляции.";
-    }
-    vkBroadcastModal?.classList.add("visible");
-  });
-
-  async function uploadPreviewImage() {
-    const file = vkImageInput?.files?.[0];
+  vkImageInput?.addEventListener("change", async () => {
+    const file = vkImageInput.files?.[0];
     if (!file) return;
 
     const form = new FormData();
@@ -1195,44 +1167,10 @@ setIFOButton.addEventListener('click', () => {
     } else {
       document.getElementById("importMessage").textContent = "Не удалось сохранить превью.";
     }
-  }
-
-  vkUploadPreviewBtn?.addEventListener("click", uploadPreviewImage);
+  });
 
   vkCloseBtn?.addEventListener("click", () => {
     vkModal?.classList.remove("visible");
-  });
-
-  const closeBroadcastModal = () => {
-    vkBroadcastModal?.classList.remove("visible");
-  };
-
-  vkBroadcastClose?.addEventListener("click", closeBroadcastModal);
-  vkBroadcastCancel?.addEventListener("click", closeBroadcastModal);
-
-  vkBroadcastConfirm?.addEventListener("click", async () => {
-    if (!selectedTargetId) return;
-    await fetch("/vk/targets", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_ids: [selectedTargetId] }),
-    });
-
-    const title = document.getElementById("vkTitle")?.value || "";
-    const resp = await fetch("/vk/start_now", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, target_ids: [selectedTargetId] }),
-    });
-
-    if (resp.ok) {
-      showPreviewOnly = false;
-      applyPreviewVisibility();
-      closeBroadcastModal();
-      vkModal?.classList.remove("visible");
-    } else {
-      alert("Ошибка старта.");
-    }
   });
 
   vkOverlayToggleBtn?.addEventListener("click", async () => {
@@ -1247,6 +1185,18 @@ setIFOButton.addEventListener('click', () => {
       showPreviewOnly = Boolean(data.show_preview);
       applyPreviewVisibility();
     }
+  });
+
+  vkOverlayToggleBtn?.addEventListener("click", () => {
+    overlayEnabled = !overlayEnabled;
+    localStorage.setItem("vkOverlayEnabled", String(overlayEnabled));
+    applyOverlayState();
+  });
+
+  vkOverlayToggleBtn?.addEventListener("click", () => {
+    overlayEnabled = !overlayEnabled;
+    localStorage.setItem("vkOverlayEnabled", String(overlayEnabled));
+    applyOverlayState();
   });
 
   vkAddTargetBtn?.addEventListener("click", async () => {
@@ -1267,11 +1217,10 @@ setIFOButton.addEventListener('click', () => {
   });
 
   vkSaveTargetsBtn?.addEventListener("click", async () => {
-    if (!selectedTargetId) return;
     await fetch("/vk/targets", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_ids: [selectedTargetId] }),
+      body: JSON.stringify({ target_ids: selectedTargetIds }),
     });
   });
 
@@ -1287,24 +1236,42 @@ setIFOButton.addEventListener('click', () => {
 
   vkStartTargetsBtn?.addEventListener("click", async () => {
     const title = document.getElementById("vkTitle")?.value || "";
-    if (!selectedTargetId) {
-      alert("Выберите направление трансляции во вкладке \"Куда транслировать\".");
+    if (selectedTargetIds.length === 0) {
+      alert("Выберите хотя бы одно направление трансляции.");
       return;
     }
 
     const resp = await fetch("/vk/start_now", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, target_ids: [selectedTargetId] }),
+      body: JSON.stringify({ title, target_ids: selectedTargetIds }),
     });
 
-    if (resp.ok) {
-      showPreviewOnly = false;
-      applyPreviewVisibility();
-      vkModal?.classList.remove("visible");
-    } else {
-      alert("Ошибка старта.");
+    if (resp.ok) vkModal?.classList.remove("visible");
+    else alert("Ошибка старта.");
+  });
+
+  vkScheduleBtn?.addEventListener("click", async () => {
+    const title = document.getElementById("vkTitle")?.value || "";
+    const date = document.getElementById("vkDate")?.value || "";
+    const time = document.getElementById("vkTime")?.value || "";
+    const file = document.getElementById("vkImage")?.files?.[0];
+
+    if (!date || !time) {
+      alert("Укажите дату и время трансляции.");
+      return;
     }
+
+    const form = new FormData();
+    form.append("title", title);
+    form.append("date", date);
+    form.append("time", time);
+    selectedTargetIds.forEach((id) => form.append("target_ids", id));
+    if (file) form.append("image", file);
+
+    const resp = await fetch("/vk/schedule", { method: "POST", body: form });
+    if (resp.ok) vkModal?.classList.remove("visible");
+    else alert("Ошибка планирования.");
   });
 }
 

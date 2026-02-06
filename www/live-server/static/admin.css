@@ -657,6 +657,18 @@ tr:hover {
     object-fit: cover;
 }
 
+.vk-preview-media.overlay-enabled video {
+    position: relative;
+    z-index: 1;
+}
+
+.vk-preview-media.overlay-enabled img.visible {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+}
+
 .vk-preview-media video.hidden {
     display: none;
 }
@@ -677,29 +689,13 @@ tr:hover {
 
 .vk-target {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: auto 1fr;
     gap: 12px;
     align-items: center;
     padding: 10px;
     border-radius: 10px;
     border: 1px solid #e2e8f0;
     background: #f8fafc;
-}
-
-.vk-target.active {
-    border-color: #2563eb;
-    background: #eff6ff;
-}
-
-.vk-target-select {
-    grid-template-columns: 1fr;
-    text-align: left;
-    cursor: pointer;
-}
-
-.vk-target-select.active {
-    border-color: #2563eb;
-    background: #eff6ff;
 }
 
 .vk-target input[type="text"] {
@@ -710,11 +706,6 @@ tr:hover {
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
-}
-
-.status-text {
-    margin: 4px 0 0;
-    color: #475569;
 }
 
 .icon-btn {
