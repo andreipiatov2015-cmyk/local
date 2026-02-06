@@ -948,6 +948,8 @@ setIFOButton.addEventListener('click', () => {
   const vkTargetName = document.getElementById("vkTargetName");
   const vkTargetUrl = document.getElementById("vkTargetUrl");
   const vkAddTargetBtn = document.getElementById("vkAddTargetBtn");
+  const vkTargetsList = document.getElementById("vkTargetsList");
+  const vkTargetsEmpty = document.getElementById("vkTargetsEmpty");
   const vkBroadcastModal = document.getElementById("vkBroadcastModal");
   const vkBroadcastList = document.getElementById("vkBroadcastList");
   const vkBroadcastNotice = document.getElementById("vkBroadcastNotice");
@@ -1058,6 +1060,60 @@ setIFOButton.addEventListener('click', () => {
     if (vkBroadcastConfirm) vkBroadcastConfirm.disabled = !selectedTargetId;
   }
 
+  function renderTargetsList() {
+    if (!vkTargetsList) return;
+    vkTargetsList.innerHTML = "";
+
+    if (!vkTargets.length) {
+      if (vkTargetsEmpty) {
+        vkTargetsEmpty.textContent = "Серверы ещё не добавлены.";
+      }
+      return;
+    }
+
+    if (vkTargetsEmpty) vkTargetsEmpty.textContent = "";
+
+    vkTargets.forEach((target) => {
+      const row = document.createElement("div");
+      row.className = "vk-target-row";
+
+      const meta = document.createElement("div");
+      meta.className = "vk-target-meta";
+
+      const name = document.createElement("div");
+      name.className = "vk-target-name";
+      name.textContent = target.name || "Без названия";
+
+      const url = document.createElement("div");
+      url.className = "vk-target-url";
+      url.textContent = target.url || "URL не указан";
+
+      meta.appendChild(name);
+      meta.appendChild(url);
+
+      const actions = document.createElement("div");
+      actions.className = "vk-actions";
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "btn btn-secondary";
+      removeBtn.textContent = "Удалить";
+      removeBtn.addEventListener("click", async () => {
+        const resp = await fetch(`/stream/targets/${target.id}`, { method: "DELETE" });
+        if (resp.ok) {
+          await loadVkStatus();
+          renderTargetsList();
+          renderBroadcastTargets();
+        }
+      });
+
+      actions.appendChild(removeBtn);
+      row.appendChild(meta);
+      row.appendChild(actions);
+      vkTargetsList.appendChild(row);
+    });
+  }
+
   async function loadVkStatus() {
     const resp = await fetch("/vk/status");
     if (!resp.ok) return;
@@ -1078,6 +1134,8 @@ setIFOButton.addEventListener('click', () => {
       stopVkPreviewPlayer();
       showVkPreviewImage(data.preview_url || lastVkPreviewUrl);
     }
+
+    renderTargetsList();
   }
 
   // Tabs switching
@@ -1134,7 +1192,8 @@ setIFOButton.addEventListener('click', () => {
     if (resp.ok) {
       if (vkTargetName) vkTargetName.value = "";
       if (vkTargetUrl) vkTargetUrl.value = "";
-      loadVkStatus();
+      await loadVkStatus();
+      renderTargetsList();
     }
   });
 
