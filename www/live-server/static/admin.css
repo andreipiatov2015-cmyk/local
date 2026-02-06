@@ -687,6 +687,12 @@ tr:hover {
     gap: 12px;
 }
 
+.vk-targets-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
 .vk-target {
     display: grid;
     grid-template-columns: auto 1fr;
@@ -696,6 +702,44 @@ tr:hover {
     border-radius: 10px;
     border: 1px solid #e2e8f0;
     background: #f8fafc;
+}
+
+.vk-target-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: center;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+}
+
+.vk-target-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.vk-target-name {
+    font-weight: 600;
+    color: #0f172a;
+}
+
+.vk-target-url {
+    font-size: 13px;
+    color: #64748b;
+    word-break: break-all;
+}
+
+.vk-hint {
+    color: #64748b;
+    font-size: 14px;
+}
+
+.status-text {
+    color: #64748b;
+    margin: 0;
 }
 
 .vk-target input[type="text"] {
