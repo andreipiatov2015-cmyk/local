@@ -485,10 +485,7 @@ def save_vk_settings(data):
         raise
 
 def load_stream_targets():
-    default_targets = [
-        {"id": "tv", "name": "Телевизоры", "url": "", "enabled": True},
-        {"id": "vk-main", "name": "VK группа", "url": "", "enabled": True}
-    ]
+    default_targets = []
     if not os.path.exists(STREAM_TARGETS_FILE):
         try:
             with open(STREAM_TARGETS_FILE, "w", encoding="utf-8") as f:
