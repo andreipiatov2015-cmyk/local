@@ -182,7 +182,7 @@
 
       <div class="vk-tabs">
         <button class="vk-tab active" data-tab="settings" type="button">Настройки</button>
-        <button class="vk-tab" data-tab="targets" type="button">Куда транслировать</button>
+        <button class="vk-tab" data-tab="targets" type="button">Сервера</button>
       </div>
 
       <div class="vk-tab-panel active" data-panel="settings">
@@ -214,9 +214,7 @@
             </div>
 
             <div class="vk-actions">
-              <button id="vkScheduleBtn" class="btn btn-secondary" type="button">Запланировать</button>
-              <button id="vkStopBtn" class="btn btn-danger" type="button">Остановить</button>
-              <button id="vkOverlayToggle" class="btn btn-primary" type="button">Показывать изображение</button>
+              <button id="vkScheduleBtn" class="btn btn-secondary" type="button">Трансляция в</button>
             </div>
           </div>
         </div>
@@ -224,25 +222,11 @@
 
       <div class="vk-tab-panel" data-panel="targets">
         <div class="vk-targets">
-          <div id="vkTargetsList"></div>
-
-          <div class="card">
-            <div class="form-field">
-              <label for="vkTargetName">Название направления</label>
-              <input id="vkTargetName" type="text" placeholder="Например, VK группа или Телевизоры">
-            </div>
-
-            <div class="form-field">
-              <label for="vkTargetUrl">RTMP URL (если требуется)</label>
-              <input id="vkTargetUrl" type="text" placeholder="rtmp://...">
-            </div>
-
-            <div class="vk-actions">
-              <button id="vkAddTargetBtn" class="btn btn-secondary" type="button">Добавить</button>
-              <button id="vkSaveTargetsBtn" class="btn btn-primary" type="button">Сохранить выбор</button>
-            </div>
+          <div class="vk-actions">
+            <button id="vkAddTargetRow" class="btn btn-secondary" type="button">+</button>
           </div>
 
+          <div id="vkTargetsList"></div>
         </div>
       </div>
 
@@ -260,8 +244,8 @@
       <p id="vkBroadcastNotice" class="status-text"></p>
 
       <div class="vk-actions">
-        <button id="vkBroadcastConfirm" class="btn btn-primary" type="button" disabled>Подтвердить</button>
-        <button id="vkBroadcastCancel" class="btn btn-secondary" type="button">Отменить</button>
+        <button id="vkBroadcastConfirm" class="btn btn-primary" type="button" disabled>Да</button>
+        <button id="vkBroadcastCancel" class="btn btn-secondary" type="button">Нет</button>
       </div>
     </div>
   </div>
