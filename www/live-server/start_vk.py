@@ -187,7 +187,7 @@ def main():
             vk_urls = [vk_key]
 
     if not enabled or not vk_urls:
-        log("VK пуш отключён или не задан vk_rtmp_url")
+        log("VK пуш отключён или цели не выбраны")
         return
 
     start_dt = to_dt(start_str) if start_str else None
