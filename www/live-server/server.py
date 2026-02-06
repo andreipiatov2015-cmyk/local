@@ -592,7 +592,6 @@ def vk_preview_visibility():
 
 @app.route("/vk/start_now", methods=["POST"])
 @login_required
-@roles_required("admin", "editor")
 def vk_start_now():
     s = load_vk_settings()
     title = ""
@@ -720,7 +719,6 @@ def vk_targets():
 
 @app.route("/stream/targets", methods=["GET", "POST"])
 @login_required
-@roles_required("admin", "editor")
 def stream_targets():
     if request.method == "GET":
         return jsonify(load_stream_targets())
@@ -738,7 +736,6 @@ def stream_targets():
 
 @app.route("/stream/targets/<target_id>", methods=["PUT", "DELETE"])
 @login_required
-@roles_required("admin", "editor")
 def stream_targets_update(target_id):
     targets = load_stream_targets()
     target = next((t for t in targets if t.get("id") == target_id), None)

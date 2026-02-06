@@ -169,26 +169,43 @@ def main():
         return
 
     stream_name = sys.argv[1]
-    settings = load_settings()
-    targets = load_targets()
-    enabled = settings.get("enabled", False)
-    preview_path = settings.get("preview_path")  # относительный или абсолютный путь
-    start_str = settings.get("scheduled_start")  # ISO string
-    title = settings.get("title")
-    target_ids = settings.get("target_ids") or []
+    wait_seconds = int(os.environ.get("VK_START_WAIT", "3600"))
+    waited = 0
+    settings = {}
+    vk_urls = []
+    enabled = False
+    preview_path = None
+    start_str = None
+    title = None
 
-    active_targets = [t for t in targets if t.get("enabled", True)]
-    if target_ids:
-        active_targets = [t for t in active_targets if t.get("id") in target_ids]
-    active_targets = [t for t in active_targets if t.get("id") != "tv"]
-    vk_key = settings.get("vk_rtmp_url")
-    if vk_key:
-        vk_urls = [vk_key]
-    else:
+    while waited <= wait_seconds:
+        settings = load_settings()
+        targets = load_targets()
+        enabled = settings.get("enabled", False)
+        preview_path = settings.get("preview_path")  # относительный или абсолютный путь
+        start_str = settings.get("scheduled_start")  # ISO string
+        title = settings.get("title")
+        target_ids = settings.get("target_ids") or []
+
+        active_targets = [t for t in targets if t.get("enabled", True)]
+        if target_ids:
+            active_targets = [t for t in active_targets if t.get("id") in target_ids]
         vk_urls = [t.get("url") for t in active_targets if t.get("url")]
+        if not vk_urls:
+            vk_key = settings.get("vk_rtmp_url")
+            if vk_key:
+                vk_urls = [vk_key]
+
+        if enabled and vk_urls:
+            break
+
+        if waited == 0:
+            log("Ожидаем включения VK пуша и выбор целей трансляции...")
+        time.sleep(2)
+        waited += 2
 
     if not enabled or not vk_urls:
-        log("VK пуш отключён или не задан vk_rtmp_url")
+        log("VK пуш отключён или цели не выбраны")
         return
 
     start_dt = to_dt(start_str) if start_str else None
