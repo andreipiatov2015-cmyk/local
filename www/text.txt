@@ -1,0 +1,8 @@
+После замены конфига проверь:
+
+/usr/local/nginx/sbin/nginx -t
+
+
+Если всё ок →
+
+/usr/local/nginx/sbin/nginx -s reload

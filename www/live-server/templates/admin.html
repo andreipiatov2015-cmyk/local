@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin</title>
+  <link rel="stylesheet" href="../static/admin.css">
+  <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="logo">🎥 Live Admin</span>
+      <button id="collapseSidebar" aria-label="Свернуть меню">❮</button>
+    </div>
+
+    <nav class="sidebar-menu">
+      <a class="menu-item active" href="/admin">
+        <span class="icon">✏️</span>
+        <span class="text">Редактор</span>
+      </a>
+
+      <a class="menu-item" href="#" id="autoAddLink">
+        <span class="icon">📥</span>
+        <span class="text">Автодобавление</span>
+      </a>
+
+      <a class="menu-item" href="/competition">
+        <span class="icon">🏆</span>
+        <span class="text">Конкурс</span>
+      </a>
+
+      <a class="menu-item" href="/broadcast">
+        <span class="icon">📺</span>
+        <span class="text">Трансляция</span>
+      </a>
+
+      <a class="menu-item" href="/staff">
+        <span class="icon">👥</span>
+        <span class="text">Сотрудники</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button id="vkStreamButton" class="vk-btn">⚙️ Настройка трансляции</button>
+
+      <a href="/logout" class="menu-item logout">
+        <span class="icon">🚪</span>
+        <span class="text">Выход</span>
+      </a>
+    </div>
+  </aside>
+
+  <div class="content">
+    <div id="preview">
+      <h2>Предпросмотр участника</h2>
+
+      <div id="previewContent" class="grid">
+        <div class="draggable" id="fioBlock" draggable="true">
+          <span class="label">ФИО:</span> <span id="previewFIO"></span>
+        </div>
+        <div class="draggable" id="numberBlock" draggable="true">
+          <span class="label">№:</span> <span id="previewNumber"></span>
+        </div>
+        <div class="draggable" id="actBlock" draggable="true">
+          <span class="label">Название номера:</span> <span id="previewAct"></span>
+        </div>
+        <div class="draggable" id="teamBlock" draggable="true">
+          <span class="label">Название коллектива и территория:</span> <span id="previewTeam"></span>
+        </div>
+      </div>
+
+      <div class="edit-panel">
+        <label>Размер шрифта: <input type="number" id="fontSize" value="16" min="8"></label>
+
+        <label>Шрифт:
+          <select id="fontFamily">
+            <option value="Arial">Arial</option>
+            <option value="Times New Roman">Times New Roman</option>
+            <option value="Courier New">Courier New</option>
+          </select>
+        </label>
+
+        <label><input type="checkbox" id="fontBold"> Жирный</label>
+        <label><input type="checkbox" id="fontItalic"> Курсив</label>
+
+        <label>Горизонтальное выравнивание:
+          <button id="alignLeft">Влево</button>
+          <button id="alignCenter">По центру</button>
+          <button id="alignRight">Вправо</button>
+        </label>
+
+        <label>Вертикальное выравнивание:
+          <button id="alignTop">Вверх</button>
+          <button id="alignMiddle">По центру</button>
+          <button id="alignBottom">Вниз</button>
+        </label>
+
+        <label>Размер области:
+          <input type="number" id="previewWidth" min="200"> x
+          <input type="number" id="previewHeight" min="200">
+        </label>
+
+        <button id="toggleGrid">Вкл сетку</button>
+
+        <label>Сетка:
+          <input type="number" id="gridCols" value="10" min="1"> x
+          <input type="number" id="gridRows" value="10" min="1">
+        </label>
+
+        <button id="resetLayout">Сбросить расположение</button>
+        <button id="toggleFioSettings">Доп. настройки ФИО</button>
+
+        <div id="fioSettings" class="hidden">
+          <label><input type="checkbox" id="shortName"> Имя как первая буква</label>
+          <label><input type="checkbox" id="shortSurname"> Фамилия как первая буква</label>
+          <label><input type="checkbox" id="shortPatronymic"> Отчество как первая буква</label>
+          <button id="capitalizeFIO">Сделать заглавными</button>
+          <button id="setFIO">Установить ФИО</button>
+          <button id="setIFO">Установить ИФО</button>
+
+          <label><input type="checkbox" id="showFIOBlock" checked> Показать блок ФИО</label>
+          <label><input type="checkbox" id="showNumberBlock" checked> Показать блок номера</label>
+          <label><input type="checkbox" id="showActBlock" checked> Показать блок названия номера</label>
+          <label><input type="checkbox" id="showTeamBlock" checked> Показать блок коллектива</label>
+        </div>
+      </div>
+
+      <label>Пресеты расположения:
+        <select id="presetSelect">
+          <option value="">Выберите пресет</option>
+        </select>
+      </label>
+
+      <button id="savePresetButton">Сохранить пресет</button>
+      <button id="syncButton">Синхронизировать</button>
+      <button id="clearEmptyRowsButton">Удалить пустые строки</button>
+      <button id="clearEntriesButton" class="btn btn-danger" type="button">Очистить список выступающих</button>
+    </div>
+
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>Имя</th><th>Фамилия</th><th>Отчество</th><th>Название номера</th><th>Название коллектива</th><th>Территория</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr>
+            <td>1</td>
+            <td><input type="text" placeholder="Имя"></td>
+            <td><input type="text" placeholder="Фамилия"></td>
+            <td><input type="text" placeholder="Отчество"></td>
+            <td><input type="text" placeholder="Название номера"></td>
+            <td><input type="text" placeholder="Название коллектива"></td>
+            <td><input type="text" placeholder="Территория"></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div id="autoAddSection" style="display: none;">
+      <h2>Автоматическое добавление участников</h2>
+      <input type="file" id="uploadFile" accept=".xls,.xlsx">
+      <div id="uploadTableContainer" class="table-container"></div>
+      <div id="mappingSection"></div>
+      <button id="importButton">Импортировать</button>
+      <div id="importMessage"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.12/dist/hls.min.js"></script>
+  <script src="../static/admin.js"></script>
+
+  <!-- VK Modal -->
+  <div id="vkModal" class="vk-modal">
+    <div class="vk-modal-content">
+      <div class="vk-modal-header">
+        <h3>Настройка трансляции</h3>
+        <button id="vkCloseBtn" class="icon-btn" type="button">✕</button>
+      </div>
+
+      <div class="vk-tabs">
+        <button class="vk-tab active" data-tab="settings" type="button">Настройки</button>
+        <button class="vk-tab" data-tab="targets" type="button">Сервера</button>
+      </div>
+
+      <div class="vk-tab-panel active" data-panel="settings">
+        <div class="vk-preview">
+          <div class="vk-preview-media">
+            <video id="vkPreviewVideo" controls muted></video>
+            <img id="vkPreviewImage" alt="Превью трансляции">
+          </div>
+
+          <div>
+            <div class="form-field">
+              <label for="vkTitle">Название</label>
+              <input id="vkTitle" type="text">
+            </div>
+
+            <div class="form-field">
+              <label for="vkDate">Дата (YYYY-MM-DD)</label>
+              <input id="vkDate" type="date">
+            </div>
+
+            <div class="form-field">
+              <label for="vkTime">Время (HH:MM)</label>
+              <input id="vkTime" type="time">
+            </div>
+
+            <div class="form-field">
+              <label for="vkImage">Превью (jpg/png)</label>
+              <input id="vkImage" type="file" accept="image/*">
+            </div>
+
+            <div class="vk-actions">
+              <button id="vkScheduleBtn" class="btn btn-secondary" type="button">Трансляция в</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="vk-tab-panel" data-panel="targets">
+        <div class="vk-targets">
+          <div class="card">
+            <div class="form-field">
+              <label for="vkTargetName">Название направления</label>
+              <input id="vkTargetName" type="text" placeholder="Например, VK группа или Телевизоры">
+            </div>
+
+            <div class="form-field">
+              <label for="vkTargetUrl">RTMP URL (если требуется)</label>
+              <input id="vkTargetUrl" type="text" placeholder="rtmp://...">
+            </div>
+
+            <div class="vk-actions">
+              <button id="vkAddTargetBtn" class="btn btn-primary" type="button">+</button>
+              <span class="vk-hint">Добавить сервер</span>
+            </div>
+          </div>
+
+          <div id="vkTargetsList" class="vk-targets-list"></div>
+          <p id="vkTargetsEmpty" class="status-text"></p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="vkBroadcastModal" class="vk-modal">
+    <div class="vk-modal-content">
+      <div class="vk-modal-header">
+        <h3>Транслировать в</h3>
+        <button id="vkBroadcastClose" class="icon-btn" type="button">✕</button>
+      </div>
+
+      <div id="vkBroadcastList" class="vk-targets"></div>
+      <p id="vkBroadcastNotice" class="status-text"></p>
+
+      <div class="vk-actions">
+        <button id="vkBroadcastConfirm" class="btn btn-primary" type="button" disabled>Да</button>
+        <button id="vkBroadcastCancel" class="btn btn-secondary" type="button">Нет</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+    "enabled": true,
+    "vk_rtmp_url": "rtmp://ovsu.okcdn.ru/input/-4980908_281465964_43_g5chmz5ebe",
+    "scheduled_start": null,
+    "title": "тест",
+    "preview_path": "/var/www/live-server/static/vk_preview.jpg",
+    "target_ids": [
+        "2bd0d193"
+    ],
+    "show_preview": false
+}
