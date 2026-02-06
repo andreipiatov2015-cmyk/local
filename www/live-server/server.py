@@ -592,7 +592,6 @@ def vk_preview_visibility():
 
 @app.route("/vk/start_now", methods=["POST"])
 @login_required
-@roles_required("admin", "editor")
 def vk_start_now():
     s = load_vk_settings()
     title = ""
