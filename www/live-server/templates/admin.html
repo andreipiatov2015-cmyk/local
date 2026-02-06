@@ -222,11 +222,22 @@
 
       <div class="vk-tab-panel" data-panel="targets">
         <div class="vk-targets">
-          <div class="vk-actions">
-            <button id="vkAddTargetRow" class="btn btn-secondary" type="button">+</button>
+          <div class="card">
+            <div class="form-field">
+              <label for="vkTargetName">Название направления</label>
+              <input id="vkTargetName" type="text" placeholder="Например, VK группа или Телевизоры">
+            </div>
+
+            <div class="form-field">
+              <label for="vkTargetUrl">RTMP URL (если требуется)</label>
+              <input id="vkTargetUrl" type="text" placeholder="rtmp://...">
+            </div>
+
+            <div class="vk-actions">
+              <button id="vkAddTargetBtn" class="btn btn-primary" type="button">Сохранить</button>
+            </div>
           </div>
 
-          <div id="vkTargetsList"></div>
         </div>
       </div>
 

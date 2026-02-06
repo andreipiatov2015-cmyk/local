@@ -945,8 +945,9 @@ setIFOButton.addEventListener('click', () => {
   const vkPreviewMedia = document.querySelector(".vk-preview-media");
   const vkImageInput = document.getElementById("vkImage");
 
-  const vkTargetsList = document.getElementById("vkTargetsList");
-  const vkAddTargetRowBtn = document.getElementById("vkAddTargetRow");
+  const vkTargetName = document.getElementById("vkTargetName");
+  const vkTargetUrl = document.getElementById("vkTargetUrl");
+  const vkAddTargetBtn = document.getElementById("vkAddTargetBtn");
   const vkBroadcastModal = document.getElementById("vkBroadcastModal");
   const vkBroadcastList = document.getElementById("vkBroadcastList");
   const vkBroadcastNotice = document.getElementById("vkBroadcastNotice");
@@ -1019,102 +1020,6 @@ setIFOButton.addEventListener('click', () => {
     showVkPreviewVideo();
   }
 
-  function createTargetRow({ id, name, url }, { isNew } = {}) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "vk-target";
-
-    const content = document.createElement("div");
-
-    const nameInput = document.createElement("input");
-    nameInput.type = "text";
-    nameInput.placeholder = "Название трансляции";
-    nameInput.value = name || "";
-
-    const urlInput = document.createElement("input");
-    urlInput.type = "text";
-    urlInput.placeholder = "rtmp://...";
-    urlInput.value = url || "";
-
-    content.appendChild(nameInput);
-    content.appendChild(urlInput);
-
-    const saveBtn = document.createElement("button");
-    saveBtn.type = "button";
-    saveBtn.className = "btn btn-primary";
-    saveBtn.textContent = "Сохранить";
-
-    saveBtn.addEventListener("click", async () => {
-      const nextName = nameInput.value.trim();
-      const nextUrl = urlInput.value.trim();
-      if (!nextName) {
-        alert("Укажите название трансляции.");
-        return;
-      }
-
-      if (isNew) {
-        const resp = await fetch("/stream/targets", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: nextName, url: nextUrl }),
-        });
-        if (resp.ok) {
-          loadVkStatus();
-        } else {
-          alert("Не удалось сохранить сервер.");
-        }
-        return;
-      }
-
-      const resp = await fetch(`/stream/targets/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nextName, url: nextUrl }),
-      });
-      if (!resp.ok) {
-        alert("Не удалось обновить сервер.");
-      }
-    });
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "btn btn-secondary";
-    deleteBtn.textContent = "Удалить";
-    deleteBtn.addEventListener("click", async () => {
-      if (isNew) {
-        wrapper.remove();
-        return;
-      }
-      const resp = await fetch(`/stream/targets/${id}`, { method: "DELETE" });
-      if (resp.ok) {
-        loadVkStatus();
-      } else {
-        alert("Не удалось удалить сервер.");
-      }
-    });
-
-    wrapper.appendChild(content);
-    wrapper.appendChild(saveBtn);
-    wrapper.appendChild(deleteBtn);
-    return wrapper;
-  }
-
-  function renderServerTargets() {
-    if (!vkTargetsList) return;
-    vkTargetsList.innerHTML = "";
-
-    if (!vkTargets.length) {
-      const empty = document.createElement("p");
-      empty.className = "status-text";
-      empty.textContent = "Список серверов пуст.";
-      vkTargetsList.appendChild(empty);
-      return;
-    }
-
-    vkTargets.forEach((target) => {
-      vkTargetsList.appendChild(createTargetRow(target));
-    });
-  }
-
   function renderBroadcastTargets() {
     if (!vkBroadcastList) return;
     vkBroadcastList.innerHTML = "";
@@ -1173,7 +1078,6 @@ setIFOButton.addEventListener('click', () => {
       stopVkPreviewPlayer();
       showVkPreviewImage(data.preview_url || lastVkPreviewUrl);
     }
-    renderServerTargets();
   }
 
   // Tabs switching
@@ -1217,11 +1121,21 @@ setIFOButton.addEventListener('click', () => {
     vkModal?.classList.remove("visible");
   });
 
-  vkAddTargetRowBtn?.addEventListener("click", () => {
-    if (!vkTargetsList) return;
-    vkTargetsList.innerHTML = "";
-    const row = createTargetRow({ id: null, name: "", url: "" }, { isNew: true });
-    vkTargetsList.prepend(row);
+  vkAddTargetBtn?.addEventListener("click", async () => {
+    const name = vkTargetName?.value.trim() || "";
+    if (!name) return;
+
+    const resp = await fetch("/stream/targets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, url: vkTargetUrl?.value.trim() || "" }),
+    });
+
+    if (resp.ok) {
+      if (vkTargetName) vkTargetName.value = "";
+      if (vkTargetUrl) vkTargetUrl.value = "";
+      loadVkStatus();
+    }
   });
 
   vkScheduleBtn?.addEventListener("click", async () => {
