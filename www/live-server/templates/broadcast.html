@@ -8,51 +8,9 @@
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.12/dist/hls.min.js"></script>
 </head>
 
-<body>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <span class="logo">🎥 Live Admin</span>
-      <button id="collapseSidebar">❮</button>
-    </div>
-
-    <nav class="sidebar-menu">
-      <a class="menu-item" href="/admin">
-        <span class="icon">✏️</span>
-        <span class="text">Редактор</span>
-      </a>
-
-      <!-- ВАЖНО: если "Автодобавление" — это секция внутри /admin, то ссылка должна вести на /admin -->
-      <a class="menu-item" href="/admin">
-        <span class="icon">📥</span>
-        <span class="text">Автодобавление</span>
-      </a>
-
-      <a class="menu-item" href="/competition">
-        <span class="icon">🏆</span>
-        <span class="text">Конкурс</span>
-      </a>
-
-      <a class="menu-item active" href="/broadcast">
-        <span class="icon">📺</span>
-        <span class="text">Трансляция</span>
-      </a>
-
-      <a class="menu-item" href="/staff">
-        <span class="icon">👥</span>
-        <span class="text">Сотрудники</span>
-      </a>
-    </nav>
-
-    <div class="sidebar-footer">
-      <a href="/logout" class="menu-item logout">
-        <span class="icon">🚪</span>
-        <span class="text">Выход</span>
-      </a>
-    </div>
-  </aside>
-
-  <main class="content">
-    <div class="broadcast-layout">
+<body class="broadcast-page">
+  <main class="broadcast-fullscreen">
+    <div class="broadcast-layout broadcast-layout-fullscreen">
       <div class="broadcast-player card">
         <h2 class="page-title">Трансляция</h2>
         <div class="broadcast-media">
@@ -68,7 +26,6 @@
     </div>
   </main>
 
-  <script src="/static/layout.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", () => {
       const video = document.getElementById("video");
