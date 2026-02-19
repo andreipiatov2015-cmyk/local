@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Таблицы заявок конкурса</title>
+  <link rel="stylesheet" href="/tables-static/tables.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Таблицы заявок конкурса</h1>
+
+    <section id="auth" class="card">
+      <h2>Вход по email-коду</h2>
+      <div class="row">
+        <input id="email" type="email" placeholder="email@example.com" />
+        <button id="sendCode">Отправить код</button>
+      </div>
+      <div class="row">
+        <input id="code" placeholder="Код" />
+        <button id="verifyCode">Войти</button>
+      </div>
+    </section>
+
+    <section id="workspace" class="card hidden">
+      <h2>Таблицы</h2>
+      <div class="row">
+        <input id="newTitle" placeholder="Название таблицы" />
+        <button id="createTable">Создать</button>
+      </div>
+      <ul id="tableList"></ul>
+    </section>
+
+    <section id="tableView" class="card hidden">
+      <h2 id="tableTitle">Таблица</h2>
+      <div class="row wrap">
+        <input type="file" id="excelFile" accept=".xlsx,.xls" />
+        <button id="uploadExcel">Загрузить Excel</button>
+        <textarea id="yandexCookies" placeholder='Cookies JSON для Яндекс-сессии, например {"Session_id":"..."}'></textarea>
+        <button id="connectYandex">Подключить Яндекс</button>
+        <button id="startDownload">Старт скачивания</button>
+        <button disabled title="Данная функция находится в разработке">Обновить Excel</button>
+      </div>
+      <p id="progress"></p>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>ФИО</th><th>Номер</th><th>Коллектив</th><th>Файлы</th></tr>
+        </thead>
+        <tbody id="entries"></tbody>
+      </table>
+    </section>
+
+    <dialog id="viewer">
+      <button id="downloadTop">Скачать</button>
+      <button id="closeViewer">Закрыть</button>
+      <div id="viewerBody"></div>
+    </dialog>
+  </main>
+  <script src="/tables-static/tables.js"></script>
+</body>
+</html>
