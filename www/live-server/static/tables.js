@@ -80,12 +80,12 @@ document.body.addEventListener('click', async (e) => {
 document.getElementById('closeViewer').onclick = () => document.getElementById('viewer').close();
 
 document.getElementById('sendCode').onclick = async () => {
-  await postForm('/api/auth/send-code', { email: document.getElementById('email').value });
+  await postForm('/api/tables/send_code', { email: document.getElementById('email').value });
   alert('Код отправлен (в MVP выводится в server log).');
 };
 
 document.getElementById('verifyCode').onclick = async () => {
-  await postForm('/api/auth/verify-code', {
+  await postForm('/api/tables/verify_code', {
     email: document.getElementById('email').value,
     code: document.getElementById('code').value,
   });
