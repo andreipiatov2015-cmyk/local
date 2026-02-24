@@ -95,6 +95,21 @@ document.body.addEventListener('click', async (e) => {
 
 document.getElementById('closeViewer').onclick = () => document.getElementById('viewer').close();
 
+document.getElementById('sendCode').onclick = async () => {
+  await postForm('/api/tables/send_code', { email: document.getElementById('email').value });
+  alert('Код отправлен (в MVP выводится в server log).');
+};
+
+document.getElementById('verifyCode').onclick = async () => {
+  await postForm('/api/tables/verify_code', {
+    email: document.getElementById('email').value,
+    code: document.getElementById('code').value,
+  });
+  auth.classList.add('hidden');
+  workspace.classList.remove('hidden');
+  refreshTables();
+};
+
 document.getElementById('createTable').onclick = async () => {
   await postForm('/api/tables', { title: document.getElementById('newTitle').value });
   refreshTables();

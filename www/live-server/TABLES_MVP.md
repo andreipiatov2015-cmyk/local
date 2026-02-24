@@ -5,6 +5,8 @@
 - Страница: `/tables` (шаблон `templates/tables.html`).
 - Статика: `/static/tables.js`, `/static/tables.css`.
 - API:
+  - `POST /api/tables/send_code`
+  - `POST /api/tables/verify_code`
   - `GET /api/tables`
   - `POST /api/tables`
   - `DELETE /api/tables/{id}`
@@ -32,5 +34,5 @@ python3 server.py
 
 ## Важно
 - Отдельный `tables_service.py` оставлен в репозитории как архив, но не используется в маршрутизации основного сервера.
-- Используется общая авторизация сайта (те же сессии, что и у админки), отдельного логина на `/tables` нет.
+- Код подтверждения email в MVP печатается в stdout сервера.
 - Очистка данных старше 60 дней запускается в фоне в процессе основного сервера.
