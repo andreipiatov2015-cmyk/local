@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, g
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, g, make_response, send_file
 import json
 import os
 import smtplib
@@ -11,7 +11,17 @@ import datetime
 import subprocess
 import signal
 import time
+import threading
+import shutil
+import re
 from functools import wraps
+
+import requests
+
+try:
+    import openpyxl
+except Exception:
+    openpyxl = None
 
 # Папка, где лежит server.py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +49,22 @@ PRESETS_FILE = os.path.join(BASE_DIR, "presets.json")
 VK_SETTINGS_FILE = os.path.join(BASE_DIR, "vk_settings.json")
 STREAM_TARGETS_FILE = os.path.join(BASE_DIR, "stream_targets.json")
 STREAM_URL = os.environ.get("HLS_STREAM_URL", "http://192.168.31.18:8080/hls/stream.m3u8")
+
+STORAGE_ROOT = os.environ.get("STORAGE_ROOT", "/var/mount_point/nfv/contest_storage")
+RETENTION_DAYS = 60
+MAX_TABLES_PER_USER = 10
+DOWNLOAD_RETRIES = 3
+MAX_FILENAME_LEN = 180
+
+TABLE_COLUMNS = {
+    "number_title": ["Название номера", "Номер", "Название"],
+    "fio": ["ФИО", "Участник", "Исполнитель"],
+    "team": ["Коллектив", "Команда", "Ансамбль"],
+    "audio_url": ["Фонограмма", "Фонограмма ссылка"],
+    "receipt_url": ["Квитанция", "Ссылка на квитанцию"],
+    "consent_url": ["Согласие", "Ссылка на согласие"],
+    "presentation_url": ["Презентация", "Ссылка на презентацию"],
+}
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
@@ -121,6 +147,50 @@ def init_db():
             address TEXT NOT NULL,
             start_date TEXT NOT NULL,
             end_date TEXT NOT NULL
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS email_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL,
+            code TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS table_workspaces (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'new',
+            progress INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            yandex_session_json TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS table_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_id INTEGER NOT NULL,
+            number_title TEXT,
+            fio TEXT,
+            team TEXT,
+            unique_key TEXT,
+            audio_url TEXT,
+            receipt_url TEXT,
+            consent_url TEXT,
+            presentation_url TEXT,
+            audio_local TEXT,
+            receipt_local TEXT,
+            consent_local TEXT,
+            presentation_local TEXT,
+            created_at TEXT NOT NULL
         )
     """)
 
@@ -389,6 +459,356 @@ def verify():
         return "Неверный токен", 400
     query_db("UPDATE users SET is_verified=1, verify_token=NULL, updated_at=? WHERE id=?", (datetime.datetime.utcnow().isoformat(), row["id"]))
     return "E-mail подтверждён!"
+
+
+def now_iso():
+    return datetime.datetime.utcnow().isoformat()
+
+
+def sanitize_name(name):
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", (name or "")).strip()
+    if not cleaned:
+        return ""
+    return cleaned[:MAX_FILENAME_LEN]
+
+
+def table_user_from_request():
+    user = get_current_user()
+    if not user:
+        return None
+    return {"id": user["id"], "email": user.get("email", "")}
+
+
+def storage_for_table(user_id, table_id):
+    return os.path.join(STORAGE_ROOT, "users", f"user_{user_id}", "tables", f"table_{table_id}")
+
+
+def detect_columns(headers):
+    result = {k: None for k in TABLE_COLUMNS.keys()}
+    for idx, h in enumerate(headers):
+        h_norm = (h or "").strip().lower()
+        for key, aliases in TABLE_COLUMNS.items():
+            if result[key] is not None:
+                continue
+            for alias in aliases:
+                if h_norm == alias.strip().lower():
+                    result[key] = idx
+                    break
+    return result
+
+
+def get_cell(row, idx):
+    if idx is None or idx >= len(row):
+        return ""
+    v = row[idx]
+    return "" if v is None else str(v).strip()
+
+
+def extension_from_url(url, fallback="bin"):
+    name = url.split("?")[0].rstrip("/").split("/")[-1]
+    if "." in name:
+        ext = name.rsplit(".", 1)[-1].lower()
+        return ext[:10]
+    return fallback
+
+
+def download_with_retries(req_session, url, out_path):
+    last_error = None
+    for _ in range(DOWNLOAD_RETRIES):
+        try:
+            r = req_session.get(url, timeout=30)
+            r.raise_for_status()
+            with open(out_path, "wb") as f:
+                f.write(r.content)
+            return
+        except Exception as e:
+            last_error = str(e)
+            time.sleep(1)
+    raise RuntimeError(last_error or "download failed")
+
+
+def process_table_download(table_id, user_id):
+    t = query_db("SELECT * FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user_id), one=True)
+    if not t:
+        return
+    query_db("UPDATE table_workspaces SET status='processing', progress=1, updated_at=? WHERE id=?", (now_iso(), table_id))
+    base = storage_for_table(user_id, table_id)
+    excel_path = os.path.join(base, "meta", "excel_original.xlsx")
+    if not os.path.exists(excel_path) or openpyxl is None:
+        query_db("UPDATE table_workspaces SET status='error', updated_at=? WHERE id=?", (now_iso(), table_id))
+        return
+
+    wb = openpyxl.load_workbook(excel_path)
+    ws = wb.active
+    rows = list(ws.values)
+    if not rows:
+        query_db("UPDATE table_workspaces SET status='done', progress=100, updated_at=? WHERE id=?", (now_iso(), table_id))
+        return
+
+    headers = [str(x).strip() if x is not None else "" for x in rows[0]]
+    col = detect_columns(headers)
+    data_rows = rows[1:]
+
+    cookies = json.loads(t["yandex_session_json"] or "{}")
+    req_session = requests.Session()
+    if isinstance(cookies, dict):
+        req_session.cookies.update(cookies)
+
+    total = max(len(data_rows), 1)
+    for i, row in enumerate(data_rows, start=1):
+        number_title = get_cell(row, col["number_title"])
+        fio = get_cell(row, col["fio"])
+        team = get_cell(row, col["team"])
+        unique_key = f"{number_title}|{fio}|{team}"
+
+        exists = query_db("SELECT id FROM table_entries WHERE table_id=? AND unique_key=?", (table_id, unique_key), one=True)
+        if exists:
+            continue
+
+        created_at = now_iso()
+        query_db(
+            """
+            INSERT INTO table_entries (table_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                table_id,
+                number_title,
+                fio,
+                team,
+                unique_key,
+                get_cell(row, col["audio_url"]),
+                get_cell(row, col["receipt_url"]),
+                get_cell(row, col["consent_url"]),
+                get_cell(row, col["presentation_url"]),
+                created_at,
+            ),
+        )
+        entry_id = query_db("SELECT last_insert_rowid() AS id", one=True)["id"]
+        entry_dir = os.path.join(base, "entries", f"entry_{entry_id}")
+        os.makedirs(entry_dir, exist_ok=True)
+        base_name = sanitize_name(f"{fio} — {number_title}") or f"entry_{entry_id}"
+
+        audio_url = get_cell(row, col["audio_url"])
+        audio_local = ""
+        if audio_url:
+            ext = extension_from_url(audio_url, "mp3")
+            audio_name = f"{base_name}.{ext}"
+            audio_path = os.path.join(entry_dir, audio_name)
+            try:
+                download_with_retries(req_session, audio_url, audio_path)
+                audio_local = audio_name
+            except Exception:
+                fail = os.path.join(entry_dir, "audio.txt")
+                with open(fail, "w", encoding="utf-8") as f:
+                    f.write("Не удалось скачать фонограмму")
+                audio_local = "audio.txt"
+        else:
+            miss = os.path.join(entry_dir, "audio.txt")
+            with open(miss, "w", encoding="utf-8") as f:
+                f.write("Фонограмма не предоставлена")
+            audio_local = "audio.txt"
+
+        field_map = [
+            ("receipt", get_cell(row, col["receipt_url"])),
+            ("consent", get_cell(row, col["consent_url"])),
+            ("presentation", get_cell(row, col["presentation_url"])),
+        ]
+        local_values = {"receipt": "", "consent": "", "presentation": ""}
+
+        for ftype, furl in field_map:
+            if not furl:
+                continue
+            ext = extension_from_url(furl)
+            filename = f"{base_name}.{ext}"
+            out_path = os.path.join(entry_dir, filename)
+            try:
+                download_with_retries(req_session, furl, out_path)
+                local_values[ftype] = filename
+            except Exception:
+                pass
+
+        query_db(
+            "UPDATE table_entries SET audio_local=?, receipt_local=?, consent_local=?, presentation_local=? WHERE id=?",
+            (audio_local, local_values["receipt"], local_values["consent"], local_values["presentation"], entry_id),
+        )
+        progress = int((i / total) * 100)
+        query_db("UPDATE table_workspaces SET progress=?, updated_at=? WHERE id=?", (progress, now_iso(), table_id))
+
+    query_db("UPDATE table_workspaces SET status='done', progress=100, updated_at=? WHERE id=?", (now_iso(), table_id))
+
+
+def cleanup_old_tables():
+    while True:
+        cutoff = (datetime.datetime.utcnow() - datetime.timedelta(days=RETENTION_DAYS)).isoformat()
+        old_tables = query_db("SELECT id, user_id FROM table_workspaces WHERE created_at < ?", (cutoff,))
+        for t in old_tables:
+            table_id, user_id = t["id"], t["user_id"]
+            query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
+            query_db("DELETE FROM table_workspaces WHERE id=?", (table_id,))
+            shutil.rmtree(storage_for_table(user_id, table_id), ignore_errors=True)
+        time.sleep(24 * 3600)
+
+
+_tables_cleanup_started = False
+
+
+def start_tables_background_jobs():
+    global _tables_cleanup_started
+    if _tables_cleanup_started:
+        return
+    os.makedirs(STORAGE_ROOT, exist_ok=True)
+    threading.Thread(target=cleanup_old_tables, daemon=True).start()
+    _tables_cleanup_started = True
+
+
+@app.route("/tables")
+def tables_page():
+    return redirect(url_for("admin", section="tables"))
+
+
+@app.route("/api/tables", methods=["GET"])
+def list_tables():
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    rows = query_db("SELECT id, title, status, progress, created_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC", (user["id"],))
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/tables", methods=["POST"])
+def create_table():
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    title = (request.form.get("title") or "").strip()
+    if not title:
+        return jsonify({"detail": "Название обязательно"}), 400
+    cnt = query_db("SELECT COUNT(*) AS c FROM table_workspaces WHERE user_id=?", (user["id"],), one=True)["c"]
+    if cnt >= MAX_TABLES_PER_USER:
+        return jsonify({"detail": "Достигнут лимит 10 таблиц"}), 400
+    ts = now_iso()
+    query_db(
+        "INSERT INTO table_workspaces (user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (user["id"], title, ts, ts),
+    )
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tables/<int:table_id>", methods=["DELETE"])
+def delete_table(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
+    query_db("DELETE FROM table_workspaces WHERE id=?", (table_id,))
+    shutil.rmtree(storage_for_table(user["id"], table_id), ignore_errors=True)
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tables/<int:table_id>/excel", methods=["POST"])
+def upload_excel(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    excel = request.files.get("excel")
+    if not excel:
+        return jsonify({"detail": "Файл excel обязателен"}), 400
+
+    dst = os.path.join(storage_for_table(user["id"], table_id), "meta")
+    os.makedirs(dst, exist_ok=True)
+    excel.save(os.path.join(dst, "excel_original.xlsx"))
+    query_db("UPDATE table_workspaces SET updated_at=? WHERE id=?", (now_iso(), table_id))
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tables/<int:table_id>/connect-yandex", methods=["POST"])
+def connect_yandex(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    cookies_json = request.form.get("cookies_json") or "{}"
+    query_db(
+        "UPDATE table_workspaces SET yandex_session_json=?, updated_at=? WHERE id=? AND user_id=?",
+        (cookies_json, now_iso(), table_id, user["id"]),
+    )
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tables/<int:table_id>/start-download", methods=["POST"])
+def start_download(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    t = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not t:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    threading.Thread(target=process_table_download, args=(table_id, user["id"]), daemon=True).start()
+    return jsonify({"status": "started"})
+
+
+@app.route("/api/tables/<int:table_id>/entries", methods=["GET"])
+def list_table_entries(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    rows = query_db("SELECT * FROM table_entries WHERE table_id=? ORDER BY id", (table_id,))
+    return jsonify([dict(r) for r in rows])
+
+
+def resolve_file(entry_id, ftype, owner_id):
+    e = query_db("SELECT te.*, tw.user_id FROM table_entries te JOIN table_workspaces tw ON tw.id=te.table_id WHERE te.id=?", (entry_id,), one=True)
+    if not e:
+        return None, (jsonify({"detail": "Entry не найден"}), 404)
+
+    if e["user_id"] != owner_id:
+        return None, (jsonify({"detail": "Entry не найден"}), 404)
+
+    col = f"{ftype}_local"
+    if col not in e.keys() or not e[col]:
+        return None, (jsonify({"detail": "Файл не найден"}), 404)
+
+    p = os.path.join(storage_for_table(e["user_id"], e["table_id"]), "entries", f"entry_{entry_id}", e[col])
+    if not os.path.exists(p):
+        return None, (jsonify({"detail": "Файл отсутствует"}), 404)
+    return p, None
+
+
+@app.route("/api/files/<int:entry_id>/<ftype>", methods=["GET"])
+def get_file(entry_id, ftype):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    p, err = resolve_file(entry_id, ftype, user["id"])
+    if err:
+        return err
+    return send_file(p, as_attachment=True, download_name=os.path.basename(p))
+
+
+@app.route("/api/preview/<int:entry_id>/<ftype>", methods=["GET"])
+def preview_file(entry_id, ftype):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    p, err = resolve_file(entry_id, ftype, user["id"])
+    if err:
+        return err
+    ext = os.path.splitext(p)[1].lower()
+    if ext == ".mp3":
+        return jsonify({"detail": "Для mp3 доступно только скачивание"}), 400
+    if ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".txt"]:
+        return send_file(p, as_attachment=False)
+    return jsonify({"detail": "Предпросмотр не поддерживается"}), 400
+
 
 # =====================================================
 #                VK STREAMING API
@@ -808,7 +1228,9 @@ def stream_targets_update(target_id):
 # =====================================================
 
 # ------------ Запуск ------------
+init_db()
+start_tables_background_jobs()
+
 if __name__ == "__main__":
-    init_db()
     ensure_admin_exists()
     app.run(host="0.0.0.0", port=8082, debug=True)

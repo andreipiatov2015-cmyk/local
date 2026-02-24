@@ -39,6 +39,11 @@
         <span class="icon">👥</span>
         <span class="text">Сотрудники</span>
       </a>
+
+      <a class="menu-item" href="/admin?section=tables" id="tablesLink">
+        <span class="icon">📋</span>
+        <span class="text">Таблицы заявок</span>
+      </a>
     </nav>
 
     <div class="sidebar-footer">
@@ -167,9 +172,47 @@
       <button id="importButton">Импортировать</button>
       <div id="importMessage"></div>
     </div>
+
+    <div id="tablesSection" style="display: none;">
+      <h2>Таблицы заявок конкурса</h2>
+
+      <section id="workspace" class="card">
+        <h3>Таблицы</h3>
+        <div class="row">
+          <input id="newTitle" placeholder="Название таблицы" />
+          <button id="createTable">Создать</button>
+        </div>
+        <ul id="tableList"></ul>
+      </section>
+
+      <section id="tableView" class="card hidden">
+        <h3 id="tableTitle">Таблица</h3>
+        <div class="row wrap">
+          <input type="file" id="excelFile" accept=".xlsx,.xls" />
+          <button id="uploadExcel">Загрузить Excel</button>
+          <textarea id="yandexCookies" placeholder='Cookies JSON для Яндекс-сессии, например {"Session_id":"..."}'></textarea>
+          <button id="connectYandex">Подключить Яндекс</button>
+          <button id="startDownload">Старт скачивания</button>
+        </div>
+        <p id="progress"></p>
+        <table>
+          <thead>
+            <tr><th>ID</th><th>ФИО</th><th>Номер</th><th>Коллектив</th><th>Файлы</th></tr>
+          </thead>
+          <tbody id="entries"></tbody>
+        </table>
+      </section>
+
+      <dialog id="viewer">
+        <button id="downloadTop">Скачать</button>
+        <button id="closeViewer">Закрыть</button>
+        <div id="viewerBody"></div>
+      </dialog>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.12/dist/hls.min.js"></script>
+  <script src="../static/tables.js"></script>
   <script src="../static/admin.js"></script>
 
   <!-- VK Modal -->
