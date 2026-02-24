@@ -7,22 +7,46 @@
   <link rel="stylesheet" href="/static/tables.css" />
 </head>
 <body>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="logo">🎥 Live Admin</span>
+    </div>
+
+    <nav class="sidebar-menu">
+      <a class="menu-item" href="/">
+        <span class="icon">✏️</span>
+        <span class="text">Админ-панель</span>
+      </a>
+      <a class="menu-item active" href="/tables">
+        <span class="icon">📋</span>
+        <span class="text">Таблицы заявок</span>
+      </a>
+      <a class="menu-item" href="/competition">
+        <span class="icon">🏆</span>
+        <span class="text">Конкурс</span>
+      </a>
+      <a class="menu-item" href="/broadcast">
+        <span class="icon">📺</span>
+        <span class="text">Трансляция</span>
+      </a>
+      <a class="menu-item" href="/staff">
+        <span class="icon">👥</span>
+        <span class="text">Сотрудники</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <a href="/logout" class="menu-item logout">
+        <span class="icon">🚪</span>
+        <span class="text">Выход</span>
+      </a>
+    </div>
+  </aside>
+
   <main class="container">
     <h1>Таблицы заявок конкурса</h1>
 
-    <section id="auth" class="card">
-      <h2>Вход по email-коду</h2>
-      <div class="row">
-        <input id="email" type="email" placeholder="email@example.com" />
-        <button id="sendCode">Отправить код</button>
-      </div>
-      <div class="row">
-        <input id="code" placeholder="Код" />
-        <button id="verifyCode">Войти</button>
-      </div>
-    </section>
-
-    <section id="workspace" class="card hidden">
+    <section id="workspace" class="card">
       <h2>Таблицы</h2>
       <div class="row">
         <input id="newTitle" placeholder="Название таблицы" />
