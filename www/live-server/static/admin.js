@@ -4,35 +4,71 @@ function initAdmin() {
   const collapseSidebarButton = document.getElementById("collapseSidebar");
   const editorLink = document.querySelector('.sidebar-menu a[href="/admin"]');
   const autoAddLink = document.getElementById("autoAddLink");
+  const tablesLink = document.getElementById("tablesLink");
   const previewSection = document.getElementById("preview");
   const tableSection = document.querySelector("table");
   const autoAddSection = document.getElementById("autoAddSection");
+  const tablesSection = document.getElementById("tablesSection");
 
   collapseSidebarButton?.addEventListener("click", () => {
     sidebar?.classList.toggle("collapsed");
   });
 
   // Переключение секций
-  if (!editorLink || !autoAddLink || !previewSection || !tableSection || !autoAddSection) {
+  if (!editorLink || !autoAddLink || !tablesLink || !previewSection || !tableSection || !autoAddSection || !tablesSection) {
     console.warn("Admin UI: missing required section elements.");
   } else {
-    editorLink.addEventListener("click", (e) => {
-      e.preventDefault();
+    const activateEditor = () => {
       document.querySelectorAll(".sidebar-menu .menu-item").forEach((l) => l.classList.remove("active"));
       editorLink.classList.add("active");
       previewSection.style.display = "block";
       tableSection.style.display = "table";
       autoAddSection.style.display = "none";
-    });
+      tablesSection.style.display = "none";
+    };
 
-    autoAddLink.addEventListener("click", (e) => {
-      e.preventDefault();
+    const activateAutoAdd = () => {
       document.querySelectorAll(".sidebar-menu .menu-item").forEach((l) => l.classList.remove("active"));
       autoAddLink.classList.add("active");
       previewSection.style.display = "none";
       tableSection.style.display = "none";
       autoAddSection.style.display = "block";
+      tablesSection.style.display = "none";
+    };
+
+    const activateTables = () => {
+      document.querySelectorAll(".sidebar-menu .menu-item").forEach((l) => l.classList.remove("active"));
+      tablesLink.classList.add("active");
+      previewSection.style.display = "none";
+      tableSection.style.display = "none";
+      autoAddSection.style.display = "none";
+      tablesSection.style.display = "block";
+      if (window.initTablesSection) {
+        window.initTablesSection();
+      }
+    };
+
+    editorLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      history.replaceState({}, "", "/admin");
+      activateEditor();
     });
+
+    autoAddLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      activateAutoAdd();
+    });
+
+    tablesLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      history.replaceState({}, "", "/admin?section=tables");
+      activateTables();
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("section") === "tables") {
+      activateTables();
+    }
   }
   
     // Добавление новой строки
