@@ -1,11 +1,12 @@
-# Tables MVP (FastAPI)
+# Tables MVP (встроено в основной Flask-сервер)
 
 ## Что добавлено
-- Отдельный сервис на FastAPI: `tables_service.py`.
-- Отдельная страница: `/tables`.
+- Функциональность таблиц заявок встроена в `server.py` (основной сервер админки).
+- Страница: `/tables` (шаблон `templates/tables.html`).
+- Статика: `/static/tables.js`, `/static/tables.css`.
 - API:
-  - `POST /api/tables`
   - `GET /api/tables`
+  - `POST /api/tables`
   - `DELETE /api/tables/{id}`
   - `POST /api/tables/{id}/excel`
   - `POST /api/tables/{id}/connect-yandex`
@@ -13,23 +14,23 @@
   - `GET /api/tables/{id}/entries`
   - `GET /api/files/{entry_id}/{type}`
   - `GET /api/preview/{entry_id}/{type}`
-- Email code auth endpoints:
-  - `POST /api/auth/send-code`
-  - `POST /api/auth/verify-code`
 
 ## Запуск
+Запускается только основной сервер:
+
 ```bash
 cd /workspace/local/www/live-server
-pip install fastapi uvicorn jinja2 python-multipart openpyxl requests
-uvicorn tables_service:app --host 0.0.0.0 --port 8010
+python3 server.py
 ```
 
-Открыть: `http://localhost:8010/tables`
+Открыть:
+- `http://localhost:8082/` — админка
+- `http://localhost:8082/tables` — таблицы заявок
 
 ## Хранилище
-Файлы сохраняются в `/var/mount_point/nfv/contest_storage`.
+Файлы сохраняются в `STORAGE_ROOT` (по умолчанию `/var/mount_point/nfv/contest_storage`).
 
 ## Важно
-- "Подключить Яндекс" в MVP принимает cookies JSON и сохраняет его в профиль таблицы.
-- Код подтверждения email печатается в stdout сервера (для dev).
-- Очистка данных старше 60 дней запускается daily в background thread.
+- Отдельный `tables_service.py` оставлен в репозитории как архив, но не используется в маршрутизации основного сервера.
+- Используется общая авторизация сайта (те же сессии, что и у админки), отдельного логина на `/tables` нет.
+- Очистка данных старше 60 дней запускается в фоне в процессе основного сервера.

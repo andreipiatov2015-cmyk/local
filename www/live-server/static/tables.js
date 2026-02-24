@@ -1,4 +1,3 @@
-const auth = document.getElementById('auth');
 const workspace = document.getElementById('workspace');
 const tableView = document.getElementById('tableView');
 const tableList = document.getElementById('tableList');
@@ -11,13 +10,20 @@ async function postForm(url, data) {
   const fd = new FormData();
   Object.entries(data).forEach(([k, v]) => fd.append(k, v));
   const r = await fetch(url, { method: 'POST', body: fd });
+  if (r.status === 401) {
+    window.location.href = '/login';
+    throw new Error('unauthorized');
+  }
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
 
 async function refreshTables() {
   const r = await fetch('/api/tables');
-  if (r.status === 401) return;
+  if (r.status === 401) {
+    window.location.href = '/login';
+    return;
+  }
   const tables = await r.json();
   tableList.innerHTML = '';
   tables.forEach(t => {
@@ -44,11 +50,21 @@ function fileButtons(entry, type) {
 
 async function refreshEntries() {
   if (!currentTableId) return;
-  const t = await (await fetch('/api/tables')).json();
+  const tablesResp = await fetch('/api/tables');
+  if (tablesResp.status === 401) {
+    window.location.href = '/login';
+    return;
+  }
+  const t = await tablesResp.json();
   const cur = t.find(x => x.id === currentTableId);
   if (cur) progressEl.textContent = `Статус: ${cur.status}, прогресс: ${cur.progress}%`;
 
-  const rows = await (await fetch(`/api/tables/${currentTableId}/entries`)).json();
+  const rowsResp = await fetch(`/api/tables/${currentTableId}/entries`);
+  if (rowsResp.status === 401) {
+    window.location.href = '/login';
+    return;
+  }
+  const rows = await rowsResp.json();
   entriesBody.innerHTML = '';
   rows.forEach(e => {
     const tr = document.createElement('tr');
@@ -79,21 +95,6 @@ document.body.addEventListener('click', async (e) => {
 
 document.getElementById('closeViewer').onclick = () => document.getElementById('viewer').close();
 
-document.getElementById('sendCode').onclick = async () => {
-  await postForm('/api/auth/send-code', { email: document.getElementById('email').value });
-  alert('Код отправлен (в MVP выводится в server log).');
-};
-
-document.getElementById('verifyCode').onclick = async () => {
-  await postForm('/api/auth/verify-code', {
-    email: document.getElementById('email').value,
-    code: document.getElementById('code').value,
-  });
-  auth.classList.add('hidden');
-  workspace.classList.remove('hidden');
-  refreshTables();
-};
-
 document.getElementById('createTable').onclick = async () => {
   await postForm('/api/tables', { title: document.getElementById('newTitle').value });
   refreshTables();
@@ -102,8 +103,11 @@ document.getElementById('createTable').onclick = async () => {
 document.getElementById('uploadExcel').onclick = async () => {
   if (!currentTableId) return alert('Выберите таблицу');
   const f = document.getElementById('excelFile').files[0];
-  const fd = new FormData(); fd.append('excel', f);
-  await fetch(`/api/tables/${currentTableId}/excel`, { method: 'POST', body: fd });
+  const fd = new FormData();
+  fd.append('excel', f);
+  const resp = await fetch(`/api/tables/${currentTableId}/excel`, { method: 'POST', body: fd });
+  if (resp.status === 401) return void (window.location.href = '/login');
+  if (!resp.ok) return alert(await resp.text());
   alert('Excel загружен');
 };
 
@@ -115,12 +119,16 @@ document.getElementById('connectYandex').onclick = async () => {
 
 document.getElementById('startDownload').onclick = async () => {
   if (!currentTableId) return alert('Выберите таблицу');
-  await fetch(`/api/tables/${currentTableId}/start-download`, { method: 'POST' });
+  const resp = await fetch(`/api/tables/${currentTableId}/start-download`, { method: 'POST' });
+  if (resp.status === 401) return void (window.location.href = '/login');
+  if (!resp.ok) return alert(await resp.text());
   alert('Фоновая загрузка запущена');
   setTimeout(refreshEntries, 1500);
 };
 
-fetch('/api/tables').then(r => {
-  if (r.ok) { auth.classList.add('hidden'); workspace.classList.remove('hidden'); refreshTables(); }
-});
-setInterval(() => { refreshTables(); refreshEntries(); }, 4000);
+workspace.classList.remove('hidden');
+refreshTables();
+setInterval(() => {
+  refreshTables();
+  refreshEntries();
+}, 4000);
