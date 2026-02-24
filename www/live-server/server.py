@@ -473,10 +473,10 @@ def sanitize_name(name):
 
 
 def table_user_from_request():
-    user = get_current_user()
-    if not user:
+    user_id = request.cookies.get("tables_user_id")
+    if not user_id:
         return None
-    return {"id": user["id"], "email": user.get("email", "")}
+    return query_db("SELECT id, email FROM users WHERE id=?", (user_id,), one=True)
 
 
 def storage_for_table(user_id, table_id):
@@ -664,7 +664,46 @@ def start_tables_background_jobs():
 
 @app.route("/tables")
 def tables_page():
-    return redirect(url_for("admin", section="tables"))
+    return render_template("tables.html")
+
+
+@app.route("/api/tables/send_code", methods=["POST"])
+def tables_send_code():
+    email = (request.form.get("email") or "").strip()
+    if not email:
+        return jsonify({"detail": "email обязателен"}), 400
+    code = str(int(time.time()))[-6:]
+    expires = (datetime.datetime.utcnow() + datetime.timedelta(minutes=10)).isoformat()
+    query_db("INSERT INTO email_codes (email, code, expires_at, created_at) VALUES (?, ?, ?, ?)", (email, code, expires, now_iso()))
+    print(f"[EMAIL-CODE] {email}: {code}")
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tables/verify_code", methods=["POST"])
+def tables_verify_code():
+    email = (request.form.get("email") or "").strip()
+    code = (request.form.get("code") or "").strip()
+    row = query_db(
+        "SELECT * FROM email_codes WHERE email=? AND code=? AND used=0 ORDER BY id DESC LIMIT 1",
+        (email, code),
+        one=True,
+    )
+    if not row or row["expires_at"] < now_iso():
+        return jsonify({"detail": "Неверный или просроченный код"}), 400
+
+    query_db("UPDATE email_codes SET used=1 WHERE id=?", (row["id"],))
+    user = query_db("SELECT id FROM users WHERE email=?", (email,), one=True)
+    if not user:
+        salt = "tables"
+        query_db(
+            "INSERT INTO users (username, email, password_hash, password_salt, role, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, 'viewer', 1, ?, ?)",
+            (email.split("@")[0], email, salt, salt, now_iso(), now_iso()),
+        )
+        user = query_db("SELECT id FROM users WHERE email=?", (email,), one=True)
+
+    resp = make_response(jsonify({"status": "ok", "user_id": user["id"]}))
+    resp.set_cookie("tables_user_id", str(user["id"]), httponly=True, max_age=30 * 24 * 3600)
+    return resp
 
 
 @app.route("/api/tables", methods=["GET"])
@@ -765,12 +804,9 @@ def list_table_entries(table_id):
     return jsonify([dict(r) for r in rows])
 
 
-def resolve_file(entry_id, ftype, owner_id):
+def resolve_file(entry_id, ftype):
     e = query_db("SELECT te.*, tw.user_id FROM table_entries te JOIN table_workspaces tw ON tw.id=te.table_id WHERE te.id=?", (entry_id,), one=True)
     if not e:
-        return None, (jsonify({"detail": "Entry не найден"}), 404)
-
-    if e["user_id"] != owner_id:
         return None, (jsonify({"detail": "Entry не найден"}), 404)
 
     col = f"{ftype}_local"
@@ -785,10 +821,9 @@ def resolve_file(entry_id, ftype, owner_id):
 
 @app.route("/api/files/<int:entry_id>/<ftype>", methods=["GET"])
 def get_file(entry_id, ftype):
-    user = table_user_from_request()
-    if not user:
+    if not table_user_from_request():
         return jsonify({"detail": "Не авторизован"}), 401
-    p, err = resolve_file(entry_id, ftype, user["id"])
+    p, err = resolve_file(entry_id, ftype)
     if err:
         return err
     return send_file(p, as_attachment=True, download_name=os.path.basename(p))
@@ -796,10 +831,9 @@ def get_file(entry_id, ftype):
 
 @app.route("/api/preview/<int:entry_id>/<ftype>", methods=["GET"])
 def preview_file(entry_id, ftype):
-    user = table_user_from_request()
-    if not user:
+    if not table_user_from_request():
         return jsonify({"detail": "Не авторизован"}), 401
-    p, err = resolve_file(entry_id, ftype, user["id"])
+    p, err = resolve_file(entry_id, ftype)
     if err:
         return err
     ext = os.path.splitext(p)[1].lower()
