@@ -473,7 +473,7 @@ def sanitize_name(name):
 
 
 def table_user_from_request():
-    user_id = request.cookies.get("tables_user_id")
+    user_id = session.get("user_id")
     if not user_id:
         return None
     return query_db("SELECT id, email FROM users WHERE id=?", (user_id,), one=True)
@@ -663,6 +663,7 @@ def start_tables_background_jobs():
 
 
 @app.route("/tables")
+@login_required
 def tables_page():
     return render_template("tables.html")
 
