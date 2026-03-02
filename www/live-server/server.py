@@ -21,6 +21,11 @@ from pathlib import Path
 import requests
 
 try:
+    from playwright.sync_api import sync_playwright
+except Exception:
+    sync_playwright = None
+
+try:
     import openpyxl
 except Exception:
     openpyxl = None
@@ -58,6 +63,8 @@ RETENTION_DAYS = 60
 MAX_TABLES_PER_USER = 10
 DOWNLOAD_RETRIES = 3
 MAX_FILENAME_LEN = 180
+YANDEX_VNC_URL = os.environ.get("YANDEX_VNC_URL", "/tables/yandex/vnc/vnc.html")
+YANDEX_CHROMIUM_PROFILE = os.environ.get("YANDEX_CHROMIUM_PROFILE", "/tmp/chromium-yandex-profile")
 
 TABLE_COLUMNS = {
     "number_title": ["Название номера", "Номер", "Название"],
@@ -846,6 +853,42 @@ def apply_cookies_to_requests_session(req_session, cookies):
 
 
 
+def read_yandex_cookies_from_chromium_profile():
+    if sync_playwright is None:
+        raise RuntimeError("Playwright не установлен на сервере")
+    profile_dir = Path(YANDEX_CHROMIUM_PROFILE)
+    if not profile_dir.exists():
+        raise RuntimeError("Профиль Chromium для noVNC не найден")
+
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir),
+            headless=True,
+            channel="chromium",
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        try:
+            cookies = context.cookies(["https://forms.yandex.ru/"])
+        finally:
+            context.close()
+
+    if not cookies:
+        raise RuntimeError("В профиле noVNC не найдены cookies Яндекса")
+    return cookies
+
+
+def verify_yandex_forms_access(cookies):
+    req = requests.Session()
+    apply_cookies_to_requests_session(req, cookies)
+    resp = req.get("https://forms.yandex.ru/", timeout=15, allow_redirects=True)
+    if resp.status_code in (401, 403):
+        return False
+    final_url = (resp.url or "").lower()
+    if "passport.yandex" in final_url:
+        return False
+    return resp.ok
+
+
 def log_yandex_complete(connect_id, status, table_id):
     app.logger.info(
         "[yandex_connect_complete] table_id=%s connect_id=%s status=%s",
@@ -857,6 +900,36 @@ def log_yandex_complete(connect_id, status, table_id):
 
 def table_belongs_to_user(table_id, user_id):
     return query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user_id), one=True)
+
+
+@app.route("/api/tables/<int:table_id>/yandex/vnc/start", methods=["POST"])
+def yandex_vnc_start(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not table_belongs_to_user(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    return jsonify({"vnc_url": YANDEX_VNC_URL})
+
+
+@app.route("/api/tables/<int:table_id>/yandex/vnc/finish", methods=["POST"])
+def yandex_vnc_finish(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not table_belongs_to_user(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    try:
+        cookies = read_yandex_cookies_from_chromium_profile()
+    except Exception as exc:
+        return jsonify({"detail": f"Не удалось прочитать cookies из профиля noVNC: {exc}"}), 500
+
+    if not verify_yandex_forms_access(cookies):
+        return jsonify({"detail": "Похоже, вы ещё не вошли в Яндекс в окне noVNC. Войдите и попробуйте снова."}), 400
+
+    save_yandex_session(user["id"], cookies)
+    return jsonify({"status": "ok", "yandex_connected": True})
 
 
 @app.route("/api/tables/<int:table_id>/yandex/connect/start", methods=["POST"])

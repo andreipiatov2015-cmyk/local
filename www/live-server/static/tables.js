@@ -1,6 +1,5 @@
 let currentTableId = null;
 let yandexConnected = false;
-let connectPollTimer = null;
 
 const workspace = document.getElementById('workspace');
 const tableView = document.getElementById('tableView');
@@ -10,6 +9,8 @@ const progressEl = document.getElementById('progress');
 const tableTitle = document.getElementById('tableTitle');
 const yandexStatusEl = document.getElementById('yandexStatus');
 const startDownloadBtn = document.getElementById('startDownload');
+const finishYandexBtn = document.getElementById('finishYandex');
+const yandexHintEl = document.getElementById('yandexHint');
 
 const viewer = document.getElementById('viewer');
 const viewerBody = document.getElementById('viewerBody');
@@ -42,17 +43,23 @@ function setYandexStatus(status) {
     yandexStatusEl.textContent = 'Яндекс: подключен';
     yandexConnected = true;
     startDownloadBtn.disabled = false;
+    finishYandexBtn.disabled = true;
+    yandexHintEl.textContent = '';
     return;
   }
   if (status === 'waiting') {
-    yandexStatusEl.textContent = 'Яндекс: ожидается вход…';
+    yandexStatusEl.textContent = 'Яндекс: ожидается вход в noVNC…';
     yandexConnected = false;
     startDownloadBtn.disabled = true;
+    finishYandexBtn.disabled = false;
+    yandexHintEl.textContent = 'Открылось окно удалённого браузера. Войдите в Яндекс (аккаунт с формами). После входа нажмите «Готово».';
     return;
   }
   yandexStatusEl.textContent = 'Яндекс: не подключен';
   yandexConnected = false;
   startDownloadBtn.disabled = true;
+  finishYandexBtn.disabled = true;
+  yandexHintEl.textContent = '';
 }
 
 async function refreshTables() {
@@ -139,28 +146,6 @@ function openViewer(previewUrl) {
   viewer.showModal();
 }
 
-async function pollYandexConnectStatus(connectId) {
-  if (!currentTableId) return false;
-  const resp = await fetch(`/api/tables/${currentTableId}/yandex/connect/status?connect_id=${encodeURIComponent(connectId)}`);
-  if (requireAuth(resp)) return true;
-  if (!resp.ok) return false;
-  const data = await resp.json();
-
-  if (data.status === 'success') {
-    setYandexStatus('success');
-    return true;
-  }
-  if (data.status === 'waiting') {
-    setYandexStatus('waiting');
-    return false;
-  }
-  if (data.status === 'error' || data.status === 'expired') {
-    setYandexStatus('idle');
-    return true;
-  }
-  return false;
-}
-
 function initTablesSection() {
   closeViewerBtn.onclick = () => viewer.close();
 
@@ -188,31 +173,29 @@ function initTablesSection() {
 
   document.getElementById('connectYandex').onclick = async () => {
     if (!currentTableId) return alert('Сначала выберите таблицу');
-    const resp = await fetch(`/api/tables/${currentTableId}/yandex/connect/start`, { method: 'POST' });
+    const resp = await fetch(`/api/tables/${currentTableId}/yandex/vnc/start`, { method: 'POST' });
     if (requireAuth(resp)) return;
     if (!resp.ok) return alert(await resp.text());
     const data = await resp.json();
 
     setYandexStatus('waiting');
-    const doneUrl = `${window.location.origin}/yandex/connect/done?connect_id=${data.connect_id}`;
-    const authUrl = `https://passport.yandex.ru/auth?retpath=${encodeURIComponent(doneUrl)}`;
-    const popup = window.open(authUrl, 'yandex_connect', 'width=520,height=760');
+    const popup = window.open(data.vnc_url, 'yandex_vnc', 'width=1280,height=900');
     if (!popup) {
-      alert('Не удалось открыть окно подключения (проверьте блокировщик pop-up)');
+      alert('Не удалось открыть окно noVNC (проверьте блокировщик pop-up)');
       setYandexStatus('idle');
       return;
     }
+  };
 
-    if (connectPollTimer) clearInterval(connectPollTimer);
-    connectPollTimer = setInterval(async () => {
-      const done = await pollYandexConnectStatus(data.connect_id);
-      const closed = popup.closed;
-      if (done || closed) {
-        clearInterval(connectPollTimer);
-        connectPollTimer = null;
-        await pollYandexConnectStatus(data.connect_id);
-      }
-    }, 2000);
+  finishYandexBtn.onclick = async () => {
+    if (!currentTableId) return alert('Сначала выберите таблицу');
+    const resp = await fetch(`/api/tables/${currentTableId}/yandex/vnc/finish`, { method: 'POST' });
+    if (requireAuth(resp)) return;
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) return alert(data.detail || 'Не удалось сохранить сессию Яндекса');
+    setYandexStatus('success');
+    await refreshTables();
+    alert('Яндекс подключен');
   };
 
   document.getElementById('startDownload').onclick = async () => {
@@ -232,14 +215,6 @@ function initTablesSection() {
     if (pv) openViewer(pv);
   });
 
-  window.addEventListener('message', async (event) => {
-    if (event.origin !== window.location.origin) return;
-    if (event.data?.type === 'yandex-connected' && Number(event.data?.tableId) === Number(currentTableId)) {
-      setYandexStatus('success');
-      await refreshTables();
-      await refreshEntries();
-    }
-  });
 
   refreshTables();
   setInterval(() => {
