@@ -25,6 +25,7 @@ NOVNC_WEB_DIR="/usr/share/novnc"
 
 XDG_RUNTIME_DIR="/tmp/xdg-runtime-root"
 CHROMIUM_PROFILE="/tmp/chromium-yandex-profile"
+CHROMIUM_START_URL="${CHROMIUM_START_URL:-https://passport.yandex.ru/auth}"
 
 # Binaries (assume installed)
 Xvfb_BIN="$(command -v Xvfb || true)"
@@ -186,11 +187,13 @@ start_vnc_stack() {
   mkdir -p "${CHROMIUM_PROFILE}" || true
   nohup "${CHROMIUM_BIN}" \
     --no-sandbox \
+    --new-window \
+    --no-first-run \
     --disable-gpu \
     --disable-dev-shm-usage \
     --disable-software-rasterizer \
     --user-data-dir="${CHROMIUM_PROFILE}" \
-    "https://passport.yandex.ru/auth" >/var/log/contest_chromium.log 2>&1 &
+    "${CHROMIUM_START_URL}" >/var/log/contest_chromium.log 2>&1 &
   echo $! > "$(pidfile chromium)"
   sleep 0.4
 
