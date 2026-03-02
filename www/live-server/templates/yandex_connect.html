@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Подключение Яндекса</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.4; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; max-width: 520px; }
+    .status { margin: 12px 0; font-weight: 700; }
+    .error { color: #b00020; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Идёт подключение Яндекса…</h1>
+    <p>Автоматический вход через headless-браузер на сервере может быть недоступен из-за капчи/2FA. Используйте fallback: загрузка cookies-файла после входа в Яндекс на вашем устройстве.</p>
+    <input type="file" id="cookiesFile" accept=".txt,.json" />
+    <button id="uploadCookies">Загрузить cookies файлом</button>
+    <p id="status" class="status">Яндекс: ожидается вход…</p>
+    <p id="error" class="error"></p>
+  </div>
+
+  <script>
+    const connectId = {{ connect_id | tojson }};
+    const tableId = {{ table_id | tojson }};
+    const statusEl = document.getElementById('status');
+    const errorEl = document.getElementById('error');
+
+    async function pollStatus() {
+      const resp = await fetch(`/api/tables/${tableId}/yandex/connect/status?connect_id=${encodeURIComponent(connectId)}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data.status === 'success') {
+        statusEl.textContent = 'Подключено, можно закрыть окно';
+      } else if (data.status === 'error') {
+        statusEl.textContent = 'Не удалось подключить, попробуйте ещё раз';
+        errorEl.textContent = data.error || '';
+      } else if (data.status === 'expired') {
+        statusEl.textContent = 'Не удалось подключить, попробуйте ещё раз';
+        errorEl.textContent = 'Сессия подключения истекла';
+      } else {
+        statusEl.textContent = 'Яндекс: ожидается вход…';
+      }
+    }
+
+    document.getElementById('uploadCookies').onclick = async () => {
+      const file = document.getElementById('cookiesFile').files[0];
+      if (!file) {
+        alert('Выберите cookies-файл');
+        return;
+      }
+      statusEl.textContent = 'Идёт подключение Яндекса…';
+      errorEl.textContent = '';
+      const fd = new FormData();
+      fd.append('cookies_file', file);
+      const resp = await fetch(`/api/yandex/connect/${connectId}/upload`, { method: 'POST', body: fd });
+      const data = await resp.json();
+      if (!resp.ok) {
+        statusEl.textContent = 'Не удалось подключить, попробуйте ещё раз';
+        errorEl.textContent = data.detail || 'Ошибка загрузки cookies';
+        return;
+      }
+      statusEl.textContent = 'Подключено, можно закрыть окно';
+    };
+
+    pollStatus();
+    setInterval(pollStatus, 2000);
+  </script>
+</body>
+</html>

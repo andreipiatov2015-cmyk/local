@@ -1,4 +1,6 @@
 let currentTableId = null;
+let yandexConnected = false;
+let connectPollTimer = null;
 
 const workspace = document.getElementById('workspace');
 const tableView = document.getElementById('tableView');
@@ -6,6 +8,8 @@ const tableList = document.getElementById('tableList');
 const entriesBody = document.getElementById('entries');
 const progressEl = document.getElementById('progress');
 const tableTitle = document.getElementById('tableTitle');
+const yandexStatusEl = document.getElementById('yandexStatus');
+const startDownloadBtn = document.getElementById('startDownload');
 
 const viewer = document.getElementById('viewer');
 const viewerBody = document.getElementById('viewerBody');
@@ -33,6 +37,24 @@ function safeOpen(url) {
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
+function setYandexStatus(status) {
+  if (status === 'success') {
+    yandexStatusEl.textContent = 'Яндекс: подключен';
+    yandexConnected = true;
+    startDownloadBtn.disabled = false;
+    return;
+  }
+  if (status === 'waiting') {
+    yandexStatusEl.textContent = 'Яндекс: ожидается вход…';
+    yandexConnected = false;
+    startDownloadBtn.disabled = true;
+    return;
+  }
+  yandexStatusEl.textContent = 'Яндекс: не подключен';
+  yandexConnected = false;
+  startDownloadBtn.disabled = true;
+}
+
 async function refreshTables() {
   const r = await fetch('/api/tables');
   if (requireAuth(r)) return;
@@ -53,6 +75,7 @@ async function openTable(id, title) {
   tableTitle.textContent = `Таблица: ${title} (#${id})`;
   tableView.classList.remove('hidden');
   await refreshEntries();
+  setYandexStatus('idle');
 }
 
 function fileButtons(entry, type) {
@@ -106,9 +129,6 @@ function openViewer(previewUrl) {
   viewerBody.innerHTML = '';
   downloadTop.onclick = () => safeOpen(previewUrl.replace('/preview/', '/files/'));
 
-  // Мы не знаем реальный тип заранее, поэтому пробуем iframe,
-  // а если это картинка — img тоже откроется. (В худшем случае будет пусто.)
-  // Лучше потом улучшить: backend пусть отдаёт content-type в JSON.
   const isPdfGuess = previewUrl.includes('/receipt') || previewUrl.includes('/consent') || previewUrl.includes('/presentation');
   if (isPdfGuess) {
     viewerBody.innerHTML = `<iframe src="${previewUrl}" style="width:100%;height:70vh;border:0"></iframe>`;
@@ -119,11 +139,31 @@ function openViewer(previewUrl) {
   viewer.showModal();
 }
 
+async function pollYandexConnectStatus(connectId) {
+  if (!currentTableId) return false;
+  const resp = await fetch(`/api/tables/${currentTableId}/yandex/connect/status?connect_id=${encodeURIComponent(connectId)}`);
+  if (requireAuth(resp)) return true;
+  if (!resp.ok) return false;
+  const data = await resp.json();
+
+  if (data.status === 'success') {
+    setYandexStatus('success');
+    return true;
+  }
+  if (data.status === 'waiting') {
+    setYandexStatus('waiting');
+    return false;
+  }
+  if (data.status === 'error' || data.status === 'expired') {
+    setYandexStatus('idle');
+    return true;
+  }
+  return false;
+}
+
 function initTablesSection() {
-  // Закрытие viewer
   closeViewerBtn.onclick = () => viewer.close();
 
-  // Создание таблицы
   document.getElementById('createTable').onclick = async () => {
     const title = document.getElementById('newTitle').value.trim();
     if (!title) return alert('Введите название таблицы');
@@ -131,7 +171,6 @@ function initTablesSection() {
     await refreshTables();
   };
 
-  // Загрузка Excel
   document.getElementById('uploadExcel').onclick = async () => {
     if (!currentTableId) return alert('Сначала выберите таблицу');
     const f = document.getElementById('excelFile').files[0];
@@ -147,17 +186,36 @@ function initTablesSection() {
     await refreshEntries();
   };
 
-  // Подключить Яндекс (cookies json)
   document.getElementById('connectYandex').onclick = async () => {
     if (!currentTableId) return alert('Сначала выберите таблицу');
-    const cookiesJson = document.getElementById('yandexCookies').value.trim() || '{}';
-    await postForm(`/api/tables/${currentTableId}/connect-yandex`, { cookies_json: cookiesJson });
-    alert('Yandex session сохранена');
+    const resp = await fetch(`/api/tables/${currentTableId}/yandex/connect/start`, { method: 'POST' });
+    if (requireAuth(resp)) return;
+    if (!resp.ok) return alert(await resp.text());
+    const data = await resp.json();
+
+    setYandexStatus('waiting');
+    const popup = window.open(data.connect_url, 'yandex_connect', 'width=520,height=760');
+    if (!popup) {
+      alert('Не удалось открыть окно подключения (проверьте блокировщик pop-up)');
+      setYandexStatus('idle');
+      return;
+    }
+
+    if (connectPollTimer) clearInterval(connectPollTimer);
+    connectPollTimer = setInterval(async () => {
+      const done = await pollYandexConnectStatus(data.connect_id);
+      const closed = popup.closed;
+      if (done || closed) {
+        clearInterval(connectPollTimer);
+        connectPollTimer = null;
+        await pollYandexConnectStatus(data.connect_id);
+      }
+    }, 2000);
   };
 
-  // Старт скачивания
   document.getElementById('startDownload').onclick = async () => {
     if (!currentTableId) return alert('Сначала выберите таблицу');
+    if (!yandexConnected) return alert('Сначала подключите Яндекс');
     const resp = await fetch(`/api/tables/${currentTableId}/start-download`, { method: 'POST' });
     if (requireAuth(resp)) return;
     if (!resp.ok) return alert(await resp.text());
@@ -165,7 +223,6 @@ function initTablesSection() {
     setTimeout(refreshEntries, 1000);
   };
 
-  // Общий обработчик кнопок скачать/открыть
   document.body.addEventListener('click', (e) => {
     const dl = e.target?.dataset?.dl;
     const pv = e.target?.dataset?.pv;
@@ -173,7 +230,6 @@ function initTablesSection() {
     if (pv) openViewer(pv);
   });
 
-  // Стартовые данные
   refreshTables();
   setInterval(() => {
     refreshTables();

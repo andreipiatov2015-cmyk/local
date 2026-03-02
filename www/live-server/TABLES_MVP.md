@@ -11,7 +11,10 @@
   - `POST /api/tables`
   - `DELETE /api/tables/{id}`
   - `POST /api/tables/{id}/excel`
-  - `POST /api/tables/{id}/connect-yandex`
+  - `POST /api/tables/{id}/yandex/connect/start`
+  - `GET /tables/yandex/connect/{connect_id}`
+  - `GET /api/tables/{id}/yandex/connect/status?connect_id=...`
+  - `POST /api/yandex/connect/{connect_id}/upload` (fallback: cookies file)
   - `POST /api/tables/{id}/start-download`
   - `GET /api/tables/{id}/entries`
   - `GET /api/files/{entry_id}/{type}`
@@ -36,3 +39,11 @@ python3 server.py
 - Отдельный `tables_service.py` оставлен в репозитории как архив, но не используется в маршрутизации основного сервера.
 - Код подтверждения email в MVP печатается в stdout сервера.
 - Очистка данных старше 60 дней запускается в фоне в процессе основного сервера.
+
+## Подключение Яндекса
+- Ручной ввод JSON cookies в `/tables` удалён.
+- Кнопка «Подключить Яндекс» запускает одноразовую сессию подключения (`connect_id`, TTL 10 минут) и открывает popup.
+- Popup показывает статусы: ожидание / успех / ошибка.
+- Основной сценарий авторизации через headless Playwright может быть ограничен капчей/2FA, поэтому в MVP реализован обязательный fallback: загрузка cookies-файла (`.txt` Netscape или JSON).
+- Сессия Яндекса хранится в `APP_DATA_ROOT/users/user_{user_id}/yandex_session.json` и привязана к пользователю сайта.
+- Скачивание файлов использует сохранённую пользовательскую сессию; при отсутствии/устаревании сессии возвращается ошибка переподключения.
