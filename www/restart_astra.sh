@@ -5,6 +5,8 @@ ROOT_DIR="/var/www"
 LIVE_SERVER="${ROOT_DIR}/live-server/server.py"
 REBOOT_SERVER="${ROOT_DIR}/reboot/server.py"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+LIVE_SERVER_HOST="127.0.0.1"
+LIVE_SERVER_PORT="8083"
 
 # Custom nginx (with RTMP) installed manually
 CUSTOM_NGINX_BIN="/usr/local/nginx/sbin/nginx"
@@ -59,6 +61,10 @@ restart_python_app() {
 
   log "Запускаю ${name} (${app})"
   nohup "${PYTHON_BIN}" "${app}" >/var/log/${name}.log 2>&1 &
+
+  if [[ "${app}" == "${LIVE_SERVER}" ]]; then
+    log "${name} должен слушать ${LIVE_SERVER_HOST}:${LIVE_SERVER_PORT}"
+  fi
 }
 
 start_or_reload_custom_nginx() {
