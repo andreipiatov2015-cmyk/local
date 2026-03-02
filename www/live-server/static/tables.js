@@ -179,7 +179,7 @@ function initTablesSection() {
     const data = await resp.json();
 
     setYandexStatus('waiting');
-    const popup = window.open(data.vnc_url, 'yandex_vnc', 'width=1280,height=900');
+    const popup = window.open(data.vnc_url, 'yandex_vnc', 'width=520,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no');
     if (!popup) {
       alert('Не удалось открыть окно noVNC (проверьте блокировщик pop-up)');
       setYandexStatus('idle');

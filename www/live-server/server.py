@@ -63,7 +63,7 @@ RETENTION_DAYS = 60
 MAX_TABLES_PER_USER = 10
 DOWNLOAD_RETRIES = 3
 MAX_FILENAME_LEN = 180
-YANDEX_VNC_URL = os.environ.get("YANDEX_VNC_URL", "/tables/yandex/vnc/vnc.html?autoconnect=1&resize=remote&show_dot=0")
+YANDEX_VNC_URL = os.environ.get("YANDEX_VNC_URL", "/tables/yandex/vnc/vnc.html?autoconnect=1&resize=scale&show_dot=0")
 YANDEX_CHROMIUM_PROFILE = os.environ.get("YANDEX_CHROMIUM_PROFILE", "/tmp/chromium-yandex-profile")
 
 TABLE_COLUMNS = {

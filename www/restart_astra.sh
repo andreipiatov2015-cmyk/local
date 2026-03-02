@@ -187,13 +187,15 @@ start_vnc_stack() {
   mkdir -p "${CHROMIUM_PROFILE}" || true
   nohup "${CHROMIUM_BIN}" \
     --no-sandbox \
-    --new-window \
     --no-first-run \
+    --app="${CHROMIUM_START_URL}" \
+    --window-size=420,640 \
+    --window-position=10,10 \
     --disable-gpu \
     --disable-dev-shm-usage \
     --disable-software-rasterizer \
     --user-data-dir="${CHROMIUM_PROFILE}" \
-    "${CHROMIUM_START_URL}" >/var/log/contest_chromium.log 2>&1 &
+    >/var/log/contest_chromium.log 2>&1 &
   echo $! > "$(pidfile chromium)"
   sleep 0.4
 
