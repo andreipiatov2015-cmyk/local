@@ -6,42 +6,91 @@
   <title>Подключение Яндекса</title>
   <style>
     body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.4; }
-    .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; max-width: 520px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; max-width: 560px; }
     .status { margin: 12px 0; font-weight: 700; }
-    .error { color: #b00020; }
+    .hint { color: #333; margin-bottom: 8px; }
+    .error { color: #b00020; margin-top: 12px; }
+    .hidden { display: none; }
+    .actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Идёт подключение Яндекса…</h1>
-    <p>Автоматический вход через headless-браузер на сервере может быть недоступен из-за капчи/2FA. Используйте fallback: загрузка cookies-файла после входа в Яндекс на вашем устройстве.</p>
-    <input type="file" id="cookiesFile" accept=".txt,.json" />
-    <button id="uploadCookies">Загрузить cookies файлом</button>
-    <p id="status" class="status">Яндекс: ожидается вход…</p>
+    <h1>Подключено успешно, окно закроется…</h1>
+    <p class="hint">Завершаем подключение Яндекса на сервере. Если автоматическое завершение недоступно (например, 2FA/капча), используйте загрузку cookies-файла.</p>
+
+    <p id="status" class="status">Проверяем подключение…</p>
     <p id="error" class="error"></p>
+
+    <div id="fallback" class="hidden">
+      <input type="file" id="cookiesFile" accept=".txt,.json" />
+      <button id="uploadCookies">Загрузить cookies файлом</button>
+    </div>
+
+    <div class="actions">
+      <button id="closeWindow" class="hidden">Закрыть окно</button>
+    </div>
   </div>
 
   <script>
     const connectId = {{ connect_id | tojson }};
     const tableId = {{ table_id | tojson }};
+    const invalidReason = {{ invalid_reason | tojson }};
+
     const statusEl = document.getElementById('status');
     const errorEl = document.getElementById('error');
+    const fallbackEl = document.getElementById('fallback');
+    const closeBtn = document.getElementById('closeWindow');
 
-    async function pollStatus() {
-      const resp = await fetch(`/api/tables/${tableId}/yandex/connect/status?connect_id=${encodeURIComponent(connectId)}`);
-      if (!resp.ok) return;
-      const data = await resp.json();
-      if (data.status === 'success') {
-        statusEl.textContent = 'Подключено, можно закрыть окно';
-      } else if (data.status === 'error') {
-        statusEl.textContent = 'Не удалось подключить, попробуйте ещё раз';
-        errorEl.textContent = data.error || '';
-      } else if (data.status === 'expired') {
-        statusEl.textContent = 'Не удалось подключить, попробуйте ещё раз';
-        errorEl.textContent = 'Сессия подключения истекла';
-      } else {
-        statusEl.textContent = 'Яндекс: ожидается вход…';
+    closeBtn.onclick = () => window.close();
+
+    function showCloseButton() {
+      closeBtn.classList.remove('hidden');
+    }
+
+    function notifyParentConnected() {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'yandex-connected', tableId }, window.location.origin);
       }
+    }
+
+    function tryCloseWindow() {
+      window.close();
+      setTimeout(() => {
+        showCloseButton();
+      }, 400);
+    }
+
+    async function completeConnect() {
+      if (invalidReason || !connectId || !tableId) {
+        statusEl.textContent = 'Не удалось завершить подключение';
+        errorEl.textContent = invalidReason || 'Некорректная ссылка подключения';
+        fallbackEl.classList.remove('hidden');
+        showCloseButton();
+        return;
+      }
+
+      const fd = new FormData();
+      fd.append('connect_id', connectId);
+
+      const resp = await fetch(`/api/tables/${tableId}/yandex/connect/complete`, {
+        method: 'POST',
+        body: fd,
+      });
+      const data = await resp.json().catch(() => ({}));
+
+      if (!resp.ok) {
+        statusEl.textContent = 'Автоматическое подключение не завершено';
+        errorEl.textContent = data.detail || 'Попробуйте загрузить cookies-файл';
+        fallbackEl.classList.remove('hidden');
+        showCloseButton();
+        return;
+      }
+
+      statusEl.textContent = 'Подключено успешно, окно закроется…';
+      errorEl.textContent = '';
+      notifyParentConnected();
+      tryCloseWindow();
     }
 
     document.getElementById('uploadCookies').onclick = async () => {
@@ -50,22 +99,25 @@
         alert('Выберите cookies-файл');
         return;
       }
-      statusEl.textContent = 'Идёт подключение Яндекса…';
+      statusEl.textContent = 'Завершаем подключение по cookies…';
       errorEl.textContent = '';
+
       const fd = new FormData();
       fd.append('cookies_file', file);
-      const resp = await fetch(`/api/yandex/connect/${connectId}/upload`, { method: 'POST', body: fd });
-      const data = await resp.json();
-      if (!resp.ok) {
-        statusEl.textContent = 'Не удалось подключить, попробуйте ещё раз';
-        errorEl.textContent = data.detail || 'Ошибка загрузки cookies';
+
+      const uploadResp = await fetch(`/api/yandex/connect/${connectId}/upload`, { method: 'POST', body: fd });
+      const uploadData = await uploadResp.json().catch(() => ({}));
+      if (!uploadResp.ok) {
+        statusEl.textContent = 'Не удалось завершить подключение';
+        errorEl.textContent = uploadData.detail || 'Ошибка загрузки cookies';
+        showCloseButton();
         return;
       }
-      statusEl.textContent = 'Подключено, можно закрыть окно';
+
+      await completeConnect();
     };
 
-    pollStatus();
-    setInterval(pollStatus, 2000);
+    completeConnect();
   </script>
 </body>
 </html>
