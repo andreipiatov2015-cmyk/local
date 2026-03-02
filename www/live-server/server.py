@@ -845,6 +845,16 @@ def apply_cookies_to_requests_session(req_session, cookies):
         req_session.cookies.set(name, value, domain=c.get("domain") or ".yandex.ru", path=c.get("path") or "/")
 
 
+
+def log_yandex_complete(connect_id, status, table_id):
+    app.logger.info(
+        "[yandex_connect_complete] table_id=%s connect_id=%s status=%s",
+        table_id,
+        connect_id,
+        status,
+    )
+
+
 def table_belongs_to_user(table_id, user_id):
     return query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user_id), one=True)
 
@@ -919,6 +929,7 @@ def yandex_connect_complete(table_id):
     payload = request.get_json(silent=True) or {}
     connect_id = (request.form.get("connect_id") or payload.get("connect_id") or "").strip()
     if not connect_id:
+        log_yandex_complete(connect_id, "rejected_missing_connect_id", table_id)
         return jsonify({"detail": "connect_id обязателен"}), 400
     row = query_db(
         "SELECT * FROM yandex_connect_sessions WHERE connect_id=? AND user_id=? AND table_id=?",
@@ -926,13 +937,17 @@ def yandex_connect_complete(table_id):
         one=True,
     )
     if not row:
+        log_yandex_complete(connect_id, "rejected_not_found", table_id)
         return jsonify({"detail": "Сессия подключения не найдена"}), 404
     if row["expires_at"] < now_iso():
         query_db("UPDATE yandex_connect_sessions SET status='expired', updated_at=? WHERE connect_id=?", (now_iso(), connect_id))
+        log_yandex_complete(connect_id, "expired", table_id)
         return jsonify({"detail": "Сессия подключения истекла", "fallback_required": True}), 400
     if row["status"] == "success":
+        log_yandex_complete(connect_id, "success", table_id)
         return jsonify({"status": "success", "yandex_connected": True})
     if row["status"] != "waiting":
+        log_yandex_complete(connect_id, f"rejected_{row['status']}", table_id)
         return jsonify({"detail": row["error_message"] or "Сессия уже завершена", "fallback_required": True}), 400
 
     if yandex_session_file(user["id"]).exists():
@@ -940,6 +955,7 @@ def yandex_connect_complete(table_id):
             "UPDATE yandex_connect_sessions SET status='success', error_message=NULL, updated_at=? WHERE connect_id=?",
             (now_iso(), connect_id),
         )
+        log_yandex_complete(connect_id, "success", table_id)
         return jsonify({"status": "success", "yandex_connected": True})
 
     message = "Не удалось автоматически завершить подключение (возможна 2FA/капча). Загрузите cookies файлом."
@@ -947,6 +963,7 @@ def yandex_connect_complete(table_id):
         "UPDATE yandex_connect_sessions SET status='error', error_message=?, updated_at=? WHERE connect_id=?",
         (message, now_iso(), connect_id),
     )
+    log_yandex_complete(connect_id, "error", table_id)
     return jsonify({"detail": message, "fallback_required": True}), 400
 
 
