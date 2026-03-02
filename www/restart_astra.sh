@@ -132,6 +132,24 @@ stop_vnc_stack() {
 
   # Extra safety cleanup (only for our profile)
   pkill -f "${CHROMIUM_PROFILE}" 2>/dev/null || true
+
+  # Astra pkill supports one pattern per call
+  pkill -x Xvfb 2>/dev/null || true
+  pkill -x openbox 2>/dev/null || true
+  pkill -x x11vnc 2>/dev/null || true
+  pkill -x websockify 2>/dev/null || true
+  pkill -x chromium 2>/dev/null || true
+  pkill -x chromium-browser 2>/dev/null || true
+
+  # Remove stale lock/socket only if Xvfb is stopped
+  if ! pgrep -x Xvfb >/dev/null 2>&1; then
+    rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+  fi
+}
+
+is_tcp_listening() {
+  local port="$1"
+  ss -ltn "( sport = :${port} )" 2>/dev/null | tail -n +2 | grep -q .
 }
 
 start_vnc_stack() {
@@ -172,7 +190,18 @@ start_vnc_stack() {
   # Start Xvfb
   nohup "${Xvfb_BIN}" "${VNC_DISPLAY}" -screen 0 "${VNC_SCREEN}" >/var/log/contest_xvfb.log 2>&1 &
   echo $! > "$(pidfile xvfb)"
-  sleep 0.2
+
+  # Wait up to 5 seconds for X11 socket
+  local x11_socket="/tmp/.X11-unix/X99"
+  local i
+  for i in {1..50}; do
+    [[ -S "${x11_socket}" ]] && break
+    sleep 0.1
+  done
+  if [[ ! -S "${x11_socket}" ]]; then
+    log "ОШИБКА: Xvfb не поднял сокет ${x11_socket} за 5 секунд"
+    return 1
+  fi
 
   # Export DISPLAY for following processes
   export DISPLAY="${VNC_DISPLAY}"
@@ -194,6 +223,7 @@ start_vnc_stack() {
     --disable-gpu \
     --disable-dev-shm-usage \
     --disable-software-rasterizer \
+    --force-device-scale-factor=1.5 \
     --user-data-dir="${CHROMIUM_PROFILE}" \
     >/var/log/contest_chromium.log 2>&1 &
   echo $! > "$(pidfile chromium)"
@@ -208,6 +238,13 @@ start_vnc_stack() {
   echo $! > "$(pidfile x11vnc)"
   sleep 0.2
 
+  # Ensure 6080 is free before websockify start
+  if is_tcp_listening "${NOVNC_HTTP_PORT}"; then
+    log "Порт ${NOVNC_HTTP_PORT} уже занят, останавливаю старый websockify"
+    pkill -x websockify 2>/dev/null || true
+    sleep 0.2
+  fi
+
   # Start websockify/noVNC (LOCALHOST ONLY)
   nohup "${WEBSOCKIFY_BIN}" \
     --web="${NOVNC_WEB_DIR}" \
@@ -215,6 +252,14 @@ start_vnc_stack() {
     "${VNC_RFB_ADDR}:${VNC_RFB_PORT}" \
     >/var/log/contest_websockify.log 2>&1 &
   echo $! > "$(pidfile websockify)"
+
+  sleep 0.3
+  if ! is_tcp_listening "${VNC_RFB_PORT}"; then
+    log "ОШИБКА: x11vnc не слушает порт ${VNC_RFB_PORT}"
+  fi
+  if ! is_tcp_listening "${NOVNC_HTTP_PORT}"; then
+    log "ОШИБКА: websockify не слушает порт ${NOVNC_HTTP_PORT}"
+  fi
 
   log "VNC/noVNC стек запущен: noVNC на ${NOVNC_HTTP_ADDR}:${NOVNC_HTTP_PORT} (proxy через nginx)"
 }
