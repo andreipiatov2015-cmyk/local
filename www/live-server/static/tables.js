@@ -194,7 +194,9 @@ function initTablesSection() {
     const data = await resp.json();
 
     setYandexStatus('waiting');
-    const popup = window.open(data.auth_url, 'yandex_connect', 'width=520,height=760');
+    const doneUrl = `${window.location.origin}/yandex/connect/done?connect_id=${data.connect_id}`;
+    const authUrl = `https://passport.yandex.ru/auth?retpath=${encodeURIComponent(doneUrl)}`;
+    const popup = window.open(authUrl, 'yandex_connect', 'width=520,height=760');
     if (!popup) {
       alert('Не удалось открыть окно подключения (проверьте блокировщик pop-up)');
       setYandexStatus('idle');

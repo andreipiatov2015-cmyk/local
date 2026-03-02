@@ -16,7 +16,7 @@
 </head>
 <body>
   <div class="card">
-    <h1>Подключено успешно, окно закроется…</h1>
+    <h1>Подключено</h1>
     <p class="hint">Завершаем подключение Яндекса на сервере. Если автоматическое завершение недоступно (например, 2FA/капча), используйте загрузку cookies-файла.</p>
 
     <p id="status" class="status">Проверяем подключение…</p>
@@ -87,7 +87,7 @@
         return;
       }
 
-      statusEl.textContent = 'Подключено успешно, окно закроется…';
+      statusEl.textContent = 'Подключено';
       errorEl.textContent = '';
       notifyParentConnected();
       tryCloseWindow();
