@@ -10,21 +10,26 @@ PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 CUSTOM_NGINX_BIN="/usr/local/nginx/sbin/nginx"
 CUSTOM_NGINX_CONF="/usr/local/nginx/conf/nginx.conf"
 CUSTOM_NGINX_PID="/usr/local/nginx/logs/nginx.pid"
-SYSTEM_NGINX_BIN="/usr/sbin/nginx"
-SYSTEM_NGINX_CONF="/etc/nginx/nginx.conf"
 
-VNC_PID_DIR="/var/run/contest_vnc"
-XVFB_PID_FILE="${VNC_PID_DIR}/xvfb.pid"
-OPENBOX_PID_FILE="${VNC_PID_DIR}/openbox.pid"
-CHROMIUM_PID_FILE="${VNC_PID_DIR}/chromium.pid"
-X11VNC_PID_FILE="${VNC_PID_DIR}/x11vnc.pid"
-WEBSOCKIFY_PID_FILE="${VNC_PID_DIR}/websockify.pid"
-
+# ===== VNC / noVNC stack (Yandex connect) =====
+VNC_RUN_DIR="/var/run/contest_vnc"
 VNC_DISPLAY=":99"
-VNC_GEOMETRY="1280x800x24"
-XDG_RUNTIME_DIR="/tmp/xdg-runtime-root"
-CHROMIUM_PROFILE_DIR="/tmp/chromium-yandex-profile"
+VNC_SCREEN="1280x800x24"
+VNC_RFB_ADDR="127.0.0.1"
+VNC_RFB_PORT="5901"
+NOVNC_HTTP_ADDR="127.0.0.1"
+NOVNC_HTTP_PORT="6080"
 NOVNC_WEB_DIR="/usr/share/novnc"
+
+XDG_RUNTIME_DIR="/tmp/xdg-runtime-root"
+CHROMIUM_PROFILE="/tmp/chromium-yandex-profile"
+
+# Binaries (assume installed)
+Xvfb_BIN="$(command -v Xvfb || true)"
+OPENBOX_BIN="$(command -v openbox || true)"
+CHROMIUM_BIN="$(command -v chromium || command -v chromium-browser || true)"
+X11VNC_BIN="$(command -v x11vnc || true)"
+WEBSOCKIFY_BIN="$(command -v websockify || true)"
 
 log() {
   printf "[restart] %s\n" "$1"
@@ -56,159 +61,167 @@ restart_python_app() {
   nohup "${PYTHON_BIN}" "${app}" >/var/log/${name}.log 2>&1 &
 }
 
-kill_pidfile_process() {
-  local pid_file="$1"
-  local name="$2"
+start_or_reload_custom_nginx() {
+  if [[ ! -x "${CUSTOM_NGINX_BIN}" ]]; then
+    log "custom nginx не найден: ${CUSTOM_NGINX_BIN} (пропускаю)"
+    return 0
+  fi
 
-  if [[ -f "${pid_file}" ]]; then
+  log "Проверяю custom nginx (RTMP)..."
+
+  # If pid exists and process alive -> reload
+  if [[ -f "${CUSTOM_NGINX_PID}" ]]; then
     local pid
-    pid="$(cat "${pid_file}" 2>/dev/null || true)"
+    pid="$(cat "${CUSTOM_NGINX_PID}" 2>/dev/null || true)"
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+      log "custom nginx запущен (pid=${pid}) -> reload"
+      "${CUSTOM_NGINX_BIN}" -s reload || true
+      return 0
+    fi
+  fi
+
+  # Validate config before start
+  if "${CUSTOM_NGINX_BIN}" -t -c "${CUSTOM_NGINX_CONF}" >/dev/null 2>&1; then
+    log "custom nginx не запущен -> стартую"
+    "${CUSTOM_NGINX_BIN}" -c "${CUSTOM_NGINX_CONF}" || true
+  else
+    log "custom nginx: ошибка конфига (${CUSTOM_NGINX_CONF}), не стартую"
+    "${CUSTOM_NGINX_BIN}" -t -c "${CUSTOM_NGINX_CONF}" || true
+  fi
+}
+
+pidfile() {
+  echo "${VNC_RUN_DIR}/$1.pid"
+}
+
+stop_by_pidfile() {
+  local name="$1"
+  local pf
+  pf="$(pidfile "${name}")"
+
+  if [[ -f "${pf}" ]]; then
+    local pid
+    pid="$(cat "${pf}" 2>/dev/null || true)"
     if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
       log "Останавливаю ${name} (pid=${pid})"
       kill "${pid}" 2>/dev/null || true
-      sleep 1
+      # give it a moment
+      sleep 0.2
       kill -9 "${pid}" 2>/dev/null || true
     fi
-    rm -f "${pid_file}"
+    rm -f "${pf}" || true
   fi
-}
-
-find_running_nginx() {
-  if [[ -f "${CUSTOM_NGINX_PID}" ]]; then
-    local custom_pid
-    custom_pid="$(cat "${CUSTOM_NGINX_PID}" 2>/dev/null || true)"
-    if [[ -n "${custom_pid}" ]] && kill -0 "${custom_pid}" 2>/dev/null; then
-      echo "custom"
-      return
-    fi
-  fi
-
-  if pgrep -x nginx >/dev/null 2>&1; then
-    local conf
-    conf="$(ps -eo args | awk '/nginx: master process/ {for(i=1;i<=NF;i++) if($i=="-c") {print $(i+1); exit}}')"
-    if [[ "${conf}" == "${CUSTOM_NGINX_CONF}" ]]; then
-      echo "custom"
-      return
-    fi
-    echo "system"
-    return
-  fi
-
-  if [[ -x "${CUSTOM_NGINX_BIN}" ]]; then
-    echo "custom"
-  else
-    echo "system"
-  fi
-}
-
-reload_nginx() {
-  local mode="$1"
-
-  if [[ "${mode}" == "custom" ]]; then
-    if [[ ! -x "${CUSTOM_NGINX_BIN}" ]]; then
-      log "custom nginx не найден: ${CUSTOM_NGINX_BIN}"
-      return 1
-    fi
-
-    log "Проверяю конфиг custom nginx: ${CUSTOM_NGINX_CONF}"
-    "${CUSTOM_NGINX_BIN}" -t -c "${CUSTOM_NGINX_CONF}"
-
-    if [[ -f "${CUSTOM_NGINX_PID}" ]] && kill -0 "$(cat "${CUSTOM_NGINX_PID}" 2>/dev/null || true)" 2>/dev/null; then
-      log "Reload custom nginx"
-      "${CUSTOM_NGINX_BIN}" -s reload
-    else
-      log "custom nginx не запущен -> стартую"
-      "${CUSTOM_NGINX_BIN}" -c "${CUSTOM_NGINX_CONF}"
-    fi
-    return 0
-  fi
-
-  if [[ -x "${SYSTEM_NGINX_BIN}" ]]; then
-    log "Проверяю конфиг system nginx: ${SYSTEM_NGINX_CONF}"
-    "${SYSTEM_NGINX_BIN}" -t -c "${SYSTEM_NGINX_CONF}"
-
-    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files --type=service | awk '{print $1}' | grep -qx "nginx.service"; then
-      log "Reload system nginx через systemctl"
-      systemctl reload nginx
-    else
-      log "Reload system nginx через сигнал"
-      "${SYSTEM_NGINX_BIN}" -s reload
-    fi
-    return 0
-  fi
-
-  log "Не найден nginx для reload"
-  return 1
 }
 
 stop_vnc_stack() {
-  log "Останавливаю VNC stack"
-  mkdir -p "${VNC_PID_DIR}"
+  log "Останавливаю VNC/noVNC стек (если запущен)..."
 
-  kill_pidfile_process "${WEBSOCKIFY_PID_FILE}" "websockify"
-  kill_pidfile_process "${X11VNC_PID_FILE}" "x11vnc"
-  kill_pidfile_process "${CHROMIUM_PID_FILE}" "chromium"
-  kill_pidfile_process "${OPENBOX_PID_FILE}" "openbox"
-  kill_pidfile_process "${XVFB_PID_FILE}" "Xvfb"
+  # Order: websockify -> x11vnc -> chromium -> openbox -> Xvfb
+  stop_by_pidfile "websockify"
+  stop_by_pidfile "x11vnc"
+  stop_by_pidfile "chromium"
+  stop_by_pidfile "openbox"
+  stop_by_pidfile "xvfb"
 
-  pkill -f "websockify .*127.0.0.1:6080" 2>/dev/null || true
-  pkill -f "x11vnc .* -rfbport 5901" 2>/dev/null || true
-  pkill -f "chromium.*${CHROMIUM_PROFILE_DIR}" 2>/dev/null || true
-  pkill -f "openbox" 2>/dev/null || true
-  pkill -f "Xvfb ${VNC_DISPLAY}" 2>/dev/null || true
+  # Extra safety cleanup (only for our profile)
+  pkill -f "${CHROMIUM_PROFILE}" 2>/dev/null || true
 }
 
 start_vnc_stack() {
-  log "Запускаю VNC stack"
+  log "Запускаю VNC/noVNC стек (Яндекс-вход)..."
 
-  mkdir -p "${VNC_PID_DIR}" "${XDG_RUNTIME_DIR}" "${CHROMIUM_PROFILE_DIR}"
+  mkdir -p "${VNC_RUN_DIR}"
+  chmod 755 "${VNC_RUN_DIR}" || true
+
+  if [[ -z "${Xvfb_BIN}" ]]; then
+    log "Xvfb не найден (установи пакет xvfb). Пропускаю VNC стек."
+    return 0
+  fi
+  if [[ -z "${OPENBOX_BIN}" ]]; then
+    log "openbox не найден. Пропускаю VNC стек."
+    return 0
+  fi
+  if [[ -z "${CHROMIUM_BIN}" ]]; then
+    log "chromium не найден. Пропускаю VNC стек."
+    return 0
+  fi
+  if [[ -z "${X11VNC_BIN}" ]]; then
+    log "x11vnc не найден. Пропускаю VNC стек."
+    return 0
+  fi
+  if [[ -z "${WEBSOCKIFY_BIN}" ]]; then
+    log "websockify не найден. Пропускаю VNC стек."
+    return 0
+  fi
+  if [[ ! -d "${NOVNC_WEB_DIR}" ]]; then
+    log "noVNC web dir не найден: ${NOVNC_WEB_DIR}. Пропускаю VNC стек."
+    return 0
+  fi
+
+  # Runtime dir for chromium (fix XDG warnings)
+  mkdir -p "${XDG_RUNTIME_DIR}"
   chmod 700 "${XDG_RUNTIME_DIR}"
 
+  # Start Xvfb
+  nohup "${Xvfb_BIN}" "${VNC_DISPLAY}" -screen 0 "${VNC_SCREEN}" >/var/log/contest_xvfb.log 2>&1 &
+  echo $! > "$(pidfile xvfb)"
+  sleep 0.2
+
+  # Export DISPLAY for following processes
   export DISPLAY="${VNC_DISPLAY}"
-  export XDG_RUNTIME_DIR
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}"
 
-  nohup Xvfb "${VNC_DISPLAY}" -screen 0 "${VNC_GEOMETRY}" >/var/log/xvfb-yandex.log 2>&1 &
-  echo $! > "${XVFB_PID_FILE}"
-  sleep 1
+  # Start openbox
+  nohup "${OPENBOX_BIN}" >/var/log/contest_openbox.log 2>&1 &
+  echo $! > "$(pidfile openbox)"
+  sleep 0.2
 
-  nohup openbox >/var/log/openbox-yandex.log 2>&1 &
-  echo $! > "${OPENBOX_PID_FILE}"
-
-  nohup chromium \
-    --user-data-dir="${CHROMIUM_PROFILE_DIR}" \
+  # Start chromium (with dedicated profile)
+  mkdir -p "${CHROMIUM_PROFILE}" || true
+  nohup "${CHROMIUM_BIN}" \
     --no-sandbox \
     --disable-gpu \
     --disable-dev-shm-usage \
-    --new-window "https://passport.yandex.ru" >/var/log/chromium-yandex.log 2>&1 &
-  echo $! > "${CHROMIUM_PID_FILE}"
+    --disable-software-rasterizer \
+    --user-data-dir="${CHROMIUM_PROFILE}" \
+    about:blank >/var/log/contest_chromium.log 2>&1 &
+  echo $! > "$(pidfile chromium)"
+  sleep 0.4
 
-  nohup x11vnc \
+  # Start x11vnc (LOCALHOST ONLY)
+  nohup "${X11VNC_BIN}" \
     -display "${VNC_DISPLAY}" \
-    -forever \
-    -nopw \
-    -listen 127.0.0.1 \
-    -rfbport 5901 >/var/log/x11vnc-yandex.log 2>&1 &
-  echo $! > "${X11VNC_PID_FILE}"
+    -forever -nopw \
+    -listen "${VNC_RFB_ADDR}" -rfbport "${VNC_RFB_PORT}" \
+    >/var/log/contest_x11vnc.log 2>&1 &
+  echo $! > "$(pidfile x11vnc)"
+  sleep 0.2
 
-  nohup websockify \
+  # Start websockify/noVNC (LOCALHOST ONLY)
+  nohup "${WEBSOCKIFY_BIN}" \
     --web="${NOVNC_WEB_DIR}" \
-    127.0.0.1:6080 \
-    127.0.0.1:5901 >/var/log/websockify-yandex.log 2>&1 &
-  echo $! > "${WEBSOCKIFY_PID_FILE}"
+    "${NOVNC_HTTP_ADDR}:${NOVNC_HTTP_PORT}" \
+    "${VNC_RFB_ADDR}:${VNC_RFB_PORT}" \
+    >/var/log/contest_websockify.log 2>&1 &
+  echo $! > "$(pidfile websockify)"
+
+  log "VNC/noVNC стек запущен: noVNC на ${NOVNC_HTTP_ADDR}:${NOVNC_HTTP_PORT} (proxy через nginx)"
 }
 
 log "Старт перезапуска сайта в ${ROOT_DIR}"
 
-NGINX_MODE="$(find_running_nginx)"
-log "Обнаружен режим nginx: ${NGINX_MODE}"
-
+# 0) VNC/noVNC stack (for Yandex login via site)
 stop_vnc_stack
 start_vnc_stack
 
-# Python apps (systemd если есть, иначе nohup)
+# 1) Custom nginx (RTMP)
+start_or_reload_custom_nginx
+
+# 2) Не трогаем systemd nginx.service, чтобы не конфликтовал с /usr/local/nginx
+log "nginx.service пропускаю (использую custom nginx из /usr/local/nginx)"
+
+# 3) Python apps (systemd если есть, иначе nohup)
 restart_systemd_unit "live-server.service" || restart_python_app "${LIVE_SERVER}" "live-server"
 restart_systemd_unit "reboot.service" || restart_python_app "${REBOOT_SERVER}" "reboot-server"
-
-reload_nginx "${NGINX_MODE}"
 
 log "Готово"
