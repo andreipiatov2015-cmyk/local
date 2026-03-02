@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Подключение Яндекса</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.4; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; max-width: 560px; }
+    .status { margin: 12px 0; font-weight: 700; }
+    .hint { color: #333; margin-bottom: 8px; }
+    .error { color: #b00020; margin-top: 12px; }
+    .hidden { display: none; }
+    .actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Подключено</h1>
+    <p class="hint">Завершаем подключение Яндекса на сервере. Если автоматическое завершение недоступно (например, 2FA/капча), используйте загрузку cookies-файла.</p>
+
+    <p id="status" class="status">Проверяем подключение…</p>
+    <p id="error" class="error"></p>
+
+    <div id="fallback" class="hidden">
+      <input type="file" id="cookiesFile" accept=".txt,.json" />
+      <button id="uploadCookies">Загрузить cookies файлом</button>
+    </div>
+
+    <div class="actions">
+      <button id="closeWindow" class="hidden">Закрыть окно</button>
+    </div>
+  </div>
+
+  <script>
+    const connectId = {{ connect_id | tojson }};
+    const tableId = {{ table_id | tojson }};
+    const invalidReason = {{ invalid_reason | tojson }};
+
+    const statusEl = document.getElementById('status');
+    const errorEl = document.getElementById('error');
+    const fallbackEl = document.getElementById('fallback');
+    const closeBtn = document.getElementById('closeWindow');
+
+    closeBtn.onclick = () => window.close();
+
+    function showCloseButton() {
+      closeBtn.classList.remove('hidden');
+    }
+
+    function notifyParentConnected() {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'yandex-connected', tableId }, window.location.origin);
+      }
+    }
+
+    function tryCloseWindow() {
+      window.close();
+      setTimeout(() => {
+        showCloseButton();
+      }, 400);
+    }
+
+    async function completeConnect() {
+      if (invalidReason || !connectId || !tableId) {
+        statusEl.textContent = 'Не удалось завершить подключение';
+        errorEl.textContent = invalidReason || 'Некорректная ссылка подключения';
+        fallbackEl.classList.remove('hidden');
+        showCloseButton();
+        return;
+      }
+
+      const fd = new FormData();
+      fd.append('connect_id', connectId);
+
+      const resp = await fetch(`/api/tables/${tableId}/yandex/connect/complete`, {
+        method: 'POST',
+        body: fd,
+      });
+      const data = await resp.json().catch(() => ({}));
+
+      if (!resp.ok) {
+        statusEl.textContent = 'Автоматическое подключение не завершено';
+        errorEl.textContent = data.detail || 'Попробуйте загрузить cookies-файл';
+        fallbackEl.classList.remove('hidden');
+        showCloseButton();
+        return;
+      }
+
+      statusEl.textContent = 'Подключено';
+      errorEl.textContent = '';
+      notifyParentConnected();
+      tryCloseWindow();
+    }
+
+    document.getElementById('uploadCookies').onclick = async () => {
+      const file = document.getElementById('cookiesFile').files[0];
+      if (!file) {
+        alert('Выберите cookies-файл');
+        return;
+      }
+      statusEl.textContent = 'Завершаем подключение по cookies…';
+      errorEl.textContent = '';
+
+      const fd = new FormData();
+      fd.append('cookies_file', file);
+
+      const uploadResp = await fetch(`/api/yandex/connect/${connectId}/upload`, { method: 'POST', body: fd });
+      const uploadData = await uploadResp.json().catch(() => ({}));
+      if (!uploadResp.ok) {
+        statusEl.textContent = 'Не удалось завершить подключение';
+        errorEl.textContent = uploadData.detail || 'Ошибка загрузки cookies';
+        showCloseButton();
+        return;
+      }
+
+      await completeConnect();
+    };
+
+    completeConnect();
+  </script>
+</body>
+</html>

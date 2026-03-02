@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Таблицы заявок конкурса</title>
+  <link rel="stylesheet" href="/static/tables.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="logo">🎥 Live Admin</span>
+    </div>
+
+    <nav class="sidebar-menu">
+      <a class="menu-item" href="/">
+        <span class="icon">✏️</span>
+        <span class="text">Админ-панель</span>
+      </a>
+      <a class="menu-item active" href="/tables">
+        <span class="icon">📋</span>
+        <span class="text">Таблицы заявок</span>
+      </a>
+      <a class="menu-item" href="/competition">
+        <span class="icon">🏆</span>
+        <span class="text">Конкурс</span>
+      </a>
+      <a class="menu-item" href="/broadcast">
+        <span class="icon">📺</span>
+        <span class="text">Трансляция</span>
+      </a>
+      <a class="menu-item" href="/staff">
+        <span class="icon">👥</span>
+        <span class="text">Сотрудники</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <a href="/logout" class="menu-item logout">
+        <span class="icon">🚪</span>
+        <span class="text">Выход</span>
+      </a>
+    </div>
+  </aside>
+
+  <main class="container">
+    <h1>Таблицы заявок конкурса</h1>
+
+    <section id="workspace" class="card">
+      <h2>Таблицы</h2>
+      <div class="row">
+        <input id="newTitle" placeholder="Название таблицы" />
+        <button id="createTable">Создать</button>
+      </div>
+      <ul id="tableList"></ul>
+    </section>
+
+    <section id="tableView" class="card hidden">
+      <h2 id="tableTitle">Таблица</h2>
+      <div class="row wrap">
+        <input type="file" id="excelFile" accept=".xlsx,.xls" />
+        <button id="uploadExcel">Загрузить Excel</button>
+        <button id="connectYandex">Подключить Яндекс</button>
+        <button id="finishYandex" disabled>Готово (сохранить сессию)</button>
+        <button id="startDownload" disabled>Старт скачивания</button>
+        <button disabled title="Данная функция находится в разработке">Обновить Excel</button>
+      </div>
+      <p id="progress"></p>
+      <p id="yandexStatus">Яндекс: не подключен</p>
+      <p id="yandexHint"></p>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>ФИО</th><th>Номер</th><th>Коллектив</th><th>Файлы</th></tr>
+        </thead>
+        <tbody id="entries"></tbody>
+      </table>
+    </section>
+
+    <dialog id="viewer">
+      <button id="downloadTop">Скачать</button>
+      <button id="closeViewer">Закрыть</button>
+      <div id="viewerBody"></div>
+    </dialog>
+  </main>
+  <script src="/static/tables.js"></script>
+</body>
+</html>
