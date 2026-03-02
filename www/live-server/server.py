@@ -14,7 +14,9 @@ import time
 import threading
 import shutil
 import re
+import uuid
 from functools import wraps
+from pathlib import Path
 
 import requests
 
@@ -51,6 +53,7 @@ STREAM_TARGETS_FILE = os.path.join(BASE_DIR, "stream_targets.json")
 STREAM_URL = os.environ.get("HLS_STREAM_URL", "http://192.168.31.18:8080/hls/stream.m3u8")
 
 STORAGE_ROOT = os.environ.get("STORAGE_ROOT", "/var/mount_point/nfv/contest_storage")
+APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", os.path.join(BASE_DIR, "app_data")))
 RETENTION_DAYS = 60
 MAX_TABLES_PER_USER = 10
 DOWNLOAD_RETRIES = 3
@@ -191,6 +194,19 @@ def init_db():
             consent_local TEXT,
             presentation_local TEXT,
             created_at TEXT NOT NULL
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS yandex_connect_sessions (
+            connect_id TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            table_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'waiting',
+            error_message TEXT,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         )
     """)
 
@@ -549,10 +565,16 @@ def process_table_download(table_id, user_id):
     col = detect_columns(headers)
     data_rows = rows[1:]
 
-    cookies = json.loads(t["yandex_session_json"] or "{}")
+    session_file = yandex_session_file(user_id)
+    if not session_file.exists():
+        query_db(
+            "UPDATE table_workspaces SET status='error', updated_at=?, yandex_session_json=? WHERE id=?",
+            (now_iso(), json.dumps({"error": "Сессия Яндекса отсутствует. Переподключите Яндекс."}, ensure_ascii=False), table_id),
+        )
+        return
+    cookies = load_yandex_cookies_for_user(user_id)
     req_session = requests.Session()
-    if isinstance(cookies, dict):
-        req_session.cookies.update(cookies)
+    apply_cookies_to_requests_session(req_session, cookies)
 
     total = max(len(data_rows), 1)
     for i, row in enumerate(data_rows, start=1):
@@ -628,6 +650,20 @@ def process_table_download(table_id, user_id):
             except Exception:
                 pass
 
+        if any(v for v in local_values.values()) is False and any(x[1] for x in field_map):
+            probe_url = next((x[1] for x in field_map if x[1]), "")
+            if probe_url and "forms.yandex.ru" in probe_url:
+                try:
+                    probe = req_session.get(probe_url, timeout=30)
+                    if probe.status_code == 403:
+                        query_db(
+                            "UPDATE table_workspaces SET status='error', updated_at=?, yandex_session_json=? WHERE id=?",
+                            (now_iso(), json.dumps({"error": "Сессия Яндекса устарела, переподключите"}, ensure_ascii=False), table_id),
+                        )
+                        return
+                except Exception:
+                    pass
+
         query_db(
             "UPDATE table_entries SET audio_local=?, receipt_local=?, consent_local=?, presentation_local=? WHERE id=?",
             (audio_local, local_values["receipt"], local_values["consent"], local_values["presentation"], entry_id),
@@ -658,6 +694,7 @@ def start_tables_background_jobs():
     if _tables_cleanup_started:
         return
     os.makedirs(STORAGE_ROOT, exist_ok=True)
+    APP_DATA_ROOT.mkdir(parents=True, exist_ok=True)
     threading.Thread(target=cleanup_old_tables, daemon=True).start()
     _tables_cleanup_started = True
 
@@ -735,6 +772,147 @@ def create_table():
     return jsonify({"status": "ok"})
 
 
+def yandex_session_dir(user_id):
+    return APP_DATA_ROOT / "users" / f"user_{user_id}"
+
+
+def yandex_session_file(user_id):
+    return yandex_session_dir(user_id) / "yandex_session.json"
+
+
+def parse_uploaded_cookies(raw_text):
+    text = (raw_text or "").strip()
+    if not text:
+        raise ValueError("Пустой файл cookies")
+    if text.startswith("[") or text.startswith("{"):
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return [{"name": k, "value": str(v), "domain": ".yandex.ru", "path": "/"} for k, v in data.items()]
+        if isinstance(data, list):
+            out = []
+            for c in data:
+                if isinstance(c, dict) and c.get("name") and c.get("value"):
+                    out.append({
+                        "name": c["name"],
+                        "value": str(c["value"]),
+                        "domain": c.get("domain") or ".yandex.ru",
+                        "path": c.get("path") or "/",
+                    })
+            if out:
+                return out
+        raise ValueError("Некорректный JSON cookies")
+
+    parsed = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) >= 7:
+            parsed.append({"domain": parts[0], "path": parts[2], "name": parts[5], "value": parts[6]})
+    if not parsed:
+        raise ValueError("Не удалось разобрать cookies в формате Netscape")
+    return parsed
+
+
+def save_yandex_session(user_id, cookies):
+    session_dir = yandex_session_dir(user_id)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    payload = {"updated_at": now_iso(), "cookies": cookies}
+    yandex_session_file(user_id).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_yandex_cookies_for_user(user_id):
+    payload = json.loads(yandex_session_file(user_id).read_text(encoding="utf-8"))
+    return payload.get("cookies") or []
+
+
+def apply_cookies_to_requests_session(req_session, cookies):
+    if isinstance(cookies, dict):
+        req_session.cookies.update(cookies)
+        return
+    for c in cookies:
+        name = c.get("name")
+        value = c.get("value")
+        if not name or value is None:
+            continue
+        req_session.cookies.set(name, value, domain=c.get("domain") or ".yandex.ru", path=c.get("path") or "/")
+
+
+def table_belongs_to_user(table_id, user_id):
+    return query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user_id), one=True)
+
+
+@app.route("/api/tables/<int:table_id>/yandex/connect/start", methods=["POST"])
+def yandex_connect_start(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not table_belongs_to_user(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    connect_id = str(uuid.uuid4())
+    ts = now_iso()
+    expires_at = (datetime.datetime.utcnow() + datetime.timedelta(minutes=10)).isoformat()
+    query_db(
+        "INSERT INTO yandex_connect_sessions (connect_id, user_id, table_id, status, expires_at, created_at, updated_at) VALUES (?, ?, ?, 'waiting', ?, ?, ?)",
+        (connect_id, user["id"], table_id, expires_at, ts, ts),
+    )
+    return jsonify({"connect_id": connect_id, "connect_url": f"/tables/yandex/connect/{connect_id}"})
+
+
+@app.route("/api/tables/<int:table_id>/yandex/connect/status", methods=["GET"])
+def yandex_connect_status(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    connect_id = (request.args.get("connect_id") or "").strip()
+    row = query_db(
+        "SELECT * FROM yandex_connect_sessions WHERE connect_id=? AND user_id=? AND table_id=?",
+        (connect_id, user["id"], table_id),
+        one=True,
+    )
+    if not row:
+        return jsonify({"status": "expired", "yandex_connected": yandex_session_file(user["id"]).exists()})
+    status = row["status"]
+    if row["expires_at"] < now_iso() and status == "waiting":
+        status = "expired"
+        query_db("UPDATE yandex_connect_sessions SET status='expired', updated_at=? WHERE connect_id=?", (now_iso(), connect_id))
+    return jsonify({"status": status, "yandex_connected": yandex_session_file(user["id"]).exists(), "error": row["error_message"]})
+
+
+@app.route("/tables/yandex/connect/<connect_id>")
+@login_required
+def yandex_connect_page(connect_id):
+    row = query_db("SELECT * FROM yandex_connect_sessions WHERE connect_id=?", (connect_id,), one=True)
+    if not row:
+        return "Connect session not found", 404
+    return render_template("yandex_connect.html", connect_id=connect_id, table_id=row["table_id"])
+
+
+@app.route("/api/yandex/connect/<connect_id>/upload", methods=["POST"])
+def yandex_connect_upload(connect_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    row = query_db("SELECT * FROM yandex_connect_sessions WHERE connect_id=? AND user_id=?", (connect_id, user["id"]), one=True)
+    if not row:
+        return jsonify({"detail": "Сессия подключения не найдена"}), 404
+    up = request.files.get("cookies_file")
+    if not up:
+        return jsonify({"detail": "Файл cookies обязателен"}), 400
+    try:
+        cookies = parse_uploaded_cookies(up.read().decode("utf-8", errors="ignore"))
+        save_yandex_session(user["id"], cookies)
+    except Exception as exc:
+        query_db("UPDATE yandex_connect_sessions SET status='error', error_message=?, updated_at=? WHERE connect_id=?", (str(exc), now_iso(), connect_id))
+        return jsonify({"detail": str(exc)}), 400
+    query_db(
+        "UPDATE yandex_connect_sessions SET status='success', error_message=NULL, updated_at=? WHERE connect_id=?",
+        (now_iso(), connect_id),
+    )
+    return jsonify({"status": "success"})
+
+
 @app.route("/api/tables/<int:table_id>", methods=["DELETE"])
 def delete_table(table_id):
     user = table_user_from_request()
@@ -789,6 +967,8 @@ def start_download(table_id):
     t = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
     if not t:
         return jsonify({"detail": "Таблица не найдена"}), 404
+    if not yandex_session_file(user["id"]).exists():
+        return jsonify({"detail": "Яндекс не подключён"}), 400
     threading.Thread(target=process_table_download, args=(table_id, user["id"]), daemon=True).start()
     return jsonify({"status": "started"})
 
