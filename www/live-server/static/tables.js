@@ -75,7 +75,6 @@ async function openTable(id, title) {
   tableTitle.textContent = `Таблица: ${title} (#${id})`;
   tableView.classList.remove('hidden');
   await refreshEntries();
-  setYandexStatus('idle');
 }
 
 function fileButtons(entry, type) {
@@ -97,6 +96,7 @@ async function refreshEntries() {
   const cur = tables.find(x => x.id === currentTableId);
   if (cur) {
     progressEl.textContent = `Статус: ${cur.status}, прогресс: ${cur.progress ?? 0}%`;
+    setYandexStatus(cur.yandex_connected ? 'success' : 'idle');
   }
 
   const rowsResp = await fetch(`/api/tables/${currentTableId}/entries`);
@@ -194,7 +194,7 @@ function initTablesSection() {
     const data = await resp.json();
 
     setYandexStatus('waiting');
-    const popup = window.open(data.connect_url, 'yandex_connect', 'width=520,height=760');
+    const popup = window.open(data.auth_url, 'yandex_connect', 'width=520,height=760');
     if (!popup) {
       alert('Не удалось открыть окно подключения (проверьте блокировщик pop-up)');
       setYandexStatus('idle');
@@ -228,6 +228,15 @@ function initTablesSection() {
     const pv = e.target?.dataset?.pv;
     if (dl) safeOpen(dl);
     if (pv) openViewer(pv);
+  });
+
+  window.addEventListener('message', async (event) => {
+    if (event.origin !== window.location.origin) return;
+    if (event.data?.type === 'yandex-connected' && Number(event.data?.tableId) === Number(currentTableId)) {
+      setYandexStatus('success');
+      await refreshTables();
+      await refreshEntries();
+    }
   });
 
   refreshTables();

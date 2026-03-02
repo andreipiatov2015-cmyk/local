@@ -750,7 +750,13 @@ def list_tables():
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
     rows = query_db("SELECT id, title, status, progress, created_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC", (user["id"],))
-    return jsonify([dict(r) for r in rows])
+    connected = yandex_session_file(user["id"]).exists()
+    result = []
+    for r in rows:
+        item = dict(r)
+        item["yandex_connected"] = connected
+        result.append(item)
+    return jsonify(result)
 
 
 @app.route("/api/tables", methods=["POST"])
@@ -857,7 +863,10 @@ def yandex_connect_start(table_id):
         "INSERT INTO yandex_connect_sessions (connect_id, user_id, table_id, status, expires_at, created_at, updated_at) VALUES (?, ?, ?, 'waiting', ?, ?, ?)",
         (connect_id, user["id"], table_id, expires_at, ts, ts),
     )
-    return jsonify({"connect_id": connect_id, "connect_url": f"/tables/yandex/connect/{connect_id}"})
+    done_url = url_for("yandex_connect_done_page", _external=True)
+    retpath = f"{done_url}?connect_id={connect_id}"
+    auth_url = f"https://passport.yandex.ru/auth?retpath={requests.utils.quote(retpath, safe='')}"
+    return jsonify({"connect_id": connect_id, "auth_url": auth_url})
 
 
 @app.route("/api/tables/<int:table_id>/yandex/connect/status", methods=["GET"])
@@ -880,13 +889,65 @@ def yandex_connect_status(table_id):
     return jsonify({"status": status, "yandex_connected": yandex_session_file(user["id"]).exists(), "error": row["error_message"]})
 
 
-@app.route("/tables/yandex/connect/<connect_id>")
+@app.route("/yandex/connect/done")
 @login_required
-def yandex_connect_page(connect_id):
-    row = query_db("SELECT * FROM yandex_connect_sessions WHERE connect_id=?", (connect_id,), one=True)
+def yandex_connect_done_page():
+    user = table_user_from_request()
+    connect_id = (request.args.get("connect_id") or "").strip()
+    if not connect_id:
+        return render_template("yandex_connect.html", connect_id="", table_id=None, invalid_reason="Не передан connect_id")
+    row = query_db(
+        "SELECT * FROM yandex_connect_sessions WHERE connect_id=? AND user_id=?",
+        (connect_id, user["id"]),
+        one=True,
+    )
     if not row:
-        return "Connect session not found", 404
-    return render_template("yandex_connect.html", connect_id=connect_id, table_id=row["table_id"])
+        return render_template(
+            "yandex_connect.html",
+            connect_id=connect_id,
+            table_id=None,
+            invalid_reason="Сессия подключения не найдена или недоступна",
+        )
+    return render_template("yandex_connect.html", connect_id=connect_id, table_id=row["table_id"], invalid_reason=None)
+
+
+@app.route("/api/tables/<int:table_id>/yandex/connect/complete", methods=["POST"])
+def yandex_connect_complete(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    payload = request.get_json(silent=True) or {}
+    connect_id = (request.form.get("connect_id") or payload.get("connect_id") or "").strip()
+    if not connect_id:
+        return jsonify({"detail": "connect_id обязателен"}), 400
+    row = query_db(
+        "SELECT * FROM yandex_connect_sessions WHERE connect_id=? AND user_id=? AND table_id=?",
+        (connect_id, user["id"], table_id),
+        one=True,
+    )
+    if not row:
+        return jsonify({"detail": "Сессия подключения не найдена"}), 404
+    if row["expires_at"] < now_iso():
+        query_db("UPDATE yandex_connect_sessions SET status='expired', updated_at=? WHERE connect_id=?", (now_iso(), connect_id))
+        return jsonify({"detail": "Сессия подключения истекла", "fallback_required": True}), 400
+    if row["status"] == "success":
+        return jsonify({"status": "success", "yandex_connected": True})
+    if row["status"] != "waiting":
+        return jsonify({"detail": row["error_message"] or "Сессия уже завершена", "fallback_required": True}), 400
+
+    if yandex_session_file(user["id"]).exists():
+        query_db(
+            "UPDATE yandex_connect_sessions SET status='success', error_message=NULL, updated_at=? WHERE connect_id=?",
+            (now_iso(), connect_id),
+        )
+        return jsonify({"status": "success", "yandex_connected": True})
+
+    message = "Не удалось автоматически завершить подключение (возможна 2FA/капча). Загрузите cookies файлом."
+    query_db(
+        "UPDATE yandex_connect_sessions SET status='error', error_message=?, updated_at=? WHERE connect_id=?",
+        (message, now_iso(), connect_id),
+    )
+    return jsonify({"detail": message, "fallback_required": True}), 400
 
 
 @app.route("/api/yandex/connect/<connect_id>/upload", methods=["POST"])
