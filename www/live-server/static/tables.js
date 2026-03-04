@@ -4,7 +4,6 @@ let currentMapping = {};
 let mappingFields = {};
 let currentHeaders = [];
 let currentYandexStatus = 'disconnected';
-let mappingPanelExpanded = false;
 
 const tableList = document.getElementById('tableList');
 const progressEl = document.getElementById('progress');
@@ -18,10 +17,8 @@ const tableView = document.getElementById('tableView');
 const excelHead = document.getElementById('excelHead');
 const excelBody = document.getElementById('excelBody');
 const mappingInfo = document.getElementById('mappingInfo');
-const mappingCompact = document.getElementById('mappingCompact');
-const mappingExpanded = document.getElementById('mappingExpanded');
-const mappingPanel = document.getElementById('mappingPanel');
-const toggleMappingPanelBtn = document.getElementById('toggleMappingPanel');
+const mappingSummary = document.getElementById('mappingSummary');
+const excelColgroup = document.getElementById('excelColgroup');
 const resetMappingBtn = document.getElementById('resetMapping');
 const rememberMappingBtn = document.getElementById('rememberMapping');
 const mappingDialog = document.getElementById('mappingDialog');
@@ -91,6 +88,24 @@ function mappingReverse() {
   return rev;
 }
 
+function getColumnWidthClass(header) {
+  const normalized = String(header || '').toLowerCase();
+  if (/^id$|№|номер/.test(normalized)) return 'col-id';
+  if (/дата|date/.test(normalized)) return 'col-date';
+  if (/территор|город|регион/.test(normalized)) return 'col-territory';
+  if (/фио|участник|название|коллектив|комментар|описан|примечан/.test(normalized)) return 'col-long';
+  return 'col-default';
+}
+
+function renderColgroup() {
+  excelColgroup.innerHTML = '';
+  currentHeaders.forEach((header) => {
+    const col = document.createElement('col');
+    col.className = getColumnWidthClass(header);
+    excelColgroup.appendChild(col);
+  });
+}
+
 function renderMappingPanel() {
   const requiredItems = REQUIRED_FIELDS.map((field) => ({
     field,
@@ -101,21 +116,12 @@ function renderMappingPanel() {
   const assignedCount = Object.keys(currentMapping).length;
   const totalCount = Object.keys(mappingFields).length;
 
-  mappingCompact.innerHTML = `
-    <div class="mapping-progress">Готово: ${assignedCount} / ${totalCount}</div>
-    <div class="mapping-required-mini">
-      ${requiredItems.map((item) => `<span title="${item.title}">${item.assigned ? '✅' : '⭕'} ${item.title}</span>`).join('')}
-    </div>
-  `;
+  mappingSummary.textContent = `Схема: ${assignedCount}/${totalCount} заполнено`;
 
   mappingInfo.innerHTML = requiredItems.map((item) => {
     const colName = item.assigned ? (currentHeaders[item.col] || `Колонка ${item.col + 1}`) : 'не назначено';
     return `<div class="mapping-row ${item.assigned ? 'ok' : 'missing'}"><span>${item.assigned ? '✅' : '⭕'} ${item.title}</span><span>${colName}</span></div>`;
   }).join('');
-
-  mappingExpanded.classList.toggle('hidden', !mappingPanelExpanded);
-  mappingPanel.classList.toggle('is-collapsed', !mappingPanelExpanded);
-  toggleMappingPanelBtn.textContent = mappingPanelExpanded ? 'Свернуть схему' : 'Схема колонок';
 }
 
 function showPreviewError(msg) {
@@ -132,6 +138,7 @@ function renderExcelTable(rows) {
   const rev = mappingReverse();
   excelHead.innerHTML = '';
   excelBody.innerHTML = '';
+  renderColgroup();
 
   if (!currentHeaders.length) {
     showPreviewError('Excel не распознан: не найдены заголовки или пустой файл.');
@@ -338,11 +345,6 @@ async function openTable(id, title) {
 
 function initTablesSection() {
   document.getElementById('closeMappingDialog').onclick = () => mappingDialog.close();
-
-  toggleMappingPanelBtn.onclick = () => {
-    mappingPanelExpanded = !mappingPanelExpanded;
-    renderMappingPanel();
-  };
 
   resetMappingBtn.onclick = async () => {
     currentMapping = {};

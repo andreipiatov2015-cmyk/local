@@ -45,7 +45,7 @@
     </div>
   </aside>
 
-  <main class="content tables-content">
+  <main class="content container tables-content">
     <section id="workspace" class="card">
       <h1 class="page-title">Таблицы заявок конкурса</h1>
       <div class="row">
@@ -69,26 +69,28 @@
       <p id="yandexHint"></p>
       <p id="mappingAutofillInfo" class="mapping-autofill-info hidden"></p>
       <p id="previewError" class="preview-error hidden"></p>
-      <div class="table-layout">
-        <div class="table-scroll">
-          <table id="excelTable">
-            <thead id="excelHead"></thead>
-            <tbody id="excelBody"></tbody>
-          </table>
-        </div>
-
-        <aside id="mappingPanel" class="mapping-panel is-collapsed">
-          <button id="toggleMappingPanel" class="mapping-panel-toggle" type="button">Схема колонок</button>
-          <div id="mappingCompact" class="mapping-compact"></div>
-          <div id="mappingExpanded" class="mapping-expanded hidden">
+      <section id="mappingPanel" class="mapping-panel">
+        <details id="mappingAccordion" class="mapping-accordion">
+          <summary id="mappingSummary" class="mapping-summary">Схема: 0/0 заполнено</summary>
+          <div class="mapping-expanded">
             <div id="mappingInfo" class="mapping-info"></div>
-            <div class="row">
+            <div class="row wrap">
               <button id="rememberMapping" class="btn btn-primary" type="button">Запомнить схему</button>
               <button id="resetMapping" class="btn btn-secondary" type="button">Сбросить схему</button>
             </div>
             <p class="mapping-hint">Для скачивания обязательны: «Название номера», «ФИО участника(ов)», и «За кого оплата» (если указана квитанция).</p>
           </div>
-        </aside>
+        </details>
+      </section>
+
+      <div class="table-layout">
+        <div class="table-scroll">
+          <table id="excelTable">
+            <colgroup id="excelColgroup"></colgroup>
+            <thead id="excelHead"></thead>
+            <tbody id="excelBody"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
