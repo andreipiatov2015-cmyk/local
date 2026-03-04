@@ -12,7 +12,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return;
   }
 
-  const streamUrl = "http://192.168.31.18:8080/hls/test.m3u8";
+  const streamUrl = `${window.location.protocol}//${window.location.host}/hls/stream.m3u8`;
   let hls = null;
 
   function initPlayer(url) {

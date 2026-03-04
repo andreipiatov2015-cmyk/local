@@ -25,7 +25,7 @@ NOVNC_WEB_DIR="/usr/share/novnc"
 
 XDG_RUNTIME_DIR="/tmp/xdg-runtime-root"
 CHROMIUM_PROFILE="/tmp/chromium-yandex-profile"
-CHROMIUM_START_URL="${CHROMIUM_START_URL:-https://passport.yandex.ru/auth}"
+CHROMIUM_START_URL="${CHROMIUM_START_URL:-https://forms.yandex.ru/admin/}"
 
 # Binaries (assume installed)
 Xvfb_BIN="$(command -v Xvfb || true)"
