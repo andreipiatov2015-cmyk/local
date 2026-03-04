@@ -299,6 +299,33 @@ async function refreshTables() {
   }
 }
 
+
+
+async function refreshYandexSession(tableId, openVncOnFail = false) {
+  const resp = await fetch(`/api/tables/${tableId}/yandex/refresh`, { method: 'POST' });
+  if (requireAuth(resp)) return { ok: false, needLogin: false };
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    alert(data.detail || 'Не удалось обновить Яндекс-сессию');
+    return { ok: false, needLogin: false };
+  }
+
+  if (data.status === 'ok') {
+    setYandexState('connected', '', data.vnc_url || null);
+    await refreshTables();
+    return { ok: true, needLogin: false };
+  }
+
+  setYandexState('auth_required', 'Требуется вход администратора', data.vnc_url || null);
+  await refreshTables();
+  if (openVncOnFail && (data.vnc_url || lastVncUrl)) {
+    const vncUrl = data.vnc_url || lastVncUrl;
+    lastVncUrl = vncUrl;
+    window.open(vncUrl, 'yandex_vnc', 'width=520,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no');
+  }
+  return { ok: false, needLogin: true };
+}
+
 async function openTable(id, title) {
   currentTableId = id;
   tableTitle.textContent = `Таблица: ${title} (#${id})`;
@@ -366,13 +393,8 @@ function initTablesSection() {
   };
 
   document.getElementById('connectYandex').onclick = async () => {
-    const resp = await fetch('/api/yandex/connect', { method: 'POST' });
-    if (requireAuth(resp)) return;
-    const data = await resp.json().catch(() => ({}));
-    if (data.status === 'ok') setYandexState('connected', '', null);
-    else if (data.status === 'need_login') setYandexState('auth_required', 'Откройте вход администратора (VNC) и выполните вход в Яндекс.', data.vnc_url || null);
-    else setYandexState('disconnected');
-    await refreshTables();
+    if (!currentTableId) return alert('Сначала выберите таблицу');
+    await refreshYandexSession(currentTableId, true);
   };
 
   openAdminLoginBtn.onclick = async () => {

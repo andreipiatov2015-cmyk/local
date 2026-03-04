@@ -63,6 +63,9 @@ EXCEL_PREVIEW_LIMIT = 200
 YANDEX_VNC_URL = os.environ.get("YANDEX_VNC_URL", "/tables/yandex/vnc/vnc.html?autoconnect=1&resize=scale&show_dot=0")
 YANDEX_PROFILE_DIR = os.environ.get("YANDEX_PROFILE_DIR", "/var/mount_point/nfv/contest_storage/yandex_profile")
 YANDEX_FORMS_TEST_URL = (os.environ.get("YANDEX_FORMS_TEST_URL") or "").strip()
+YANDEX_REFRESH_URL = (os.environ.get("YANDEX_REFRESH_URL") or "https://disk.yandex.ru/client/disk").strip()
+YANDEX_CHROMIUM_RESTART_CMD = (os.environ.get("YANDEX_CHROMIUM_RESTART_CMD") or "").strip()
+YANDEX_CHROMIUM_OPEN_CMD = (os.environ.get("YANDEX_CHROMIUM_OPEN_CMD") or "").strip()
 
 MAPPING_FIELDS = {
     "municipality": "Муниципалитет",
@@ -889,6 +892,25 @@ def process_table_download(table_id, user_id):
         req_session = requests.Session()
         apply_cookies_to_requests_session(req_session, cookies)
 
+        def handle_auth_required_with_refresh():
+            app.logger.info("[tables_download] table_id=%s auto_refresh_on_auth_required", table_id)
+            result = try_refresh_yandex_session(table_id, user_id, reason="download_auto")
+            if result.get("status") != "ok":
+                update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
+                query_db(
+                    "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
+                    ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+                )
+                return False
+
+            try:
+                refreshed = read_yandex_cookies_from_chromium_profile()
+            except Exception:
+                return False
+            req_session.cookies.clear()
+            apply_cookies_to_requests_session(req_session, refreshed)
+            return True
+
         for folder in ["phonograms", "receipts", "presentations", "meta"]:
             os.makedirs(os.path.join(base, folder), exist_ok=True)
 
@@ -955,12 +977,18 @@ def process_table_download(table_id, user_id):
                         download_with_retries(req_session, audio_url, audio_path)
                         audio_local = os.path.join("phonograms", audio_name)
                     except YandexAuthRequiredError:
-                        update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
-                        query_db(
-                            "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
-                            ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
-                        )
-                        return
+                        if not handle_auth_required_with_refresh():
+                            return
+                        try:
+                            download_with_retries(req_session, audio_url, audio_path)
+                            audio_local = os.path.join("phonograms", audio_name)
+                        except YandexAuthRequiredError:
+                            update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
+                            query_db(
+                                "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
+                                ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+                            )
+                            return
                     except Exception:
                         placeholder_name = f"{phonogram_base}.txt"
                         miss_path = os.path.join(base, "phonograms", placeholder_name)
@@ -989,12 +1017,18 @@ def process_table_download(table_id, user_id):
                     download_with_retries(req_session, receipt_url, receipt_path)
                     receipt_local = os.path.join("receipts", receipt_name)
                 except YandexAuthRequiredError:
-                    update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
-                    query_db(
-                        "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
-                        ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
-                    )
-                    return
+                    if not handle_auth_required_with_refresh():
+                        return
+                    try:
+                        download_with_retries(req_session, receipt_url, receipt_path)
+                        receipt_local = os.path.join("receipts", receipt_name)
+                    except YandexAuthRequiredError:
+                        update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
+                        query_db(
+                            "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
+                            ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+                        )
+                        return
                 except Exception:
                     pass
 
@@ -1012,12 +1046,18 @@ def process_table_download(table_id, user_id):
                     download_with_retries(req_session, presentation_url, presentation_path)
                     presentation_local = os.path.join("presentations", presentation_name)
                 except YandexAuthRequiredError:
-                    update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
-                    query_db(
-                        "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
-                        ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
-                    )
-                    return
+                    if not handle_auth_required_with_refresh():
+                        return
+                    try:
+                        download_with_retries(req_session, presentation_url, presentation_path)
+                        presentation_local = os.path.join("presentations", presentation_name)
+                    except YandexAuthRequiredError:
+                        update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
+                        query_db(
+                            "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
+                            ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+                        )
+                        return
                 except Exception:
                     pass
 
@@ -1257,39 +1297,117 @@ def table_belongs_to_user(table_id, user_id):
     return query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user_id), one=True)
 
 
+def run_shell_command(cmd, timeout=30):
+    if not cmd:
+        return False, ""
+    try:
+        proc = subprocess.run(
+            cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            text=True,
+        )
+        output = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
+        return proc.returncode == 0, output.strip()[:500]
+    except Exception as exc:
+        return False, str(exc)[:300]
+
+
+def trigger_yandex_profile_network_refresh():
+    refresh_url = YANDEX_REFRESH_URL or "https://disk.yandex.ru/client/disk"
+    commands = []
+    if YANDEX_CHROMIUM_RESTART_CMD:
+        commands.append(YANDEX_CHROMIUM_RESTART_CMD.replace("{url}", refresh_url))
+    if YANDEX_CHROMIUM_OPEN_CMD:
+        commands.append(YANDEX_CHROMIUM_OPEN_CMD.replace("{url}", refresh_url))
+
+    for cmd in commands:
+        ok, out = run_shell_command(cmd, timeout=40)
+        app.logger.info("[yandex_refresh] command=%s success=%s", cmd, ok)
+        if ok:
+            if out:
+                app.logger.info("[yandex_refresh] command_output=%s", out)
+            return True, None
+        if out:
+            app.logger.warning("[yandex_refresh] command_failed_output=%s", out)
+
+    req = requests.Session()
+    req.get(refresh_url, timeout=20, allow_redirects=True)
+    return True, None
+
+
+def persist_table_yandex_session(table_id, cookies):
+    query_db(
+        "UPDATE table_workspaces SET yandex_session_json=?, updated_at=? WHERE id=?",
+        (json.dumps(cookies, ensure_ascii=False), now_iso(), table_id),
+    )
+
+
+def try_refresh_yandex_session(table_id, user_id, reason="manual"):
+    if not table_belongs_to_user(table_id, user_id):
+        return {"status": "missing", "detail": "Таблица не найдена"}
+
+    app.logger.info("[yandex_refresh] table_id=%s reason=%s start", table_id, reason)
+    try:
+        trigger_yandex_profile_network_refresh()
+    except Exception as exc:
+        app.logger.warning("[yandex_refresh] table_id=%s trigger_failed error=%s", table_id, str(exc))
+
+    try:
+        cookies = read_yandex_cookies_from_chromium_profile()
+    except Exception as exc:
+        error_text = short_error_message(exc, "Нужен вход администратора в Яндекс")
+        update_table_yandex_status(table_id, "auth_required", error_text)
+        return {
+            "status": "need_login",
+            "detail": "Требуется вход администратора",
+            "yandex_status": "auth_required",
+            "cookies_count": 0,
+        }
+
+    app.logger.info("[yandex_refresh] table_id=%s reason=%s cookies_count=%s", table_id, reason, len(cookies))
+    persist_table_yandex_session(table_id, cookies)
+
+    access_ok, final_url = check_yandex_auth(cookies)
+    if not access_ok:
+        update_table_yandex_status(table_id, "auth_required", f"Нужен вход администратора в Яндекс: {final_url}")
+        return {
+            "status": "need_login",
+            "detail": "Требуется вход администратора",
+            "yandex_status": "auth_required",
+            "cookies_count": len(cookies),
+            "final_url": final_url,
+        }
+
+    update_table_yandex_status(table_id, "connected", None)
+    return {
+        "status": "ok",
+        "detail": "Яндекс-сессия обновлена",
+        "yandex_status": "connected",
+        "cookies_count": len(cookies),
+    }
+
+
 @app.route("/api/yandex/connect", methods=["POST"])
 def yandex_connect():
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
 
-    try:
-        cookies = read_yandex_cookies_from_chromium_profile()
-    except Exception as exc:
-        app.logger.info("[yandex_connect] profile_read_failed error=%s", str(exc))
-        query_db(
-            "UPDATE table_workspaces SET yandex_status='auth_required', yandex_last_error=?, yandex_last_checked_at=?, updated_at=? WHERE user_id=?",
-            (short_error_message(exc, "Нужна авторизация в Яндекс"), now_iso(), now_iso(), user["id"]),
-        )
-        return jsonify({"status": "need_login", "vnc_url": YANDEX_VNC_URL})
+    tables = query_db("SELECT id FROM table_workspaces WHERE user_id=? ORDER BY id DESC", (user["id"],))
+    if not tables:
+        return jsonify({"status": "need_login", "detail": "Нет доступных таблиц", "vnc_url": YANDEX_VNC_URL})
 
-    domains = yandex_cookie_domains(cookies)
-    app.logger.info("[yandex_connect] cookies_count=%s domains=%s", len(cookies), ",".join(domains))
-
-    access_ok, final_url = check_yandex_auth(cookies)
-    if not access_ok:
-        app.logger.info("[yandex_connect] need_login final_url=%s", final_url)
-        query_db(
-            "UPDATE table_workspaces SET yandex_status='auth_required', yandex_last_error=?, yandex_last_checked_at=?, updated_at=? WHERE user_id=?",
-            (f"Нужна повторная авторизация: {final_url}", now_iso(), now_iso(), user["id"]),
-        )
-        return jsonify({"status": "need_login", "vnc_url": YANDEX_VNC_URL})
+    result = try_refresh_yandex_session(tables[0]["id"], user["id"], reason="connect_button")
+    if result.get("status") != "ok":
+        return jsonify({"status": "need_login", "detail": result.get("detail") or "Требуется вход администратора", "vnc_url": YANDEX_VNC_URL})
 
     query_db(
         "UPDATE table_workspaces SET yandex_status='connected', yandex_last_error=NULL, yandex_last_checked_at=?, updated_at=? WHERE user_id=?",
         (now_iso(), now_iso(), user["id"]),
     )
-
     return jsonify({"status": "ok"})
 
 
@@ -1301,6 +1419,27 @@ def yandex_vnc_start(table_id):
     if not table_belongs_to_user(table_id, user["id"]):
         return jsonify({"detail": "Таблица не найдена"}), 404
     return jsonify({"vnc_url": YANDEX_VNC_URL})
+
+
+
+
+@app.route("/api/tables/<int:table_id>/yandex/refresh", methods=["POST"])
+def yandex_refresh(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not table_belongs_to_user(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    result = try_refresh_yandex_session(table_id, user["id"], reason="manual")
+    body = {
+        "status": result.get("status"),
+        "detail": result.get("detail"),
+        "yandex_status": result.get("yandex_status"),
+        "cookies_count": result.get("cookies_count", 0),
+        "vnc_url": YANDEX_VNC_URL,
+    }
+    return jsonify(body)
 
 
 @app.route("/api/tables/<int:table_id>", methods=["DELETE"])
