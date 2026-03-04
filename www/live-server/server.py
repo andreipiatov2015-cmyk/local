@@ -59,6 +59,7 @@ RETENTION_DAYS = 60
 MAX_TABLES_PER_USER = 10
 DOWNLOAD_RETRIES = 3
 MAX_FILENAME_LEN = 150
+EXCEL_PREVIEW_LIMIT = 200
 YANDEX_VNC_URL = os.environ.get("YANDEX_VNC_URL", "/tables/yandex/vnc/vnc.html?autoconnect=1&resize=scale&show_dot=0")
 YANDEX_PROFILE_DIR = os.environ.get("YANDEX_PROFILE_DIR", "/var/mount_point/nfv/contest_storage/yandex_profile")
 YANDEX_FORMS_TEST_URL = (os.environ.get("YANDEX_FORMS_TEST_URL") or "").strip()
@@ -227,6 +228,9 @@ def init_db():
 
     for stmt in [
         "ALTER TABLE table_workspaces ADD COLUMN excel_headers_json TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN excel_preview_rows_json TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN excel_total_rows INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE table_workspaces ADD COLUMN excel_sheet_name TEXT",
         "ALTER TABLE table_workspaces ADD COLUMN mapping_json TEXT",
         "ALTER TABLE table_entries ADD COLUMN row_id INTEGER",
         "ALTER TABLE table_entries ADD COLUMN row_data_json TEXT",
@@ -542,6 +546,39 @@ def get_cell(row, idx):
         return ""
     v = row[idx]
     return "" if v is None else str(v).strip()
+
+
+def parse_excel_preview(xlsx_path, preview_limit=EXCEL_PREVIEW_LIMIT):
+    if openpyxl is None:
+        raise RuntimeError("openpyxl недоступен")
+
+    wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+    ws = wb.worksheets[0] if wb.worksheets else None
+    if ws is None:
+        raise RuntimeError("В Excel не найдено ни одного листа")
+
+    rows_iter = ws.iter_rows(values_only=True)
+    header_row = next(rows_iter, None)
+    if header_row is None:
+        return [], [], 0, ws.title
+
+    headers = ["" if x is None else str(x).strip() for x in header_row]
+    preview_rows = []
+    total_rows = 0
+
+    for row in rows_iter:
+        total_rows += 1
+        values = ["" if x is None else str(x).strip() for x in row]
+        if len(values) < len(headers):
+            values.extend([""] * (len(headers) - len(values)))
+        preview_rows.append(values)
+        if len(preview_rows) >= preview_limit:
+            break
+
+    for _ in rows_iter:
+        total_rows += 1
+
+    return headers, preview_rows, total_rows, ws.title
 
 
 def normalize_mapping(mapping):
@@ -1080,81 +1117,83 @@ def upload_excel(table_id):
 
     xlsx_path = os.path.join(dst, "original.xlsx")
     excel.save(xlsx_path)
-    excel.stream.seek(0)
 
-    headers = []
-    rows_payload = []
-    if openpyxl is not None:
-        wb = openpyxl.load_workbook(xlsx_path)
-        ws = wb.active
-        rows = list(ws.values)
-        if rows:
-            headers = ["" if x is None else str(x).strip() for x in rows[0]]
-            for idx, row in enumerate(rows[1:], start=2):
-                vals = ["" if x is None else str(x).strip() for x in row]
-                row_data = {str(i): v for i, v in enumerate(vals)}
-                rows_payload.append((
-                    table_id,
-                    idx,
-                    "",
-                    "",
-                    "",
-                    f"{idx}",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    json.dumps(row_data, ensure_ascii=False),
-                    now_iso(),
-                ))
+    try:
+        headers, preview_rows, total_rows, sheet_name = parse_excel_preview(xlsx_path)
+    except Exception as exc:
+        app.logger.warning("[tables_excel_preview] table_id=%s parse_failed error=%s", table_id, str(exc))
+        query_db(
+            "UPDATE table_workspaces SET status='error', progress=0, excel_headers_json='[]', excel_preview_rows_json='[]', excel_total_rows=0, excel_sheet_name=NULL, updated_at=? WHERE id=?",
+            (now_iso(), table_id),
+        )
+        return jsonify({"detail": f"Excel не распознан: {str(exc)}"}), 400
 
     query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
-    for payload in rows_payload:
+
+    for idx, row in enumerate(preview_rows, start=2):
+        row_data = {str(i): v for i, v in enumerate(row)}
         query_db(
             """
             INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, '', '', '', ?, '', '', '', '', '', '', '', '', ?, ?)
             """,
-            payload,
+            (table_id, idx, f"preview-{idx}", json.dumps(row_data, ensure_ascii=False), now_iso()),
         )
 
     query_db(
-        "UPDATE table_workspaces SET excel_headers_json=?, status='new', progress=0, updated_at=? WHERE id=?",
-        (json.dumps(headers, ensure_ascii=False), now_iso(), table_id),
+        "UPDATE table_workspaces SET excel_headers_json=?, excel_preview_rows_json=?, excel_total_rows=?, excel_sheet_name=?, status='excel_loaded', progress=100, updated_at=? WHERE id=?",
+        (
+            json.dumps(headers, ensure_ascii=False),
+            json.dumps(preview_rows, ensure_ascii=False),
+            total_rows,
+            sheet_name,
+            now_iso(),
+            table_id,
+        ),
     )
-    return jsonify({"status": "ok", "headers": headers, "rows": len(rows_payload)})
+
+    app.logger.info(
+        "[tables_excel_preview] table_id=%s sheet=%s headers=%s preview_rows=%s total_rows=%s",
+        table_id,
+        sheet_name,
+        len(headers),
+        len(preview_rows),
+        total_rows,
+    )
+
+    return jsonify(
+        {
+            "status": "ok",
+            "table_status": "excel_loaded",
+            "headers": headers,
+            "rows": preview_rows,
+            "total_rows": total_rows,
+            "sheet": sheet_name,
+        }
+    )
 
 
-@app.route("/api/tables/<int:table_id>/connect-yandex", methods=["POST"])
-def connect_yandex(table_id):
+@app.route("/api/tables/<int:table_id>/excel_preview", methods=["GET"])
+def table_excel_preview(table_id):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    if not table_belongs_to_user(table_id, user["id"]):
+    table = query_db(
+        "SELECT id, excel_headers_json, excel_preview_rows_json, excel_total_rows FROM table_workspaces WHERE id=? AND user_id=?",
+        (table_id, user["id"]),
+        one=True,
+    )
+    if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
-    if has_global_yandex_session():
-        return jsonify({"status": "ok"})
-    return jsonify({"status": "need_login", "vnc_url": YANDEX_VNC_URL})
+    headers = json.loads(table["excel_headers_json"] or "[]")
+    rows = json.loads(table["excel_preview_rows_json"] or "[]")
+    total_rows = int(table["excel_total_rows"] or 0)
+    return jsonify({"headers": headers, "rows": rows, "total_rows": total_rows, "mapping_fields": MAPPING_FIELDS})
 
 
 @app.route("/api/tables/<int:table_id>/excel-data", methods=["GET"])
 def table_excel_data(table_id):
-    user = table_user_from_request()
-    if not user:
-        return jsonify({"detail": "Не авторизован"}), 401
-    table = query_db("SELECT id, excel_headers_json FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
-    if not table:
-        return jsonify({"detail": "Таблица не найдена"}), 404
-    headers = json.loads(table["excel_headers_json"] or "[]")
-    rows = query_db("SELECT row_id, row_data_json FROM table_entries WHERE table_id=? ORDER BY row_id", (table_id,))
-    payload = []
-    for r in rows:
-        payload.append({"row_id": r["row_id"], "row_data": json.loads(r["row_data_json"] or "{}")})
-    return jsonify({"headers": headers, "rows": payload, "mapping_fields": MAPPING_FIELDS})
+    return table_excel_preview(table_id)
 
 
 @app.route("/api/tables/<int:table_id>/mapping", methods=["GET"])

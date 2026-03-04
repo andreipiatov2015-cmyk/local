@@ -4,7 +4,6 @@ let stickyNeedLogin = false;
 let currentMapping = {};
 let mappingFields = {};
 let currentHeaders = [];
-let selectedColumn = null;
 
 const tableList = document.getElementById('tableList');
 const progressEl = document.getElementById('progress');
@@ -19,6 +18,7 @@ const excelBody = document.getElementById('excelBody');
 const mappingInfo = document.getElementById('mappingInfo');
 const mappingDialog = document.getElementById('mappingDialog');
 const mappingDialogActions = document.getElementById('mappingDialogActions');
+const previewErrorEl = document.getElementById('previewError');
 
 function requireAuth(resp) {
   if (resp.status === 401) {
@@ -72,8 +72,8 @@ function mappingReverse() {
 }
 
 function renderMappingInfo() {
-  const assigned = Object.entries(currentMapping).map(([f, c]) => `${mappingFields[f] || f}: ${currentHeaders[c] || ('#'+c)}`);
-  const missing = Object.keys(mappingFields).filter((f) => !currentMapping[f]).map((f) => mappingFields[f]);
+  const assigned = Object.entries(currentMapping).map(([f, c]) => `${mappingFields[f] || f}: ${currentHeaders[c] || ('#' + c)}`);
+  const missing = Object.keys(mappingFields).filter((f) => currentMapping[f] === undefined).map((f) => mappingFields[f]);
   mappingInfo.innerHTML = `
     <b>Схема колонок</b><br>
     Назначено: ${assigned.length ? assigned.join(' | ') : 'пока нет'}<br>
@@ -81,10 +81,26 @@ function renderMappingInfo() {
   `;
 }
 
+function showPreviewError(msg) {
+  previewErrorEl.textContent = msg;
+  previewErrorEl.classList.remove('hidden');
+}
+
+function clearPreviewError() {
+  previewErrorEl.textContent = '';
+  previewErrorEl.classList.add('hidden');
+}
+
 function renderExcelTable(rows) {
   const rev = mappingReverse();
   excelHead.innerHTML = '';
   excelBody.innerHTML = '';
+
+  if (!currentHeaders.length) {
+    showPreviewError('Excel не распознан: не найдены заголовки или пустой файл.');
+    renderMappingInfo();
+    return;
+  }
 
   const trh = document.createElement('tr');
   currentHeaders.forEach((h, idx) => {
@@ -99,26 +115,37 @@ function renderExcelTable(rows) {
   });
   excelHead.appendChild(trh);
 
-  rows.forEach((rowObj) => {
+  rows.forEach((row) => {
     const tr = document.createElement('tr');
     currentHeaders.forEach((_, idx) => {
       const td = document.createElement('td');
-      td.textContent = rowObj.row_data?.[String(idx)] || '';
+      td.textContent = row[idx] || '';
       tr.appendChild(td);
     });
     excelBody.appendChild(tr);
   });
 
+  if (!rows.length) {
+    showPreviewError('Excel не распознан / пустой файл / не найден лист с данными.');
+  } else {
+    clearPreviewError();
+  }
+
   renderMappingInfo();
 }
 
-async function refreshExcelData() {
+async function loadExcelPreview() {
   if (!currentTableId) return;
-  const resp = await fetch(`/api/tables/${currentTableId}/excel-data`);
-  if (requireAuth(resp) || !resp.ok) return;
-  const data = await resp.json();
+  const resp = await fetch(`/api/tables/${currentTableId}/excel_preview`);
+  if (requireAuth(resp)) return;
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    showPreviewError(data.detail || 'Не удалось загрузить предпросмотр Excel.');
+    return;
+  }
+
   currentHeaders = data.headers || [];
-  mappingFields = data.mapping_fields || {};
+  mappingFields = data.mapping_fields || mappingFields;
   renderExcelTable(data.rows || []);
 }
 
@@ -145,14 +172,14 @@ async function saveMapping() {
   if (!r.ok) return alert(data.detail || 'Ошибка сохранения mapping');
   startDownloadBtn.disabled = !data.can_start;
   startDownloadBtn.title = data.can_start ? '' : data.reason;
-  await refreshExcelData();
+  await loadExcelPreview();
 }
 
 function openMappingDialog(colIndex) {
-  selectedColumn = colIndex;
   mappingDialogActions.innerHTML = '';
   Object.entries(mappingFields).forEach(([field, title]) => {
     const btn = document.createElement('button');
+    btn.className = 'btn btn-secondary';
     btn.textContent = `Назначить как: ${title}`;
     btn.onclick = async () => {
       Object.keys(currentMapping).forEach((k) => {
@@ -165,6 +192,7 @@ function openMappingDialog(colIndex) {
     mappingDialogActions.appendChild(btn);
   });
   const clearBtn = document.createElement('button');
+  clearBtn.className = 'btn btn-secondary';
   clearBtn.textContent = 'Снять назначение';
   clearBtn.onclick = async () => {
     Object.keys(currentMapping).forEach((k) => {
@@ -205,7 +233,7 @@ async function openTable(id, title) {
   tableTitle.textContent = `Таблица: ${title} (#${id})`;
   tableView.classList.remove('hidden');
   await refreshMapping();
-  await refreshExcelData();
+  await loadExcelPreview();
 }
 
 function initTablesSection() {
@@ -227,9 +255,14 @@ function initTablesSection() {
     const resp = await fetch(`/api/tables/${currentTableId}/excel`, { method: 'POST', body: fd });
     if (requireAuth(resp)) return;
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) return alert(data.detail || 'Ошибка загрузки');
+    if (!resp.ok) {
+      showPreviewError(data.detail || 'Ошибка загрузки Excel');
+      return;
+    }
+    clearPreviewError();
+    await loadExcelPreview();
     await refreshMapping();
-    await refreshExcelData();
+    await refreshTables();
   };
 
   document.getElementById('connectYandex').onclick = async () => {
@@ -272,7 +305,6 @@ function initTablesSection() {
   setInterval(async () => {
     await refreshTables();
     await refreshMapping();
-    await refreshExcelData();
   }, 4000);
 }
 
