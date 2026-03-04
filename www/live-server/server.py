@@ -186,7 +186,10 @@ def init_db():
             user_id INTEGER NOT NULL,
             title TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'new',
+            total_count INTEGER NOT NULL DEFAULT 0,
+            processed_count INTEGER NOT NULL DEFAULT 0,
             progress INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             yandex_session_json TEXT
@@ -232,6 +235,9 @@ def init_db():
         "ALTER TABLE table_workspaces ADD COLUMN excel_total_rows INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE table_workspaces ADD COLUMN excel_sheet_name TEXT",
         "ALTER TABLE table_workspaces ADD COLUMN mapping_json TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN total_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE table_workspaces ADD COLUMN processed_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE table_workspaces ADD COLUMN last_error TEXT",
         "ALTER TABLE table_entries ADD COLUMN row_id INTEGER",
         "ALTER TABLE table_entries ADD COLUMN row_data_json TEXT",
     ]:
@@ -661,184 +667,217 @@ def download_with_retries(req_session, url, out_path):
     raise RuntimeError(last_error or "download failed")
 
 
+def short_error_message(exc, fallback="Ошибка обработки"):
+    msg = str(exc or "").strip() or fallback
+    return msg[:300]
+
+
 def process_table_download(table_id, user_id):
     t = query_db("SELECT * FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user_id), one=True)
     if not t:
         return
 
-    mapping = normalize_mapping(json.loads(t["mapping_json"] or "{}"))
-    ok_to_run, reason = table_required_mapping_status(mapping)
-    if not ok_to_run:
-        query_db("UPDATE table_workspaces SET status='error', updated_at=?, yandex_session_json=? WHERE id=?", (now_iso(), json.dumps({"error": reason}, ensure_ascii=False), table_id))
-        return
-
-    query_db("UPDATE table_workspaces SET status='processing', progress=1, updated_at=? WHERE id=?", (now_iso(), table_id))
-    base = storage_for_table(user_id, table_id)
-    excel_path = os.path.join(base, "meta", "original.xlsx")
-    if not os.path.exists(excel_path):
-        excel_path = os.path.join(base, "meta", "excel_original.xlsx")
-    if not os.path.exists(excel_path) or openpyxl is None:
-        query_db("UPDATE table_workspaces SET status='error', updated_at=? WHERE id=?", (now_iso(), table_id))
-        return
-
-    wb = openpyxl.load_workbook(excel_path)
-    ws = wb.active
-    rows = list(ws.values)
-    if not rows:
-        query_db("UPDATE table_workspaces SET status='done', progress=100, updated_at=? WHERE id=?", (now_iso(), table_id))
-        return
-
-    data_rows = rows[1:]
-
     try:
-        cookies = read_yandex_cookies_from_chromium_profile()
-    except Exception:
-        query_db(
-            "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
-            (now_iso(), json.dumps({"error": "Нужен вход администратора в Яндекс."}, ensure_ascii=False), table_id),
-        )
-        return
-
-    access_ok, _ = check_yandex_auth(cookies)
-    if not access_ok:
-        query_db(
-            "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
-            (now_iso(), json.dumps({"error": "Нужен вход администратора в Яндекс."}, ensure_ascii=False), table_id),
-        )
-        return
-
-    req_session = requests.Session()
-    apply_cookies_to_requests_session(req_session, cookies)
-
-    for folder in ["phonograms", "receipts", "presentations", "meta"]:
-        os.makedirs(os.path.join(base, folder), exist_ok=True)
-
-    query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
-
-    total = max(len(data_rows), 1)
-    used_names = {"phonograms": set(), "receipts": set(), "presentations": set()}
-    for i, row in enumerate(data_rows, start=1):
-        row_id = i + 1
-        row_values = ["" if x is None else str(x).strip() for x in row]
-        row_data = {str(idx): val for idx, val in enumerate(row_values)}
-
-        number_title = get_cell(row_values, mapping.get("number_title"))
-        fio = get_cell(row_values, mapping.get("participant_fio"))
-        team = get_cell(row_values, mapping.get("studio_name"))
-        unique_key = f"{row_id}|{number_title}|{fio}"
-
-        query_db(
-            """
-            INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, '', '', '', '', '', ?, ?)
-            """,
-            (
-                table_id,
-                row_id,
-                number_title,
-                fio,
-                team,
-                unique_key,
-                get_cell(row_values, mapping.get("audio_url")),
-                get_cell(row_values, mapping.get("receipt_url")),
-                get_cell(row_values, mapping.get("presentation_url")),
-                json.dumps(row_data, ensure_ascii=False),
-                now_iso(),
-            ),
-        )
-        entry_id = query_db("SELECT last_insert_rowid() AS id", one=True)["id"]
-
-        audio_local = ""
-        receipt_local = ""
-        presentation_local = ""
-
-        audio_url = get_cell(row_values, mapping.get("audio_url"))
-        if "audio_url" in mapping:
-            phonogram_base = add_row_suffix_if_needed(
-                make_safe_basename(number_title, fio, fallback=f"phonogram-{row_id}"),
-                row_id,
-                used_names["phonograms"],
+        mapping = normalize_mapping(json.loads(t["mapping_json"] or "{}"))
+        ok_to_run, reason = table_required_mapping_status(mapping)
+        if not ok_to_run:
+            query_db(
+                "UPDATE table_workspaces SET status='error', total_count=0, processed_count=0, progress=0, last_error=?, updated_at=? WHERE id=?",
+                (reason, now_iso(), table_id),
             )
-            if audio_url:
-                ext = extension_from_url(audio_url, "mp3")
-                audio_name = f"{phonogram_base}.{ext}"
-                audio_path = os.path.join(base, "phonograms", audio_name)
-                try:
-                    download_with_retries(req_session, audio_url, audio_path)
-                    audio_local = os.path.join("phonograms", audio_name)
-                except YandexAuthRequiredError:
-                    query_db(
-                        "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
-                        (now_iso(), json.dumps({"error": "Нужен вход администратора в Яндекс."}, ensure_ascii=False), table_id),
-                    )
-                    return
-                except Exception:
+            return
+
+        base = storage_for_table(user_id, table_id)
+        excel_path = os.path.join(base, "meta", "original.xlsx")
+        if not os.path.exists(excel_path):
+            excel_path = os.path.join(base, "meta", "excel_original.xlsx")
+        if not os.path.exists(excel_path) or openpyxl is None:
+            query_db(
+                "UPDATE table_workspaces SET status='error', total_count=0, processed_count=0, progress=0, last_error=?, updated_at=? WHERE id=?",
+                ("Excel файл не найден или openpyxl недоступен", now_iso(), table_id),
+            )
+            return
+
+        wb = openpyxl.load_workbook(excel_path)
+        ws = wb.active
+        rows = list(ws.values)
+        if not rows:
+            query_db(
+                "UPDATE table_workspaces SET status='done', total_count=0, processed_count=0, progress=100, last_error=NULL, updated_at=? WHERE id=?",
+                (now_iso(), table_id),
+            )
+            return
+
+        data_rows = rows[1:]
+        total = len(data_rows)
+        query_db(
+            "UPDATE table_workspaces SET status='running', total_count=?, processed_count=0, progress=0, last_error=NULL, updated_at=? WHERE id=?",
+            (total, now_iso(), table_id),
+        )
+
+        try:
+            cookies = read_yandex_cookies_from_chromium_profile()
+        except Exception:
+            query_db(
+                "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
+                ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+            )
+            return
+
+        access_ok, _ = check_yandex_auth(cookies)
+        if not access_ok:
+            query_db(
+                "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
+                ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+            )
+            return
+
+        req_session = requests.Session()
+        apply_cookies_to_requests_session(req_session, cookies)
+
+        for folder in ["phonograms", "receipts", "presentations", "meta"]:
+            os.makedirs(os.path.join(base, folder), exist_ok=True)
+
+        query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
+
+        used_names = {"phonograms": set(), "receipts": set(), "presentations": set()}
+        processed_count = 0
+        for i, row in enumerate(data_rows, start=1):
+            row_id = i + 1
+            row_values = ["" if x is None else str(x).strip() for x in row]
+            row_data = {str(idx): val for idx, val in enumerate(row_values)}
+
+            number_title = get_cell(row_values, mapping.get("number_title"))
+            fio = get_cell(row_values, mapping.get("participant_fio"))
+            team = get_cell(row_values, mapping.get("studio_name"))
+            unique_key = f"{row_id}|{number_title}|{fio}"
+
+            query_db(
+                """
+                INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, '', '', '', '', '', ?, ?)
+                """,
+                (
+                    table_id,
+                    row_id,
+                    number_title,
+                    fio,
+                    team,
+                    unique_key,
+                    get_cell(row_values, mapping.get("audio_url")),
+                    get_cell(row_values, mapping.get("receipt_url")),
+                    get_cell(row_values, mapping.get("presentation_url")),
+                    json.dumps(row_data, ensure_ascii=False),
+                    now_iso(),
+                ),
+            )
+            entry_id = query_db("SELECT last_insert_rowid() AS id", one=True)["id"]
+
+            audio_local = ""
+            receipt_local = ""
+            presentation_local = ""
+
+            audio_url = get_cell(row_values, mapping.get("audio_url"))
+            if "audio_url" in mapping:
+                phonogram_base = add_row_suffix_if_needed(
+                    make_safe_basename(number_title, fio, fallback=f"phonogram-{row_id}"),
+                    row_id,
+                    used_names["phonograms"],
+                )
+                if audio_url:
+                    ext = extension_from_url(audio_url, "mp3")
+                    audio_name = f"{phonogram_base}.{ext}"
+                    audio_path = os.path.join(base, "phonograms", audio_name)
+                    try:
+                        download_with_retries(req_session, audio_url, audio_path)
+                        audio_local = os.path.join("phonograms", audio_name)
+                    except YandexAuthRequiredError:
+                        query_db(
+                            "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
+                            ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+                        )
+                        return
+                    except Exception:
+                        placeholder_name = f"{phonogram_base}.txt"
+                        miss_path = os.path.join(base, "phonograms", placeholder_name)
+                        with open(miss_path, "w", encoding="utf-8") as f:
+                            f.write("Не удалось скачать фонограмму")
+                        audio_local = os.path.join("phonograms", placeholder_name)
+                else:
                     placeholder_name = f"{phonogram_base}.txt"
                     miss_path = os.path.join(base, "phonograms", placeholder_name)
                     with open(miss_path, "w", encoding="utf-8") as f:
-                        f.write("Не удалось скачать фонограмму")
+                        f.write("Фонограмма не предоставлена")
                     audio_local = os.path.join("phonograms", placeholder_name)
-            else:
-                placeholder_name = f"{phonogram_base}.txt"
-                miss_path = os.path.join(base, "phonograms", placeholder_name)
-                with open(miss_path, "w", encoding="utf-8") as f:
-                    f.write("Фонограмма не предоставлена")
-                audio_local = os.path.join("phonograms", placeholder_name)
 
-        receipt_url = get_cell(row_values, mapping.get("receipt_url"))
-        if receipt_url:
-            payer = get_cell(row_values, mapping.get("receipt_payer"))
-            receipt_base = add_row_suffix_if_needed(
-                make_safe_basename(payer, fallback=f"receipt-{row_id}"),
-                row_id,
-                used_names["receipts"],
-            )
-            ext = extension_from_url(receipt_url, "pdf")
-            receipt_name = f"{receipt_base}.{ext}"
-            receipt_path = os.path.join(base, "receipts", receipt_name)
-            try:
-                download_with_retries(req_session, receipt_url, receipt_path)
-                receipt_local = os.path.join("receipts", receipt_name)
-            except YandexAuthRequiredError:
-                query_db(
-                    "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
-                    (now_iso(), json.dumps({"error": "Нужен вход администратора в Яндекс."}, ensure_ascii=False), table_id),
+            receipt_url = get_cell(row_values, mapping.get("receipt_url"))
+            if receipt_url:
+                payer = get_cell(row_values, mapping.get("receipt_payer"))
+                receipt_base = add_row_suffix_if_needed(
+                    make_safe_basename(payer, fallback=f"receipt-{row_id}"),
+                    row_id,
+                    used_names["receipts"],
                 )
-                return
-            except Exception:
-                pass
+                ext = extension_from_url(receipt_url, "pdf")
+                receipt_name = f"{receipt_base}.{ext}"
+                receipt_path = os.path.join(base, "receipts", receipt_name)
+                try:
+                    download_with_retries(req_session, receipt_url, receipt_path)
+                    receipt_local = os.path.join("receipts", receipt_name)
+                except YandexAuthRequiredError:
+                    query_db(
+                        "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
+                        ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+                    )
+                    return
+                except Exception:
+                    pass
 
-        presentation_url = get_cell(row_values, mapping.get("presentation_url"))
-        if presentation_url:
-            presentation_base = add_row_suffix_if_needed(
-                make_safe_basename(number_title, fio, fallback=f"presentation-{row_id}"),
-                row_id,
-                used_names["presentations"],
-            )
-            ext = extension_from_url(presentation_url, "bin")
-            presentation_name = f"{presentation_base}.{ext}"
-            presentation_path = os.path.join(base, "presentations", presentation_name)
-            try:
-                download_with_retries(req_session, presentation_url, presentation_path)
-                presentation_local = os.path.join("presentations", presentation_name)
-            except YandexAuthRequiredError:
-                query_db(
-                    "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
-                    (now_iso(), json.dumps({"error": "Нужен вход администратора в Яндекс."}, ensure_ascii=False), table_id),
+            presentation_url = get_cell(row_values, mapping.get("presentation_url"))
+            if presentation_url:
+                presentation_base = add_row_suffix_if_needed(
+                    make_safe_basename(number_title, fio, fallback=f"presentation-{row_id}"),
+                    row_id,
+                    used_names["presentations"],
                 )
-                return
-            except Exception:
-                pass
+                ext = extension_from_url(presentation_url, "bin")
+                presentation_name = f"{presentation_base}.{ext}"
+                presentation_path = os.path.join(base, "presentations", presentation_name)
+                try:
+                    download_with_retries(req_session, presentation_url, presentation_path)
+                    presentation_local = os.path.join("presentations", presentation_name)
+                except YandexAuthRequiredError:
+                    query_db(
+                        "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
+                        ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+                    )
+                    return
+                except Exception:
+                    pass
+
+            query_db(
+                "UPDATE table_entries SET audio_local=?, receipt_local=?, presentation_local=? WHERE id=?",
+                (audio_local, receipt_local, presentation_local, entry_id),
+            )
+
+            processed_count += 1
+            progress = 100 if total == 0 else int((processed_count / total) * 100)
+            query_db(
+                "UPDATE table_workspaces SET processed_count=?, progress=?, updated_at=? WHERE id=?",
+                (processed_count, progress, now_iso(), table_id),
+            )
 
         query_db(
-            "UPDATE table_entries SET audio_local=?, receipt_local=?, presentation_local=? WHERE id=?",
-            (audio_local, receipt_local, presentation_local, entry_id),
+            "UPDATE table_workspaces SET status='done', processed_count=?, progress=100, last_error=NULL, updated_at=? WHERE id=?",
+            (processed_count, now_iso(), table_id),
+        )
+    except Exception as exc:
+        app.logger.exception("[tables_download] table_id=%s failed", table_id)
+        query_db(
+            "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
+            (short_error_message(exc), now_iso(), table_id),
         )
 
-        progress = int((i / total) * 100)
-        query_db("UPDATE table_workspaces SET progress=?, updated_at=? WHERE id=?", (progress, now_iso(), table_id))
-
-    query_db("UPDATE table_workspaces SET status='done', progress=100, updated_at=? WHERE id=?", (now_iso(), table_id))
 
 def cleanup_old_tables():
     while True:
@@ -922,7 +961,7 @@ def list_tables():
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    rows = query_db("SELECT id, title, status, progress, created_at, mapping_json FROM table_workspaces WHERE user_id=? ORDER BY id DESC", (user["id"],))
+    rows = query_db("SELECT id, title, status, total_count, processed_count, progress, last_error, created_at, mapping_json FROM table_workspaces WHERE user_id=? ORDER BY id DESC", (user["id"],))
     connected = has_global_yandex_session()
     result = []
     for r in rows:
@@ -1239,8 +1278,10 @@ def start_download(table_id):
     if not can_start:
         return jsonify({"detail": reason}), 400
     if not has_global_yandex_session():
-        query_db("UPDATE table_workspaces SET status='need_login', updated_at=? WHERE id=?", (now_iso(), table_id))
+        query_db("UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?", ("Нужен вход администратора в Яндекс", now_iso(), table_id))
         return jsonify({"status": "need_login", "detail": "Нужен вход администратора в Яндекс", "vnc_url": YANDEX_VNC_URL}), 400
+    total_rows = int(query_db("SELECT excel_total_rows FROM table_workspaces WHERE id=?", (table_id,), one=True)["excel_total_rows"] or 0)
+    query_db("UPDATE table_workspaces SET status='queued', total_count=?, processed_count=0, progress=0, last_error=NULL, updated_at=? WHERE id=?", (total_rows, now_iso(), table_id))
     threading.Thread(target=process_table_download, args=(table_id, user["id"]), daemon=True).start()
     return jsonify({"status": "started"})
 

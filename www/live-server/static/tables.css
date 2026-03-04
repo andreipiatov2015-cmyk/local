@@ -1,6 +1,6 @@
 .tables-content {
   align-items: stretch;
-  max-width: 1400px;
+  max-width: 1500px;
 }
 
 .tables-content .card {
@@ -31,15 +31,71 @@
   background: #eff6ff;
 }
 
+.table-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+}
+
 .table-scroll { overflow: auto; max-height: 65vh; border: 1px solid #dbe4f1; border-radius: 10px; }
 table { width: 100%; border-collapse: collapse; }
 th, td { border: 1px solid #e2e8f0; padding: 6px; white-space: nowrap; }
 th { background: #f8fafc; cursor: pointer; position: sticky; top: 0; }
 th.mapped { background: #dbeafe; }
+.header-title { display: block; }
+.header-badge {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: #1d4ed8;
+  color: #fff;
+}
 
-.mapping-info { margin: 10px 0; font-size: 14px; }
+.mapping-panel {
+  position: sticky;
+  top: 12px;
+  border: 1px solid #dbe4f1;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+}
+.mapping-panel-toggle { width: 100%; margin-bottom: 8px; }
+.mapping-progress { font-weight: 700; margin-bottom: 8px; }
+.mapping-required-mini span {
+  display: block;
+  font-size: 13px;
+  margin: 3px 0;
+}
+.mapping-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #eef2f7;
+  font-size: 14px;
+}
+.mapping-row.ok span:first-child { color: #166534; }
+.mapping-row.missing span:first-child { color: #92400e; }
+.mapping-hint { font-size: 13px; color: #475569; margin-top: 10px; }
+.mapping-info { margin: 10px 0; }
 .mapping-dialog-actions { display: grid; grid-template-columns: 1fr; gap: 6px; margin-bottom: 8px; }
+.mapping-choice {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+}
+.mapping-choice small { color: #334155; }
+.mapping-choice.is-occupied { border-color: #f59e0b; background: #fffbeb; }
 .preview-error { color: #dc2626; font-weight: 600; }
+
+@media (max-width: 1080px) {
+  .table-layout { grid-template-columns: 1fr; }
+  .mapping-panel { position: static; }
+}
 
 @media (max-width: 720px) {
   .tables-content {
