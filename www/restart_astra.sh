@@ -16,7 +16,7 @@ CUSTOM_NGINX_PID="/usr/local/nginx/logs/nginx.pid"
 # ===== VNC / noVNC stack (Yandex connect) =====
 VNC_RUN_DIR="/var/run/contest_vnc"
 VNC_DISPLAY=":99"
-VNC_SCREEN="1280x800x24"
+VNC_SCREEN="720x1280x24"
 VNC_RFB_ADDR="127.0.0.1"
 VNC_RFB_PORT="5901"
 NOVNC_HTTP_ADDR="127.0.0.1"
@@ -24,8 +24,8 @@ NOVNC_HTTP_PORT="6080"
 NOVNC_WEB_DIR="/usr/share/novnc"
 
 XDG_RUNTIME_DIR="/tmp/xdg-runtime-root"
-CHROMIUM_PROFILE="/tmp/chromium-yandex-profile"
-CHROMIUM_START_URL="${CHROMIUM_START_URL:-https://forms.yandex.ru/admin/}"
+YANDEX_PROFILE_DIR="${YANDEX_PROFILE_DIR:-/var/mount_point/nfv/contest_storage/yandex_profile}"
+CHROMIUM_START_URL="${CHROMIUM_START_URL:-https://disk.yandex.ru/}"
 
 # Binaries (assume installed)
 Xvfb_BIN="$(command -v Xvfb || true)"
@@ -131,7 +131,7 @@ stop_vnc_stack() {
   stop_by_pidfile "xvfb"
 
   # Extra safety cleanup (only for our profile)
-  pkill -f "${CHROMIUM_PROFILE}" 2>/dev/null || true
+  pkill -f "${YANDEX_PROFILE_DIR}" 2>/dev/null || true
 
   # Astra pkill supports one pattern per call
   pkill -x Xvfb 2>/dev/null || true
@@ -212,8 +212,9 @@ start_vnc_stack() {
   echo $! > "$(pidfile openbox)"
   sleep 0.2
 
-  # Start chromium (with dedicated profile)
-  mkdir -p "${CHROMIUM_PROFILE}" || true
+  # Start chromium (with dedicated persistent profile)
+  mkdir -p "${YANDEX_PROFILE_DIR}" || true
+  chmod 700 "${YANDEX_PROFILE_DIR}" || true
   nohup "${CHROMIUM_BIN}" \
     --no-sandbox \
     --no-first-run \
@@ -224,7 +225,7 @@ start_vnc_stack() {
     --disable-dev-shm-usage \
     --disable-software-rasterizer \
     --force-device-scale-factor=1.5 \
-    --user-data-dir="${CHROMIUM_PROFILE}" \
+    --user-data-dir="${YANDEX_PROFILE_DIR}" \
     >/var/log/contest_chromium.log 2>&1 &
   echo $! > "$(pidfile chromium)"
   sleep 0.4
