@@ -60,13 +60,14 @@
       <div class="row wrap">
         <input type="file" id="excelFile" accept=".xlsx,.xls" />
         <button id="uploadExcel" class="btn btn-secondary">Загрузить Excel</button>
-        <button id="connectYandex" class="btn btn-secondary">Подключить Яндекс</button>
+        <button id="connectYandex" class="btn btn-secondary">Подключить/Войти в Яндекс</button>
         <button id="openAdminLogin" class="btn btn-secondary hidden">Открыть вход администратора (VNC)</button>
         <button id="startDownload" class="btn btn-primary" disabled>Старт скачивания</button>
       </div>
       <p id="progress"></p>
-      <p id="yandexStatus">Яндекс: не подключен</p>
+      <p id="yandexStatus" class="status-badge status-badge--muted">Яндекс: не подключен</p>
       <p id="yandexHint"></p>
+      <p id="mappingAutofillInfo" class="mapping-autofill-info hidden"></p>
       <p id="previewError" class="preview-error hidden"></p>
       <div class="table-layout">
         <div class="table-scroll">
@@ -81,7 +82,10 @@
           <div id="mappingCompact" class="mapping-compact"></div>
           <div id="mappingExpanded" class="mapping-expanded hidden">
             <div id="mappingInfo" class="mapping-info"></div>
-            <button id="resetMapping" class="btn btn-secondary" type="button">Сбросить схему</button>
+            <div class="row">
+              <button id="rememberMapping" class="btn btn-primary" type="button">Запомнить схему</button>
+              <button id="resetMapping" class="btn btn-secondary" type="button">Сбросить схему</button>
+            </div>
             <p class="mapping-hint">Для скачивания обязательны: «Название номера», «ФИО участника(ов)», и «За кого оплата» (если указана квитанция).</p>
           </div>
         </aside>

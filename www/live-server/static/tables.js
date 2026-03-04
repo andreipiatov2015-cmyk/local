@@ -1,9 +1,9 @@
 let currentTableId = null;
 let lastVncUrl = null;
-let stickyNeedLogin = false;
 let currentMapping = {};
 let mappingFields = {};
 let currentHeaders = [];
+let currentYandexStatus = 'disconnected';
 let mappingPanelExpanded = false;
 
 const tableList = document.getElementById('tableList');
@@ -13,6 +13,7 @@ const yandexStatusEl = document.getElementById('yandexStatus');
 const startDownloadBtn = document.getElementById('startDownload');
 const openAdminLoginBtn = document.getElementById('openAdminLogin');
 const yandexHintEl = document.getElementById('yandexHint');
+const mappingAutofillInfoEl = document.getElementById('mappingAutofillInfo');
 const tableView = document.getElementById('tableView');
 const excelHead = document.getElementById('excelHead');
 const excelBody = document.getElementById('excelBody');
@@ -22,6 +23,7 @@ const mappingExpanded = document.getElementById('mappingExpanded');
 const mappingPanel = document.getElementById('mappingPanel');
 const toggleMappingPanelBtn = document.getElementById('toggleMappingPanel');
 const resetMappingBtn = document.getElementById('resetMapping');
+const rememberMappingBtn = document.getElementById('rememberMapping');
 const mappingDialog = document.getElementById('mappingDialog');
 const mappingDialogActions = document.getElementById('mappingDialogActions');
 const previewErrorEl = document.getElementById('previewError');
@@ -46,31 +48,41 @@ async function postForm(url, data) {
   return body;
 }
 
-function setYandexState(state, vncUrl = null) {
-  if (state === 'need_login') {
-    stickyNeedLogin = true;
-    yandexStatusEl.textContent = 'Требуется авторизация администратора';
-    yandexHintEl.textContent = 'Откройте вход администратора (VNC) и выполните вход в Яндекс.';
-    openAdminLoginBtn.classList.remove('hidden');
-    if (vncUrl) lastVncUrl = vncUrl;
-    return;
-  }
-  if (state === 'ok') {
-    stickyNeedLogin = false;
-    yandexStatusEl.textContent = '✅ Яндекс подключен';
+function setYandexState(status, errText = '', vncUrl = null) {
+  currentYandexStatus = status || 'disconnected';
+  yandexStatusEl.className = 'status-badge';
+
+  if (currentYandexStatus === 'connected') {
+    yandexStatusEl.classList.add('status-badge--ok');
+    yandexStatusEl.textContent = 'Яндекс подключен ✅';
     yandexHintEl.textContent = '';
     openAdminLoginBtn.classList.add('hidden');
     return;
   }
-  if (stickyNeedLogin) {
-    yandexStatusEl.textContent = 'Требуется авторизация администратора';
-    yandexHintEl.textContent = 'Откройте вход администратора (VNC) и выполните вход в Яндекс.';
+
+  if (currentYandexStatus === 'auth_required') {
+    yandexStatusEl.classList.add('status-badge--warn');
+    yandexStatusEl.textContent = 'Яндекс: требуется авторизация';
+    yandexHintEl.textContent = errText || 'Откройте вход администратора (VNC) и выполните вход в Яндекс.';
+    if (vncUrl) lastVncUrl = vncUrl;
     openAdminLoginBtn.classList.remove('hidden');
     return;
   }
+
+  yandexStatusEl.classList.add('status-badge--muted');
   yandexStatusEl.textContent = 'Яндекс: не подключен';
-  yandexHintEl.textContent = '';
+  yandexHintEl.textContent = errText || '';
   openAdminLoginBtn.classList.add('hidden');
+}
+
+function showAutofillInfo(text) {
+  if (!text) {
+    mappingAutofillInfoEl.textContent = '';
+    mappingAutofillInfoEl.classList.add('hidden');
+    return;
+  }
+  mappingAutofillInfoEl.textContent = text;
+  mappingAutofillInfoEl.classList.remove('hidden');
 }
 
 function mappingReverse() {
@@ -236,6 +248,7 @@ function openMappingDialog(colIndex) {
       if (assignedToAnother) delete currentMapping[field];
       currentMapping[field] = colIndex;
       await saveMapping();
+      showAutofillInfo('Схема обновлена вручную. Можно нажать «Запомнить схему».');
       mappingDialog.close();
     };
     mappingDialogActions.appendChild(btn);
@@ -249,6 +262,7 @@ function openMappingDialog(colIndex) {
       if (currentMapping[k] === colIndex) delete currentMapping[k];
     });
     await saveMapping();
+    showAutofillInfo('Схема обновлена вручную. Можно нажать «Запомнить схему».');
     mappingDialog.close();
   };
   mappingDialogActions.appendChild(clearBtn);
@@ -280,9 +294,7 @@ async function refreshTables() {
     const cur = tables.find((x) => x.id === currentTableId);
     if (cur) {
       progressEl.textContent = formatProgressText(cur);
-      if (cur.status === 'need_login') setYandexState('need_login', lastVncUrl);
-      else if (cur.yandex_connected) setYandexState('ok');
-      else setYandexState('idle');
+      setYandexState(cur.yandex_status || 'disconnected', cur.yandex_last_error || '', lastVncUrl);
     }
   }
 }
@@ -291,6 +303,7 @@ async function openTable(id, title) {
   currentTableId = id;
   tableTitle.textContent = `Таблица: ${title} (#${id})`;
   tableView.classList.remove('hidden');
+  showAutofillInfo('');
   await refreshMapping();
   await loadExcelPreview();
   await refreshTables();
@@ -308,6 +321,16 @@ function initTablesSection() {
     currentMapping = {};
     await saveMapping();
     await refreshMapping();
+    showAutofillInfo('Схема сброшена. Назначьте колонки и запомните схему заново.');
+  };
+
+  rememberMappingBtn.onclick = async () => {
+    if (!currentTableId) return alert('Сначала выберите таблицу');
+    const resp = await fetch(`/api/tables/${currentTableId}/mapping/remember`, { method: 'POST' });
+    if (requireAuth(resp)) return;
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) return alert(data.detail || 'Не удалось запомнить схему');
+    showAutofillInfo(`Схема сохранена. Запомнено полей: ${data.saved_fields}.`);
   };
 
   document.getElementById('createTable').onclick = async () => {
@@ -331,6 +354,12 @@ function initTablesSection() {
       return;
     }
     clearPreviewError();
+    if (data.mapping_autofilled) {
+      const sourceText = data.mapping_autofill_source === 'template' ? 'из сохранённого шаблона' : 'по памяти/эвристикам';
+      showAutofillInfo(`Сопоставление автозаполнено ${sourceText}. Проверьте и при необходимости скорректируйте.`);
+    } else {
+      showAutofillInfo('Автосопоставление не найдено. Назначьте колонки вручную.');
+    }
     await loadExcelPreview();
     await refreshMapping();
     await refreshTables();
@@ -340,9 +369,10 @@ function initTablesSection() {
     const resp = await fetch('/api/yandex/connect', { method: 'POST' });
     if (requireAuth(resp)) return;
     const data = await resp.json().catch(() => ({}));
-    if (data.status === 'ok') setYandexState('ok');
-    else if (data.status === 'need_login') setYandexState('need_login', data.vnc_url || null);
-    else setYandexState('idle');
+    if (data.status === 'ok') setYandexState('connected', '', null);
+    else if (data.status === 'need_login') setYandexState('auth_required', 'Откройте вход администратора (VNC) и выполните вход в Яндекс.', data.vnc_url || null);
+    else setYandexState('disconnected');
+    await refreshTables();
   };
 
   openAdminLoginBtn.onclick = async () => {
@@ -364,7 +394,7 @@ function initTablesSection() {
     const resp = await fetch(`/api/tables/${currentTableId}/start-download`, { method: 'POST' });
     const data = await resp.json().catch(() => ({}));
     if (resp.status === 400 && data.status === 'need_login') {
-      setYandexState('need_login', data.vnc_url || null);
+      setYandexState('auth_required', data.detail || '', data.vnc_url || null);
       return;
     }
     if (requireAuth(resp)) return;
@@ -375,6 +405,7 @@ function initTablesSection() {
 
   renderMappingPanel();
   refreshTables();
+  setYandexState('disconnected');
   setInterval(async () => {
     await refreshTables();
     await refreshMapping();
