@@ -4,17 +4,53 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Таблицы заявок конкурса</title>
+  <link rel="stylesheet" href="/static/admin.css" />
   <link rel="stylesheet" href="/static/tables.css" />
 </head>
 <body>
-  <main class="container">
-    <h1>Таблицы заявок конкурса</h1>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="logo">🎥 Live Admin</span>
+      <button id="collapseSidebar" aria-label="Свернуть меню">❮</button>
+    </div>
 
+    <nav class="sidebar-menu">
+      <a class="menu-item" href="/admin">
+        <span class="icon">✏️</span>
+        <span class="text">Редактор</span>
+      </a>
+      <a class="menu-item" href="/competition">
+        <span class="icon">🏆</span>
+        <span class="text">Конкурс</span>
+      </a>
+      <a class="menu-item" href="/broadcast">
+        <span class="icon">📺</span>
+        <span class="text">Трансляция</span>
+      </a>
+      <a class="menu-item" href="/staff">
+        <span class="icon">👥</span>
+        <span class="text">Сотрудники</span>
+      </a>
+      <a class="menu-item active" href="/tables">
+        <span class="icon">📋</span>
+        <span class="text">Таблицы заявок</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <a href="/logout" class="menu-item logout">
+        <span class="icon">🚪</span>
+        <span class="text">Выход</span>
+      </a>
+    </div>
+  </aside>
+
+  <main class="content tables-content">
     <section id="workspace" class="card">
-      <h2>Таблицы</h2>
+      <h1 class="page-title">Таблицы заявок конкурса</h1>
       <div class="row">
         <input id="newTitle" placeholder="Название таблицы" />
-        <button id="createTable">Создать</button>
+        <button id="createTable" class="btn btn-primary">Создать</button>
       </div>
       <ul id="tableList"></ul>
     </section>
@@ -23,14 +59,15 @@
       <h2 id="tableTitle">Таблица</h2>
       <div class="row wrap">
         <input type="file" id="excelFile" accept=".xlsx,.xls" />
-        <button id="uploadExcel">Загрузить Excel</button>
-        <button id="connectYandex">Подключить Яндекс</button>
-        <button id="openAdminLogin" class="hidden">Открыть вход администратора (VNC)</button>
-        <button id="startDownload" disabled>Старт скачивания</button>
+        <button id="uploadExcel" class="btn btn-secondary">Загрузить Excel</button>
+        <button id="connectYandex" class="btn btn-secondary">Подключить Яндекс</button>
+        <button id="openAdminLogin" class="btn btn-secondary hidden">Открыть вход администратора (VNC)</button>
+        <button id="startDownload" class="btn btn-primary" disabled>Старт скачивания</button>
       </div>
       <p id="progress"></p>
       <p id="yandexStatus">Яндекс: не подключен</p>
       <p id="yandexHint"></p>
+      <p id="previewError" class="preview-error hidden"></p>
       <div id="mappingInfo" class="mapping-info"></div>
       <div class="table-scroll">
         <table id="excelTable">
@@ -43,9 +80,11 @@
     <dialog id="mappingDialog">
       <h3>Назначение колонки</h3>
       <div id="mappingDialogActions" class="mapping-dialog-actions"></div>
-      <button id="closeMappingDialog">Закрыть</button>
+      <button id="closeMappingDialog" class="btn btn-secondary">Закрыть</button>
     </dialog>
   </main>
+
+  <script src="/static/layout.js"></script>
   <script src="/static/tables.js"></script>
 </body>
 </html>
