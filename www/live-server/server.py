@@ -58,20 +58,31 @@ APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", os.path.join(BASE_DIR, "app
 RETENTION_DAYS = 60
 MAX_TABLES_PER_USER = 10
 DOWNLOAD_RETRIES = 3
-MAX_FILENAME_LEN = 180
+MAX_FILENAME_LEN = 150
 YANDEX_VNC_URL = os.environ.get("YANDEX_VNC_URL", "/tables/yandex/vnc/vnc.html?autoconnect=1&resize=scale&show_dot=0")
 YANDEX_PROFILE_DIR = os.environ.get("YANDEX_PROFILE_DIR", "/var/mount_point/nfv/contest_storage/yandex_profile")
 YANDEX_FORMS_TEST_URL = (os.environ.get("YANDEX_FORMS_TEST_URL") or "").strip()
 
-TABLE_COLUMNS = {
-    "number_title": ["Название номера", "Номер", "Название"],
-    "fio": ["ФИО", "Участник", "Исполнитель"],
-    "team": ["Коллектив", "Команда", "Ансамбль"],
-    "audio_url": ["Фонограмма", "Фонограмма ссылка"],
-    "receipt_url": ["Квитанция", "Ссылка на квитанцию"],
-    "consent_url": ["Согласие", "Ссылка на согласие"],
-    "presentation_url": ["Презентация", "Ссылка на презентацию"],
+MAPPING_FIELDS = {
+    "municipality": "Муниципалитет",
+    "institution_full_name": "Полное название учреждения",
+    "head_fio": "ФИО руководителя",
+    "teacher_fio": "ФИО педагога",
+    "contacts": "Контактные данные",
+    "email": "Email",
+    "nomination": "Номинация",
+    "age_category": "Возрастная категория",
+    "studio_name": "Название студии",
+    "participants_count": "Количество участников",
+    "participant_fio": "ФИО участника(ов)",
+    "number_title": "Название номера",
+    "audio_url": "Фонограмма (скачивание)",
+    "equipment": "Необходимое оборудование",
+    "receipt_url": "Квитанция об оплате (скачивание)",
+    "receipt_payer": "За кого оплата (для имени квитанции)",
+    "presentation_url": "Презентация (скачивание)",
 }
+FILE_MAPPING_FIELDS = {"audio_url", "receipt_url", "presentation_url"}
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
@@ -213,6 +224,17 @@ def init_db():
             updated_at TEXT NOT NULL
         )
     """)
+
+    for stmt in [
+        "ALTER TABLE table_workspaces ADD COLUMN excel_headers_json TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN mapping_json TEXT",
+        "ALTER TABLE table_entries ADD COLUMN row_id INTEGER",
+        "ALTER TABLE table_entries ADD COLUMN row_data_json TEXT",
+    ]:
+        try:
+            cur.execute(stmt)
+        except sqlite3.OperationalError:
+            pass
 
     con.commit()
     con.close()
@@ -501,28 +523,18 @@ def sanitize_name(name):
 
 
 def table_user_from_request():
-    user_id = session.get("user_id")
+    user_id = request.cookies.get("tables_user_id") or session.get("user_id")
     if not user_id:
         return None
-    return query_db("SELECT id, email FROM users WHERE id=?", (user_id,), one=True)
+    user = query_db("SELECT id, email FROM users WHERE id=?", (user_id,), one=True)
+    if not user:
+        return None
+    session["user_id"] = user["id"]
+    return user
 
 
 def storage_for_table(user_id, table_id):
-    return os.path.join(STORAGE_ROOT, "users", f"user_{user_id}", "tables", f"table_{table_id}")
-
-
-def detect_columns(headers):
-    result = {k: None for k in TABLE_COLUMNS.keys()}
-    for idx, h in enumerate(headers):
-        h_norm = (h or "").strip().lower()
-        for key, aliases in TABLE_COLUMNS.items():
-            if result[key] is not None:
-                continue
-            for alias in aliases:
-                if h_norm == alias.strip().lower():
-                    result[key] = idx
-                    break
-    return result
+    return os.path.join(STORAGE_ROOT, "users", str(user_id), "tables", str(table_id))
 
 
 def get_cell(row, idx):
@@ -530,6 +542,54 @@ def get_cell(row, idx):
         return ""
     v = row[idx]
     return "" if v is None else str(v).strip()
+
+
+def normalize_mapping(mapping):
+    if not isinstance(mapping, dict):
+        return {}
+    normalized = {}
+    used_cols = set()
+    for field in MAPPING_FIELDS.keys():
+        val = mapping.get(field)
+        if isinstance(val, int) and val >= 0 and val not in used_cols:
+            normalized[field] = val
+            used_cols.add(val)
+    return normalized
+
+
+def table_required_mapping_status(mapping):
+    assigned_files = [f for f in FILE_MAPPING_FIELDS if f in mapping]
+    if not assigned_files:
+        return False, "Нужно назначить хотя бы один файловый столбец: фонограмма/квитанция/презентация"
+
+    needs = []
+    if "audio_url" in mapping or "presentation_url" in mapping:
+        if "number_title" not in mapping:
+            needs.append("Название номера")
+        if "participant_fio" not in mapping:
+            needs.append("ФИО участника(ов)")
+    if "receipt_url" in mapping and "receipt_payer" not in mapping:
+        needs.append("За кого оплата")
+
+    if needs:
+        return False, "Не назначены обязательные колонки: " + ", ".join(needs)
+    return True, "ok"
+
+
+def make_safe_basename(*parts, fallback="row"):
+    raw = " - ".join([str(x).strip() for x in parts if str(x).strip()])
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw).strip(" .")
+    if not cleaned:
+        cleaned = fallback
+    return cleaned[:MAX_FILENAME_LEN]
+
+
+def add_row_suffix_if_needed(base_name, row_id, used_names):
+    candidate = base_name
+    if candidate.lower() in used_names:
+        candidate = f"{base_name}-{row_id}"[:MAX_FILENAME_LEN]
+    used_names.add(candidate.lower())
+    return candidate
 
 
 class YandexAuthRequiredError(RuntimeError):
@@ -568,9 +628,18 @@ def process_table_download(table_id, user_id):
     t = query_db("SELECT * FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user_id), one=True)
     if not t:
         return
+
+    mapping = normalize_mapping(json.loads(t["mapping_json"] or "{}"))
+    ok_to_run, reason = table_required_mapping_status(mapping)
+    if not ok_to_run:
+        query_db("UPDATE table_workspaces SET status='error', updated_at=?, yandex_session_json=? WHERE id=?", (now_iso(), json.dumps({"error": reason}, ensure_ascii=False), table_id))
+        return
+
     query_db("UPDATE table_workspaces SET status='processing', progress=1, updated_at=? WHERE id=?", (now_iso(), table_id))
     base = storage_for_table(user_id, table_id)
-    excel_path = os.path.join(base, "meta", "excel_original.xlsx")
+    excel_path = os.path.join(base, "meta", "original.xlsx")
+    if not os.path.exists(excel_path):
+        excel_path = os.path.join(base, "meta", "excel_original.xlsx")
     if not os.path.exists(excel_path) or openpyxl is None:
         query_db("UPDATE table_workspaces SET status='error', updated_at=? WHERE id=?", (now_iso(), table_id))
         return
@@ -582,8 +651,6 @@ def process_table_download(table_id, user_id):
         query_db("UPDATE table_workspaces SET status='done', progress=100, updated_at=? WHERE id=?", (now_iso(), table_id))
         return
 
-    headers = [str(x).strip() if x is not None else "" for x in rows[0]]
-    col = detect_columns(headers)
     data_rows = rows[1:]
 
     try:
@@ -606,50 +673,95 @@ def process_table_download(table_id, user_id):
     req_session = requests.Session()
     apply_cookies_to_requests_session(req_session, cookies)
 
+    for folder in ["phonograms", "receipts", "presentations", "meta"]:
+        os.makedirs(os.path.join(base, folder), exist_ok=True)
+
+    query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
+
     total = max(len(data_rows), 1)
+    used_names = {"phonograms": set(), "receipts": set(), "presentations": set()}
     for i, row in enumerate(data_rows, start=1):
-        number_title = get_cell(row, col["number_title"])
-        fio = get_cell(row, col["fio"])
-        team = get_cell(row, col["team"])
-        unique_key = f"{number_title}|{fio}|{team}"
+        row_id = i + 1
+        row_values = ["" if x is None else str(x).strip() for x in row]
+        row_data = {str(idx): val for idx, val in enumerate(row_values)}
 
-        exists = query_db("SELECT id FROM table_entries WHERE table_id=? AND unique_key=?", (table_id, unique_key), one=True)
-        if exists:
-            continue
+        number_title = get_cell(row_values, mapping.get("number_title"))
+        fio = get_cell(row_values, mapping.get("participant_fio"))
+        team = get_cell(row_values, mapping.get("studio_name"))
+        unique_key = f"{row_id}|{number_title}|{fio}"
 
-        created_at = now_iso()
         query_db(
             """
-            INSERT INTO table_entries (table_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, '', '', '', '', '', ?, ?)
             """,
             (
                 table_id,
+                row_id,
                 number_title,
                 fio,
                 team,
                 unique_key,
-                get_cell(row, col["audio_url"]),
-                get_cell(row, col["receipt_url"]),
-                get_cell(row, col["consent_url"]),
-                get_cell(row, col["presentation_url"]),
-                created_at,
+                get_cell(row_values, mapping.get("audio_url")),
+                get_cell(row_values, mapping.get("receipt_url")),
+                get_cell(row_values, mapping.get("presentation_url")),
+                json.dumps(row_data, ensure_ascii=False),
+                now_iso(),
             ),
         )
         entry_id = query_db("SELECT last_insert_rowid() AS id", one=True)["id"]
-        entry_dir = os.path.join(base, "entries", f"entry_{entry_id}")
-        os.makedirs(entry_dir, exist_ok=True)
-        base_name = sanitize_name(f"{fio} — {number_title}") or f"entry_{entry_id}"
 
-        audio_url = get_cell(row, col["audio_url"])
         audio_local = ""
-        if audio_url:
-            ext = extension_from_url(audio_url, "mp3")
-            audio_name = f"{base_name}.{ext}"
-            audio_path = os.path.join(entry_dir, audio_name)
+        receipt_local = ""
+        presentation_local = ""
+
+        audio_url = get_cell(row_values, mapping.get("audio_url"))
+        if "audio_url" in mapping:
+            phonogram_base = add_row_suffix_if_needed(
+                make_safe_basename(number_title, fio, fallback=f"phonogram-{row_id}"),
+                row_id,
+                used_names["phonograms"],
+            )
+            if audio_url:
+                ext = extension_from_url(audio_url, "mp3")
+                audio_name = f"{phonogram_base}.{ext}"
+                audio_path = os.path.join(base, "phonograms", audio_name)
+                try:
+                    download_with_retries(req_session, audio_url, audio_path)
+                    audio_local = os.path.join("phonograms", audio_name)
+                except YandexAuthRequiredError:
+                    query_db(
+                        "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
+                        (now_iso(), json.dumps({"error": "Нужен вход администратора в Яндекс."}, ensure_ascii=False), table_id),
+                    )
+                    return
+                except Exception:
+                    placeholder_name = f"{phonogram_base}.txt"
+                    miss_path = os.path.join(base, "phonograms", placeholder_name)
+                    with open(miss_path, "w", encoding="utf-8") as f:
+                        f.write("Не удалось скачать фонограмму")
+                    audio_local = os.path.join("phonograms", placeholder_name)
+            else:
+                placeholder_name = f"{phonogram_base}.txt"
+                miss_path = os.path.join(base, "phonograms", placeholder_name)
+                with open(miss_path, "w", encoding="utf-8") as f:
+                    f.write("Фонограмма не предоставлена")
+                audio_local = os.path.join("phonograms", placeholder_name)
+
+        receipt_url = get_cell(row_values, mapping.get("receipt_url"))
+        if receipt_url:
+            payer = get_cell(row_values, mapping.get("receipt_payer"))
+            receipt_base = add_row_suffix_if_needed(
+                make_safe_basename(payer, fallback=f"receipt-{row_id}"),
+                row_id,
+                used_names["receipts"],
+            )
+            ext = extension_from_url(receipt_url, "pdf")
+            receipt_name = f"{receipt_base}.{ext}"
+            receipt_path = os.path.join(base, "receipts", receipt_name)
             try:
-                download_with_retries(req_session, audio_url, audio_path)
-                audio_local = audio_name
+                download_with_retries(req_session, receipt_url, receipt_path)
+                receipt_local = os.path.join("receipts", receipt_name)
             except YandexAuthRequiredError:
                 query_db(
                     "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
@@ -657,32 +769,21 @@ def process_table_download(table_id, user_id):
                 )
                 return
             except Exception:
-                fail = os.path.join(entry_dir, "audio.txt")
-                with open(fail, "w", encoding="utf-8") as f:
-                    f.write("Не удалось скачать фонограмму")
-                audio_local = "audio.txt"
-        else:
-            miss = os.path.join(entry_dir, "audio.txt")
-            with open(miss, "w", encoding="utf-8") as f:
-                f.write("Фонограмма не предоставлена")
-            audio_local = "audio.txt"
+                pass
 
-        field_map = [
-            ("receipt", get_cell(row, col["receipt_url"])),
-            ("consent", get_cell(row, col["consent_url"])),
-            ("presentation", get_cell(row, col["presentation_url"])),
-        ]
-        local_values = {"receipt": "", "consent": "", "presentation": ""}
-
-        for ftype, furl in field_map:
-            if not furl:
-                continue
-            ext = extension_from_url(furl)
-            filename = f"{base_name}.{ext}"
-            out_path = os.path.join(entry_dir, filename)
+        presentation_url = get_cell(row_values, mapping.get("presentation_url"))
+        if presentation_url:
+            presentation_base = add_row_suffix_if_needed(
+                make_safe_basename(number_title, fio, fallback=f"presentation-{row_id}"),
+                row_id,
+                used_names["presentations"],
+            )
+            ext = extension_from_url(presentation_url, "bin")
+            presentation_name = f"{presentation_base}.{ext}"
+            presentation_path = os.path.join(base, "presentations", presentation_name)
             try:
-                download_with_retries(req_session, furl, out_path)
-                local_values[ftype] = filename
+                download_with_retries(req_session, presentation_url, presentation_path)
+                presentation_local = os.path.join("presentations", presentation_name)
             except YandexAuthRequiredError:
                 query_db(
                     "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
@@ -693,14 +794,14 @@ def process_table_download(table_id, user_id):
                 pass
 
         query_db(
-            "UPDATE table_entries SET audio_local=?, receipt_local=?, consent_local=?, presentation_local=? WHERE id=?",
-            (audio_local, local_values["receipt"], local_values["consent"], local_values["presentation"], entry_id),
+            "UPDATE table_entries SET audio_local=?, receipt_local=?, presentation_local=? WHERE id=?",
+            (audio_local, receipt_local, presentation_local, entry_id),
         )
+
         progress = int((i / total) * 100)
         query_db("UPDATE table_workspaces SET progress=?, updated_at=? WHERE id=?", (progress, now_iso(), table_id))
 
     query_db("UPDATE table_workspaces SET status='done', progress=100, updated_at=? WHERE id=?", (now_iso(), table_id))
-
 
 def cleanup_old_tables():
     while True:
@@ -761,12 +862,19 @@ def tables_verify_code():
     user = query_db("SELECT id FROM users WHERE email=?", (email,), one=True)
     if not user:
         salt = "tables"
+        base_username = (email.split("@")[0] or "tables_user").strip()
+        username = base_username
+        suffix = 1
+        while query_db("SELECT id FROM users WHERE username=?", (username,), one=True):
+            suffix += 1
+            username = f"{base_username}_{suffix}"
         query_db(
             "INSERT INTO users (username, email, password_hash, password_salt, role, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, 'viewer', 1, ?, ?)",
-            (email.split("@")[0], email, salt, salt, now_iso(), now_iso()),
+            (username, email, salt, salt, now_iso(), now_iso()),
         )
         user = query_db("SELECT id FROM users WHERE email=?", (email,), one=True)
 
+    session["user_id"] = user["id"]
     resp = make_response(jsonify({"status": "ok", "user_id": user["id"]}))
     resp.set_cookie("tables_user_id", str(user["id"]), httponly=True, max_age=30 * 24 * 3600)
     return resp
@@ -777,12 +885,13 @@ def list_tables():
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    rows = query_db("SELECT id, title, status, progress, created_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC", (user["id"],))
+    rows = query_db("SELECT id, title, status, progress, created_at, mapping_json FROM table_workspaces WHERE user_id=? ORDER BY id DESC", (user["id"],))
     connected = has_global_yandex_session()
     result = []
     for r in rows:
         item = dict(r)
         item["yandex_connected"] = connected
+        item["mapping"] = normalize_mapping(json.loads(item.get("mapping_json") or "{}"))
         result.append(item)
     return jsonify(result)
 
@@ -963,11 +1072,61 @@ def upload_excel(table_id):
     if not excel:
         return jsonify({"detail": "Файл excel обязателен"}), 400
 
-    dst = os.path.join(storage_for_table(user["id"], table_id), "meta")
+    base = storage_for_table(user["id"], table_id)
+    dst = os.path.join(base, "meta")
     os.makedirs(dst, exist_ok=True)
-    excel.save(os.path.join(dst, "excel_original.xlsx"))
-    query_db("UPDATE table_workspaces SET updated_at=? WHERE id=?", (now_iso(), table_id))
-    return jsonify({"status": "ok"})
+    for folder in ["phonograms", "receipts", "presentations"]:
+        os.makedirs(os.path.join(base, folder), exist_ok=True)
+
+    xlsx_path = os.path.join(dst, "original.xlsx")
+    excel.save(xlsx_path)
+    excel.stream.seek(0)
+
+    headers = []
+    rows_payload = []
+    if openpyxl is not None:
+        wb = openpyxl.load_workbook(xlsx_path)
+        ws = wb.active
+        rows = list(ws.values)
+        if rows:
+            headers = ["" if x is None else str(x).strip() for x in rows[0]]
+            for idx, row in enumerate(rows[1:], start=2):
+                vals = ["" if x is None else str(x).strip() for x in row]
+                row_data = {str(i): v for i, v in enumerate(vals)}
+                rows_payload.append((
+                    table_id,
+                    idx,
+                    "",
+                    "",
+                    "",
+                    f"{idx}",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    json.dumps(row_data, ensure_ascii=False),
+                    now_iso(),
+                ))
+
+    query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
+    for payload in rows_payload:
+        query_db(
+            """
+            INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            payload,
+        )
+
+    query_db(
+        "UPDATE table_workspaces SET excel_headers_json=?, status='new', progress=0, updated_at=? WHERE id=?",
+        (json.dumps(headers, ensure_ascii=False), now_iso(), table_id),
+    )
+    return jsonify({"status": "ok", "headers": headers, "rows": len(rows_payload)})
 
 
 @app.route("/api/tables/<int:table_id>/connect-yandex", methods=["POST"])
@@ -982,6 +1141,51 @@ def connect_yandex(table_id):
     return jsonify({"status": "need_login", "vnc_url": YANDEX_VNC_URL})
 
 
+@app.route("/api/tables/<int:table_id>/excel-data", methods=["GET"])
+def table_excel_data(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id, excel_headers_json FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    headers = json.loads(table["excel_headers_json"] or "[]")
+    rows = query_db("SELECT row_id, row_data_json FROM table_entries WHERE table_id=? ORDER BY row_id", (table_id,))
+    payload = []
+    for r in rows:
+        payload.append({"row_id": r["row_id"], "row_data": json.loads(r["row_data_json"] or "{}")})
+    return jsonify({"headers": headers, "rows": payload, "mapping_fields": MAPPING_FIELDS})
+
+
+@app.route("/api/tables/<int:table_id>/mapping", methods=["GET"])
+def get_table_mapping(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id, mapping_json FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    mapping = normalize_mapping(json.loads(table["mapping_json"] or "{}"))
+    can_start, reason = table_required_mapping_status(mapping)
+    return jsonify({"mapping": mapping, "can_start": can_start, "reason": reason, "mapping_fields": MAPPING_FIELDS})
+
+
+@app.route("/api/tables/<int:table_id>/mapping", methods=["POST"])
+def set_table_mapping(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    mapping = normalize_mapping(payload.get("mapping") if isinstance(payload, dict) else payload)
+    query_db("UPDATE table_workspaces SET mapping_json=?, updated_at=? WHERE id=?", (json.dumps(mapping, ensure_ascii=False), now_iso(), table_id))
+    can_start, reason = table_required_mapping_status(mapping)
+    return jsonify({"status": "ok", "mapping": mapping, "can_start": can_start, "reason": reason})
+
+
 @app.route("/api/tables/<int:table_id>/start-download", methods=["POST"])
 def start_download(table_id):
     user = table_user_from_request()
@@ -990,8 +1194,14 @@ def start_download(table_id):
     t = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
     if not t:
         return jsonify({"detail": "Таблица не найдена"}), 404
+    full_table = query_db("SELECT mapping_json FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    mapping = normalize_mapping(json.loads(full_table["mapping_json"] or "{}"))
+    can_start, reason = table_required_mapping_status(mapping)
+    if not can_start:
+        return jsonify({"detail": reason}), 400
     if not has_global_yandex_session():
-        return jsonify({"detail": "Нужен вход администратора в Яндекс"}), 400
+        query_db("UPDATE table_workspaces SET status='need_login', updated_at=? WHERE id=?", (now_iso(), table_id))
+        return jsonify({"status": "need_login", "detail": "Нужен вход администратора в Яндекс", "vnc_url": YANDEX_VNC_URL}), 400
     threading.Thread(target=process_table_download, args=(table_id, user["id"]), daemon=True).start()
     return jsonify({"status": "started"})
 
@@ -1017,7 +1227,7 @@ def resolve_file(entry_id, ftype):
     if col not in e.keys() or not e[col]:
         return None, (jsonify({"detail": "Файл не найден"}), 404)
 
-    p = os.path.join(storage_for_table(e["user_id"], e["table_id"]), "entries", f"entry_{entry_id}", e[col])
+    p = os.path.join(storage_for_table(e["user_id"], e["table_id"]), e[col])
     if not os.path.exists(p):
         return None, (jsonify({"detail": "Файл отсутствует"}), 404)
     return p, None
