@@ -84,6 +84,16 @@ MAPPING_FIELDS = {
     "presentation_url": "Презентация (скачивание)",
 }
 FILE_MAPPING_FIELDS = {"audio_url", "receipt_url", "presentation_url"}
+MAPPING_PRESET_FALLBACKS = [
+    ("nomination", ["номинац"]),
+    ("audio_url", ["фонограм"]),
+    ("receipt_url", ["квитанц", "оплат"]),
+    ("receipt_payer", ["квитанц", "оплат"]),
+    ("presentation_url", ["презентац"]),
+    ("participant_fio", ["участник", "фио"]),
+    ("studio_name", ["коллектив", "студия"]),
+    ("equipment", ["оборудован"]),
+]
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
@@ -192,7 +202,34 @@ def init_db():
             last_error TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            yandex_session_json TEXT
+            yandex_session_json TEXT,
+            yandex_status TEXT NOT NULL DEFAULT 'disconnected',
+            yandex_last_error TEXT,
+            yandex_last_checked_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS user_mapping_presets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            label TEXT NOT NULL,
+            pattern TEXT NOT NULL,
+            match_type TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 100,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, label, pattern, match_type)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS mapping_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            signature TEXT NOT NULL,
+            mapping_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, signature)
         )
     """)
 
@@ -238,6 +275,9 @@ def init_db():
         "ALTER TABLE table_workspaces ADD COLUMN total_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE table_workspaces ADD COLUMN processed_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE table_workspaces ADD COLUMN last_error TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN yandex_status TEXT NOT NULL DEFAULT 'disconnected'",
+        "ALTER TABLE table_workspaces ADD COLUMN yandex_last_error TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN yandex_last_checked_at TEXT",
         "ALTER TABLE table_entries ADD COLUMN row_id INTEGER",
         "ALTER TABLE table_entries ADD COLUMN row_data_json TEXT",
     ]:
@@ -600,6 +640,117 @@ def normalize_mapping(mapping):
     return normalized
 
 
+def normalize_header_text(value):
+    text = str(value or "").strip().lower().replace("ё", "е")
+    text = re.sub(r"[^\w\s]+", " ", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def mapping_signature(headers):
+    normalized = [normalize_header_text(h) for h in (headers or [])]
+    return hashlib.sha256("|".join(normalized).encode("utf-8")).hexdigest()
+
+
+def apply_mapping_templates_and_presets(user_id, headers):
+    normalized_headers = [normalize_header_text(h) for h in headers]
+    signature = mapping_signature(headers)
+
+    template = query_db(
+        "SELECT mapping_json FROM mapping_templates WHERE user_id=? AND signature=?",
+        (user_id, signature),
+        one=True,
+    )
+    if template:
+        mapping = normalize_mapping(json.loads(template["mapping_json"] or "{}"))
+        return mapping, signature, "template"
+
+    mapping = {}
+    used_cols = set()
+    presets = query_db(
+        """
+        SELECT label, pattern, match_type
+        FROM user_mapping_presets
+        WHERE user_id=?
+        ORDER BY
+            CASE match_type WHEN 'exact' THEN 0 ELSE 1 END,
+            priority ASC,
+            updated_at DESC,
+            id DESC
+        """,
+        (user_id,),
+    )
+
+    def assign_column(label, idx):
+        if label in mapping or idx in used_cols or label not in MAPPING_FIELDS:
+            return
+        mapping[label] = idx
+        used_cols.add(idx)
+
+    for preset in presets:
+        label = (preset["label"] or "").strip()
+        pattern = normalize_header_text(preset["pattern"])
+        match_type = (preset["match_type"] or "").strip().lower()
+        if not label or not pattern or label in mapping:
+            continue
+        for idx, header in enumerate(normalized_headers):
+            if idx in used_cols:
+                continue
+            if match_type == "exact" and header == pattern:
+                assign_column(label, idx)
+                break
+            if match_type == "contains" and pattern in header:
+                assign_column(label, idx)
+                break
+
+    for label, tokens in MAPPING_PRESET_FALLBACKS:
+        if label in mapping:
+            continue
+        for idx, header in enumerate(normalized_headers):
+            if idx in used_cols:
+                continue
+            if any(token in header for token in tokens):
+                assign_column(label, idx)
+                break
+
+    return normalize_mapping(mapping), signature, "presets_or_fallback"
+
+
+def save_mapping_template(user_id, signature, mapping):
+    ts = now_iso()
+    query_db(
+        """
+        INSERT INTO mapping_templates (user_id, signature, mapping_json, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, signature)
+        DO UPDATE SET mapping_json=excluded.mapping_json, updated_at=excluded.updated_at
+        """,
+        (user_id, signature, json.dumps(normalize_mapping(mapping), ensure_ascii=False), ts),
+    )
+
+
+def upsert_mapping_preset(user_id, label, pattern, match_type, priority=100):
+    if not pattern or label not in MAPPING_FIELDS:
+        return
+    ts = now_iso()
+    query_db(
+        """
+        INSERT INTO user_mapping_presets (user_id, label, pattern, match_type, priority, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, label, pattern, match_type)
+        DO UPDATE SET priority=excluded.priority, updated_at=excluded.updated_at
+        """,
+        (user_id, label, pattern, match_type, priority, ts),
+    )
+
+
+def update_table_yandex_status(table_id, status, error_text=None):
+    query_db(
+        "UPDATE table_workspaces SET yandex_status=?, yandex_last_error=?, yandex_last_checked_at=?, updated_at=? WHERE id=?",
+        (status, (error_text or "")[:300] or None, now_iso(), now_iso(), table_id),
+    )
+
+
 def table_required_mapping_status(mapping):
     assigned_files = [f for f in FILE_MAPPING_FIELDS if f in mapping]
     if not assigned_files:
@@ -717,20 +868,23 @@ def process_table_download(table_id, user_id):
 
         try:
             cookies = read_yandex_cookies_from_chromium_profile()
-        except Exception:
+        except Exception as exc:
+            update_table_yandex_status(table_id, "auth_required", short_error_message(exc, "Нужен вход администратора в Яндекс."))
             query_db(
                 "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
                 ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
             )
             return
 
-        access_ok, _ = check_yandex_auth(cookies)
+        access_ok, final_url = check_yandex_auth(cookies)
         if not access_ok:
+            update_table_yandex_status(table_id, "auth_required", f"Нужен вход администратора в Яндекс: {final_url}")
             query_db(
                 "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
                 ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
             )
             return
+        update_table_yandex_status(table_id, "connected", None)
 
         req_session = requests.Session()
         apply_cookies_to_requests_session(req_session, cookies)
@@ -801,6 +955,7 @@ def process_table_download(table_id, user_id):
                         download_with_retries(req_session, audio_url, audio_path)
                         audio_local = os.path.join("phonograms", audio_name)
                     except YandexAuthRequiredError:
+                        update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
                         query_db(
                             "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
                             ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
@@ -834,6 +989,7 @@ def process_table_download(table_id, user_id):
                     download_with_retries(req_session, receipt_url, receipt_path)
                     receipt_local = os.path.join("receipts", receipt_name)
                 except YandexAuthRequiredError:
+                    update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
                     query_db(
                         "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
                         ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
@@ -856,6 +1012,7 @@ def process_table_download(table_id, user_id):
                     download_with_retries(req_session, presentation_url, presentation_path)
                     presentation_local = os.path.join("presentations", presentation_name)
                 except YandexAuthRequiredError:
+                    update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
                     query_db(
                         "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
                         ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
@@ -970,12 +1127,14 @@ def list_tables():
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    rows = query_db("SELECT id, title, status, total_count, processed_count, progress, last_error, created_at, mapping_json FROM table_workspaces WHERE user_id=? ORDER BY id DESC", (user["id"],))
-    connected = has_global_yandex_session()
+    rows = query_db(
+        "SELECT id, title, status, total_count, processed_count, progress, last_error, created_at, mapping_json, yandex_status, yandex_last_error, yandex_last_checked_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC",
+        (user["id"],),
+    )
     result = []
     for r in rows:
         item = dict(r)
-        item["yandex_connected"] = connected
+        item["yandex_status"] = item.get("yandex_status") or "disconnected"
         item["mapping"] = normalize_mapping(json.loads(item.get("mapping_json") or "{}"))
         result.append(item)
     return jsonify(result)
@@ -994,8 +1153,8 @@ def create_table():
         return jsonify({"detail": "Достигнут лимит 10 таблиц"}), 400
     ts = now_iso()
     query_db(
-        "INSERT INTO table_workspaces (user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-        (user["id"], title, ts, ts),
+        "INSERT INTO table_workspaces (user_id, title, created_at, updated_at, yandex_status, yandex_last_checked_at) VALUES (?, ?, ?, ?, 'disconnected', ?)",
+        (user["id"], title, ts, ts, ts),
     )
     return jsonify({"status": "ok"})
 
@@ -1108,6 +1267,10 @@ def yandex_connect():
         cookies = read_yandex_cookies_from_chromium_profile()
     except Exception as exc:
         app.logger.info("[yandex_connect] profile_read_failed error=%s", str(exc))
+        query_db(
+            "UPDATE table_workspaces SET yandex_status='auth_required', yandex_last_error=?, yandex_last_checked_at=?, updated_at=? WHERE user_id=?",
+            (short_error_message(exc, "Нужна авторизация в Яндекс"), now_iso(), now_iso(), user["id"]),
+        )
         return jsonify({"status": "need_login", "vnc_url": YANDEX_VNC_URL})
 
     domains = yandex_cookie_domains(cookies)
@@ -1116,7 +1279,16 @@ def yandex_connect():
     access_ok, final_url = check_yandex_auth(cookies)
     if not access_ok:
         app.logger.info("[yandex_connect] need_login final_url=%s", final_url)
+        query_db(
+            "UPDATE table_workspaces SET yandex_status='auth_required', yandex_last_error=?, yandex_last_checked_at=?, updated_at=? WHERE user_id=?",
+            (f"Нужна повторная авторизация: {final_url}", now_iso(), now_iso(), user["id"]),
+        )
         return jsonify({"status": "need_login", "vnc_url": YANDEX_VNC_URL})
+
+    query_db(
+        "UPDATE table_workspaces SET yandex_status='connected', yandex_last_error=NULL, yandex_last_checked_at=?, updated_at=? WHERE user_id=?",
+        (now_iso(), now_iso(), user["id"]),
+    )
 
     return jsonify({"status": "ok"})
 
@@ -1176,6 +1348,8 @@ def upload_excel(table_id):
         )
         return jsonify({"detail": f"Excel не распознан: {str(exc)}"}), 400
 
+    auto_mapping, signature, auto_source = apply_mapping_templates_and_presets(user["id"], headers)
+
     query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
 
     for idx, row in enumerate(preview_rows, start=2):
@@ -1210,12 +1384,13 @@ def upload_excel(table_id):
             raise
 
     query_db(
-        "UPDATE table_workspaces SET excel_headers_json=?, excel_preview_rows_json=?, excel_total_rows=?, excel_sheet_name=?, status='excel_loaded', progress=100, updated_at=? WHERE id=?",
+        "UPDATE table_workspaces SET excel_headers_json=?, excel_preview_rows_json=?, excel_total_rows=?, excel_sheet_name=?, mapping_json=?, status='excel_loaded', progress=100, updated_at=? WHERE id=?",
         (
             json.dumps(headers, ensure_ascii=False),
             json.dumps(preview_rows, ensure_ascii=False),
             total_rows,
             sheet_name,
+            json.dumps(auto_mapping, ensure_ascii=False),
             now_iso(),
             table_id,
         ),
@@ -1230,6 +1405,8 @@ def upload_excel(table_id):
         total_rows,
     )
 
+    can_start, reason = table_required_mapping_status(auto_mapping)
+
     return jsonify(
         {
             "status": "ok",
@@ -1238,6 +1415,12 @@ def upload_excel(table_id):
             "rows": preview_rows,
             "total_rows": total_rows,
             "sheet": sheet_name,
+            "mapping": auto_mapping,
+            "mapping_signature": signature,
+            "mapping_autofilled": bool(auto_mapping),
+            "mapping_autofill_source": auto_source,
+            "can_start": can_start,
+            "reason": reason,
         }
     )
 
@@ -1257,7 +1440,13 @@ def table_excel_preview(table_id):
     headers = json.loads(table["excel_headers_json"] or "[]")
     rows = json.loads(table["excel_preview_rows_json"] or "[]")
     total_rows = int(table["excel_total_rows"] or 0)
-    return jsonify({"headers": headers, "rows": rows, "total_rows": total_rows, "mapping_fields": MAPPING_FIELDS})
+    return jsonify({
+        "headers": headers,
+        "rows": rows,
+        "total_rows": total_rows,
+        "mapping_fields": MAPPING_FIELDS,
+        "mapping_signature": mapping_signature(headers),
+    })
 
 
 @app.route("/api/tables/<int:table_id>/excel-data", methods=["GET"])
@@ -1270,12 +1459,19 @@ def get_table_mapping(table_id):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    table = query_db("SELECT id, mapping_json FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    table = query_db("SELECT id, mapping_json, excel_headers_json FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
     mapping = normalize_mapping(json.loads(table["mapping_json"] or "{}"))
+    headers = json.loads(table["excel_headers_json"] or "[]")
     can_start, reason = table_required_mapping_status(mapping)
-    return jsonify({"mapping": mapping, "can_start": can_start, "reason": reason, "mapping_fields": MAPPING_FIELDS})
+    return jsonify({
+        "mapping": mapping,
+        "can_start": can_start,
+        "reason": reason,
+        "mapping_fields": MAPPING_FIELDS,
+        "mapping_signature": mapping_signature(headers),
+    })
 
 
 @app.route("/api/tables/<int:table_id>/mapping", methods=["POST"])
@@ -1294,6 +1490,40 @@ def set_table_mapping(table_id):
     return jsonify({"status": "ok", "mapping": mapping, "can_start": can_start, "reason": reason})
 
 
+@app.route("/api/tables/<int:table_id>/mapping/remember", methods=["POST"])
+def remember_table_mapping(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+
+    table = query_db(
+        "SELECT id, excel_headers_json, mapping_json FROM table_workspaces WHERE id=? AND user_id=?",
+        (table_id, user["id"]),
+        one=True,
+    )
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    headers = json.loads(table["excel_headers_json"] or "[]")
+    if not headers:
+        return jsonify({"detail": "Сначала загрузите Excel"}), 400
+
+    mapping = normalize_mapping(json.loads(table["mapping_json"] or "{}"))
+    if not mapping:
+        return jsonify({"detail": "Сначала назначьте хотя бы одну колонку"}), 400
+
+    signature = mapping_signature(headers)
+    save_mapping_template(user["id"], signature, mapping)
+
+    for label, idx in mapping.items():
+        if idx is None or idx < 0 or idx >= len(headers):
+            continue
+        header_norm = normalize_header_text(headers[idx])
+        upsert_mapping_preset(user["id"], label, header_norm, "exact", priority=10)
+
+    return jsonify({"status": "ok", "signature": signature, "saved_fields": len(mapping)})
+
+
 @app.route("/api/tables/<int:table_id>/start-download", methods=["POST"])
 def start_download(table_id):
     user = table_user_from_request()
@@ -1308,8 +1538,10 @@ def start_download(table_id):
     if not can_start:
         return jsonify({"detail": reason}), 400
     if not has_global_yandex_session():
+        update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс")
         query_db("UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?", ("Нужен вход администратора в Яндекс", now_iso(), table_id))
         return jsonify({"status": "need_login", "detail": "Нужен вход администратора в Яндекс", "vnc_url": YANDEX_VNC_URL}), 400
+    update_table_yandex_status(table_id, "connected", None)
     total_rows = int(query_db("SELECT excel_total_rows FROM table_workspaces WHERE id=?", (table_id,), one=True)["excel_total_rows"] or 0)
     query_db("UPDATE table_workspaces SET status='queued', total_count=?, processed_count=0, progress=0, last_error=NULL, updated_at=? WHERE id=?", (total_rows, now_iso(), table_id))
     threading.Thread(target=process_table_download, args=(table_id, user["id"]), daemon=True).start()

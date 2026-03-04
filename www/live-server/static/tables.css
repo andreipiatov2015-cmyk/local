@@ -91,6 +91,24 @@ th.mapped { background: #dbeafe; }
 .mapping-choice small { color: #334155; }
 .mapping-choice.is-occupied { border-color: #f59e0b; background: #fffbeb; }
 .preview-error { color: #dc2626; font-weight: 600; }
+.mapping-autofill-info {
+  margin: 8px 0;
+  font-size: 14px;
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.status-badge--ok { background: #dcfce7; color: #166534; }
+.status-badge--warn { background: #fff7ed; color: #9a3412; }
+.status-badge--muted { background: #f1f5f9; color: #334155; }
 
 @media (max-width: 1080px) {
   .table-layout { grid-template-columns: 1fr; }
