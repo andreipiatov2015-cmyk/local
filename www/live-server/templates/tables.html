@@ -68,12 +68,23 @@
       <p id="yandexStatus">Яндекс: не подключен</p>
       <p id="yandexHint"></p>
       <p id="previewError" class="preview-error hidden"></p>
-      <div id="mappingInfo" class="mapping-info"></div>
-      <div class="table-scroll">
-        <table id="excelTable">
-          <thead id="excelHead"></thead>
-          <tbody id="excelBody"></tbody>
-        </table>
+      <div class="table-layout">
+        <div class="table-scroll">
+          <table id="excelTable">
+            <thead id="excelHead"></thead>
+            <tbody id="excelBody"></tbody>
+          </table>
+        </div>
+
+        <aside id="mappingPanel" class="mapping-panel is-collapsed">
+          <button id="toggleMappingPanel" class="mapping-panel-toggle" type="button">Схема колонок</button>
+          <div id="mappingCompact" class="mapping-compact"></div>
+          <div id="mappingExpanded" class="mapping-expanded hidden">
+            <div id="mappingInfo" class="mapping-info"></div>
+            <button id="resetMapping" class="btn btn-secondary" type="button">Сбросить схему</button>
+            <p class="mapping-hint">Для скачивания обязательны: «Название номера», «ФИО участника(ов)», и «За кого оплата» (если указана квитанция).</p>
+          </div>
+        </aside>
       </div>
     </section>
 

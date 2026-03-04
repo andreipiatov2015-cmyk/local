@@ -4,6 +4,7 @@ let stickyNeedLogin = false;
 let currentMapping = {};
 let mappingFields = {};
 let currentHeaders = [];
+let mappingPanelExpanded = false;
 
 const tableList = document.getElementById('tableList');
 const progressEl = document.getElementById('progress');
@@ -16,9 +17,16 @@ const tableView = document.getElementById('tableView');
 const excelHead = document.getElementById('excelHead');
 const excelBody = document.getElementById('excelBody');
 const mappingInfo = document.getElementById('mappingInfo');
+const mappingCompact = document.getElementById('mappingCompact');
+const mappingExpanded = document.getElementById('mappingExpanded');
+const mappingPanel = document.getElementById('mappingPanel');
+const toggleMappingPanelBtn = document.getElementById('toggleMappingPanel');
+const resetMappingBtn = document.getElementById('resetMapping');
 const mappingDialog = document.getElementById('mappingDialog');
 const mappingDialogActions = document.getElementById('mappingDialogActions');
 const previewErrorEl = document.getElementById('previewError');
+
+const REQUIRED_FIELDS = ['number_title', 'participant_fio', 'audio_url', 'receipt_url', 'receipt_payer', 'presentation_url'];
 
 function requireAuth(resp) {
   if (resp.status === 401) {
@@ -71,14 +79,31 @@ function mappingReverse() {
   return rev;
 }
 
-function renderMappingInfo() {
-  const assigned = Object.entries(currentMapping).map(([f, c]) => `${mappingFields[f] || f}: ${currentHeaders[c] || ('#' + c)}`);
-  const missing = Object.keys(mappingFields).filter((f) => currentMapping[f] === undefined).map((f) => mappingFields[f]);
-  mappingInfo.innerHTML = `
-    <b>Схема колонок</b><br>
-    Назначено: ${assigned.length ? assigned.join(' | ') : 'пока нет'}<br>
-    Не назначено: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ' ...' : ''}
+function renderMappingPanel() {
+  const requiredItems = REQUIRED_FIELDS.map((field) => ({
+    field,
+    title: mappingFields[field] || field,
+    assigned: currentMapping[field] !== undefined,
+    col: currentMapping[field]
+  }));
+  const assignedCount = Object.keys(currentMapping).length;
+  const totalCount = Object.keys(mappingFields).length;
+
+  mappingCompact.innerHTML = `
+    <div class="mapping-progress">Готово: ${assignedCount} / ${totalCount}</div>
+    <div class="mapping-required-mini">
+      ${requiredItems.map((item) => `<span title="${item.title}">${item.assigned ? '✅' : '⭕'} ${item.title}</span>`).join('')}
+    </div>
   `;
+
+  mappingInfo.innerHTML = requiredItems.map((item) => {
+    const colName = item.assigned ? (currentHeaders[item.col] || `Колонка ${item.col + 1}`) : 'не назначено';
+    return `<div class="mapping-row ${item.assigned ? 'ok' : 'missing'}"><span>${item.assigned ? '✅' : '⭕'} ${item.title}</span><span>${colName}</span></div>`;
+  }).join('');
+
+  mappingExpanded.classList.toggle('hidden', !mappingPanelExpanded);
+  mappingPanel.classList.toggle('is-collapsed', !mappingPanelExpanded);
+  toggleMappingPanelBtn.textContent = mappingPanelExpanded ? 'Свернуть схему' : 'Схема колонок';
 }
 
 function showPreviewError(msg) {
@@ -98,7 +123,7 @@ function renderExcelTable(rows) {
 
   if (!currentHeaders.length) {
     showPreviewError('Excel не распознан: не найдены заголовки или пустой файл.');
-    renderMappingInfo();
+    renderMappingPanel();
     return;
   }
 
@@ -106,10 +131,23 @@ function renderExcelTable(rows) {
   currentHeaders.forEach((h, idx) => {
     const th = document.createElement('th');
     const assignedField = rev[idx];
-    th.textContent = h || `Колонка ${idx + 1}`;
+    const title = h || `Колонка ${idx + 1}`;
     th.dataset.col = String(idx);
     th.className = assignedField ? 'mapped' : '';
-    if (assignedField) th.title = `Назначено: ${mappingFields[assignedField] || assignedField}`;
+
+    const name = document.createElement('span');
+    name.className = 'header-title';
+    name.textContent = title;
+    th.appendChild(name);
+
+    if (assignedField) {
+      const badge = document.createElement('span');
+      badge.className = 'header-badge';
+      badge.textContent = mappingFields[assignedField] || assignedField;
+      th.appendChild(badge);
+      th.title = `Назначено: ${mappingFields[assignedField] || assignedField}`;
+    }
+
     th.onclick = () => openMappingDialog(idx);
     trh.appendChild(th);
   });
@@ -131,14 +169,16 @@ function renderExcelTable(rows) {
     clearPreviewError();
   }
 
-  renderMappingInfo();
+  renderMappingPanel();
 }
 
 async function loadExcelPreview() {
   if (!currentTableId) return;
-  const resp = await fetch(`/api/tables/${currentTableId}/excel_preview`);
+  const tableId = currentTableId;
+  const resp = await fetch(`/api/tables/${tableId}/excel_preview`);
   if (requireAuth(resp)) return;
   const data = await resp.json().catch(() => ({}));
+  if (tableId !== currentTableId) return;
   if (!resp.ok) {
     showPreviewError(data.detail || 'Не удалось загрузить предпросмотр Excel.');
     return;
@@ -151,14 +191,16 @@ async function loadExcelPreview() {
 
 async function refreshMapping() {
   if (!currentTableId) return;
-  const r = await fetch(`/api/tables/${currentTableId}/mapping`);
+  const tableId = currentTableId;
+  const r = await fetch(`/api/tables/${tableId}/mapping`);
   if (requireAuth(r) || !r.ok) return;
   const data = await r.json();
+  if (tableId !== currentTableId) return;
   currentMapping = data.mapping || {};
   mappingFields = data.mapping_fields || mappingFields;
   startDownloadBtn.disabled = !data.can_start;
   startDownloadBtn.title = data.can_start ? '' : data.reason;
-  renderMappingInfo();
+  renderMappingPanel();
 }
 
 async function saveMapping() {
@@ -173,24 +215,32 @@ async function saveMapping() {
   startDownloadBtn.disabled = !data.can_start;
   startDownloadBtn.title = data.can_start ? '' : data.reason;
   await loadExcelPreview();
+  renderMappingPanel();
 }
 
 function openMappingDialog(colIndex) {
+  const currentFieldForCol = Object.entries(currentMapping).find(([, c]) => c === colIndex)?.[0];
   mappingDialogActions.innerHTML = '';
+
   Object.entries(mappingFields).forEach(([field, title]) => {
+    const assignedCol = currentMapping[field];
+    const assignedToAnother = assignedCol !== undefined && assignedCol !== colIndex;
     const btn = document.createElement('button');
-    btn.className = 'btn btn-secondary';
-    btn.textContent = `Назначить как: ${title}`;
+    btn.className = `btn btn-secondary mapping-choice ${assignedToAnother ? 'is-occupied' : ''}`;
+    btn.innerHTML = assignedToAnother
+      ? `<span>${title}</span><small>уже назначено: ${currentHeaders[assignedCol] || `Колонка ${assignedCol + 1}`}</small>`
+      : `<span>${title}</span><small>${assignedCol === colIndex ? 'уже на этой колонке' : 'свободно'}</small>`;
+
     btn.onclick = async () => {
-      Object.keys(currentMapping).forEach((k) => {
-        if (currentMapping[k] === colIndex || k === field) delete currentMapping[k];
-      });
+      if (currentFieldForCol) delete currentMapping[currentFieldForCol];
+      if (assignedToAnother) delete currentMapping[field];
       currentMapping[field] = colIndex;
       await saveMapping();
       mappingDialog.close();
     };
     mappingDialogActions.appendChild(btn);
   });
+
   const clearBtn = document.createElement('button');
   clearBtn.className = 'btn btn-secondary';
   clearBtn.textContent = 'Снять назначение';
@@ -205,6 +255,15 @@ function openMappingDialog(colIndex) {
   mappingDialog.showModal();
 }
 
+function formatProgressText(t) {
+  const status = t.status || 'new';
+  const progress = t.progress ?? 0;
+  const processed = t.processed_count ?? 0;
+  const total = t.total_count ?? 0;
+  const error = t.status === 'error' && t.last_error ? `, ошибка: ${t.last_error}` : '';
+  return `Статус: ${status}, прогресс: ${progress}% (${processed}/${total})${error}`;
+}
+
 async function refreshTables() {
   const r = await fetch('/api/tables');
   if (requireAuth(r)) return;
@@ -212,7 +271,7 @@ async function refreshTables() {
   tableList.innerHTML = '';
   tables.forEach((t) => {
     const li = document.createElement('li');
-    li.textContent = `#${t.id} ${t.title} [${t.status}] ${t.progress ?? 0}%`;
+    li.textContent = `#${t.id} ${t.title} [${t.status}] ${t.progress ?? 0}% (${t.processed_count ?? 0}/${t.total_count ?? 0})`;
     li.onclick = () => openTable(t.id, t.title);
     tableList.appendChild(li);
   });
@@ -220,7 +279,7 @@ async function refreshTables() {
   if (currentTableId) {
     const cur = tables.find((x) => x.id === currentTableId);
     if (cur) {
-      progressEl.textContent = `Статус: ${cur.status}, прогресс: ${cur.progress ?? 0}%`;
+      progressEl.textContent = formatProgressText(cur);
       if (cur.status === 'need_login') setYandexState('need_login', lastVncUrl);
       else if (cur.yandex_connected) setYandexState('ok');
       else setYandexState('idle');
@@ -234,10 +293,22 @@ async function openTable(id, title) {
   tableView.classList.remove('hidden');
   await refreshMapping();
   await loadExcelPreview();
+  await refreshTables();
 }
 
 function initTablesSection() {
   document.getElementById('closeMappingDialog').onclick = () => mappingDialog.close();
+
+  toggleMappingPanelBtn.onclick = () => {
+    mappingPanelExpanded = !mappingPanelExpanded;
+    renderMappingPanel();
+  };
+
+  resetMappingBtn.onclick = async () => {
+    currentMapping = {};
+    await saveMapping();
+    await refreshMapping();
+  };
 
   document.getElementById('createTable').onclick = async () => {
     const title = document.getElementById('newTitle').value.trim();
@@ -298,9 +369,11 @@ function initTablesSection() {
     }
     if (requireAuth(resp)) return;
     if (!resp.ok) return alert(data.detail || 'Ошибка запуска');
+    await refreshTables();
     alert('Фоновая загрузка запущена');
   };
 
+  renderMappingPanel();
   refreshTables();
   setInterval(async () => {
     await refreshTables();
