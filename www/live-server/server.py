@@ -20,10 +20,6 @@ from pathlib import Path
 
 import requests
 
-try:
-    from playwright.sync_api import sync_playwright
-except Exception:
-    sync_playwright = None
 
 try:
     import openpyxl
@@ -64,7 +60,8 @@ MAX_TABLES_PER_USER = 10
 DOWNLOAD_RETRIES = 3
 MAX_FILENAME_LEN = 180
 YANDEX_VNC_URL = os.environ.get("YANDEX_VNC_URL", "/tables/yandex/vnc/vnc.html?autoconnect=1&resize=scale&show_dot=0")
-YANDEX_CHROMIUM_PROFILE = os.environ.get("YANDEX_CHROMIUM_PROFILE", "/tmp/chromium-yandex-profile")
+YANDEX_PROFILE_DIR = os.environ.get("YANDEX_PROFILE_DIR", "/var/mount_point/nfv/contest_storage/yandex_profile")
+YANDEX_FORMS_TEST_URL = (os.environ.get("YANDEX_FORMS_TEST_URL") or "").strip()
 
 TABLE_COLUMNS = {
     "number_title": ["Название номера", "Номер", "Название"],
@@ -303,9 +300,7 @@ def resolve_stream_url():
     if HLS_STREAM_URL:
         return HLS_STREAM_URL
     scheme = request.headers.get("X-Forwarded-Proto", request.scheme) or "http"
-    host = request.host
-    if not host:
-        return "http://127.0.0.1:8082/hls/stream.m3u8"
+    host = request.host or "127.0.0.1"
     return f"{scheme}://{host}/hls/stream.m3u8"
 
 # ------------ Маршруты ------------
@@ -537,6 +532,10 @@ def get_cell(row, idx):
     return "" if v is None else str(v).strip()
 
 
+class YandexAuthRequiredError(RuntimeError):
+    pass
+
+
 def extension_from_url(url, fallback="bin"):
     name = url.split("?")[0].rstrip("/").split("/")[-1]
     if "." in name:
@@ -549,11 +548,16 @@ def download_with_retries(req_session, url, out_path):
     last_error = None
     for _ in range(DOWNLOAD_RETRIES):
         try:
-            r = req_session.get(url, timeout=30)
+            r = req_session.get(url, timeout=30, allow_redirects=True)
+            final_url = (r.url or "").lower()
+            if r.status_code in (401, 403) or "passport.yandex" in final_url:
+                raise YandexAuthRequiredError("Нужен вход администратора в Яндекс")
             r.raise_for_status()
             with open(out_path, "wb") as f:
                 f.write(r.content)
             return
+        except YandexAuthRequiredError:
+            raise
         except Exception as e:
             last_error = str(e)
             time.sleep(1)
@@ -582,14 +586,23 @@ def process_table_download(table_id, user_id):
     col = detect_columns(headers)
     data_rows = rows[1:]
 
-    session_file = yandex_session_file(user_id)
-    if not session_file.exists():
+    try:
+        cookies = read_yandex_cookies_from_chromium_profile()
+    except Exception:
         query_db(
-            "UPDATE table_workspaces SET status='error', updated_at=?, yandex_session_json=? WHERE id=?",
-            (now_iso(), json.dumps({"error": "Сессия Яндекса отсутствует. Переподключите Яндекс."}, ensure_ascii=False), table_id),
+            "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
+            (now_iso(), json.dumps({"error": "Нужен вход администратора в Яндекс."}, ensure_ascii=False), table_id),
         )
         return
-    cookies = load_yandex_cookies_for_user(user_id)
+
+    access_ok, _ = check_yandex_auth(cookies)
+    if not access_ok:
+        query_db(
+            "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
+            (now_iso(), json.dumps({"error": "Нужен вход администратора в Яндекс."}, ensure_ascii=False), table_id),
+        )
+        return
+
     req_session = requests.Session()
     apply_cookies_to_requests_session(req_session, cookies)
 
@@ -637,6 +650,12 @@ def process_table_download(table_id, user_id):
             try:
                 download_with_retries(req_session, audio_url, audio_path)
                 audio_local = audio_name
+            except YandexAuthRequiredError:
+                query_db(
+                    "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
+                    (now_iso(), json.dumps({"error": "Нужен вход администратора в Яндекс."}, ensure_ascii=False), table_id),
+                )
+                return
             except Exception:
                 fail = os.path.join(entry_dir, "audio.txt")
                 with open(fail, "w", encoding="utf-8") as f:
@@ -664,22 +683,14 @@ def process_table_download(table_id, user_id):
             try:
                 download_with_retries(req_session, furl, out_path)
                 local_values[ftype] = filename
+            except YandexAuthRequiredError:
+                query_db(
+                    "UPDATE table_workspaces SET status='need_login', updated_at=?, yandex_session_json=? WHERE id=?",
+                    (now_iso(), json.dumps({"error": "Нужен вход администратора в Яндекс."}, ensure_ascii=False), table_id),
+                )
+                return
             except Exception:
                 pass
-
-        if any(v for v in local_values.values()) is False and any(x[1] for x in field_map):
-            probe_url = next((x[1] for x in field_map if x[1]), "")
-            if probe_url and "forms.yandex.ru" in probe_url:
-                try:
-                    probe = req_session.get(probe_url, timeout=30)
-                    if probe.status_code == 403:
-                        query_db(
-                            "UPDATE table_workspaces SET status='error', updated_at=?, yandex_session_json=? WHERE id=?",
-                            (now_iso(), json.dumps({"error": "Сессия Яндекса устарела, переподключите"}, ensure_ascii=False), table_id),
-                        )
-                        return
-                except Exception:
-                    pass
 
         query_db(
             "UPDATE table_entries SET audio_local=?, receipt_local=?, consent_local=?, presentation_local=? WHERE id=?",
@@ -767,7 +778,7 @@ def list_tables():
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
     rows = query_db("SELECT id, title, status, progress, created_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC", (user["id"],))
-    connected = yandex_session_file(user["id"]).exists()
+    connected = has_global_yandex_session()
     result = []
     for r in rows:
         item = dict(r)
@@ -795,65 +806,7 @@ def create_table():
     return jsonify({"status": "ok"})
 
 
-def yandex_session_dir(user_id):
-    return APP_DATA_ROOT / "users" / f"user_{user_id}"
-
-
-def yandex_session_file(user_id):
-    return yandex_session_dir(user_id) / "yandex_session.json"
-
-
-def parse_uploaded_cookies(raw_text):
-    text = (raw_text or "").strip()
-    if not text:
-        raise ValueError("Пустой файл cookies")
-    if text.startswith("[") or text.startswith("{"):
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return [{"name": k, "value": str(v), "domain": ".yandex.ru", "path": "/"} for k, v in data.items()]
-        if isinstance(data, list):
-            out = []
-            for c in data:
-                if isinstance(c, dict) and c.get("name") and c.get("value"):
-                    out.append({
-                        "name": c["name"],
-                        "value": str(c["value"]),
-                        "domain": c.get("domain") or ".yandex.ru",
-                        "path": c.get("path") or "/",
-                    })
-            if out:
-                return out
-        raise ValueError("Некорректный JSON cookies")
-
-    parsed = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split("\t")
-        if len(parts) >= 7:
-            parsed.append({"domain": parts[0], "path": parts[2], "name": parts[5], "value": parts[6]})
-    if not parsed:
-        raise ValueError("Не удалось разобрать cookies в формате Netscape")
-    return parsed
-
-
-def save_yandex_session(user_id, cookies):
-    session_dir = yandex_session_dir(user_id)
-    session_dir.mkdir(parents=True, exist_ok=True)
-    payload = {"updated_at": now_iso(), "cookies": cookies}
-    yandex_session_file(user_id).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def load_yandex_cookies_for_user(user_id):
-    payload = json.loads(yandex_session_file(user_id).read_text(encoding="utf-8"))
-    return payload.get("cookies") or []
-
-
 def apply_cookies_to_requests_session(req_session, cookies):
-    if isinstance(cookies, dict):
-        req_session.cookies.update(cookies)
-        return
     for c in cookies:
         name = c.get("name")
         value = c.get("value")
@@ -862,63 +815,116 @@ def apply_cookies_to_requests_session(req_session, cookies):
         req_session.cookies.set(name, value, domain=c.get("domain") or ".yandex.ru", path=c.get("path") or "/")
 
 
+def yandex_profile_cookie_file():
+    return Path(YANDEX_PROFILE_DIR) / "Default" / "Cookies"
+
 
 def read_yandex_cookies_from_chromium_profile():
-    if sync_playwright is None:
-        raise RuntimeError("Playwright не установлен на сервере")
-    profile_dir = Path(YANDEX_CHROMIUM_PROFILE)
-    if not profile_dir.exists():
-        raise RuntimeError("Профиль Chromium для noVNC не найден")
+    cookie_db = yandex_profile_cookie_file()
+    if not cookie_db.exists():
+        raise RuntimeError(f"Файл cookies Chromium не найден: {cookie_db}")
 
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            headless=True,
-            channel="chromium",
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
+    tmp_copy = APP_DATA_ROOT / "tmp" / "yandex_cookies_read.sqlite"
+    tmp_copy.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(cookie_db, tmp_copy)
+
+    con = sqlite3.connect(str(tmp_copy))
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            """
+            SELECT host_key, name, value, path
+            FROM cookies
+            WHERE host_key LIKE '%yandex.ru%' OR host_key LIKE '%yandex.net%'
+            """
+        ).fetchall()
+    finally:
+        con.close()
+        tmp_copy.unlink(missing_ok=True)
+
+    cookies = []
+    for row in rows:
+        cookies.append(
+            {
+                "domain": row["host_key"],
+                "name": row["name"],
+                "value": row["value"],
+                "path": row["path"] or "/",
+            }
         )
-        try:
-            cookies = context.cookies(["https://forms.yandex.ru/"])
-        finally:
-            context.close()
 
     if not cookies:
-        raise RuntimeError("В профиле noVNC не найдены cookies Яндекса")
+        raise RuntimeError("В профиле Chromium не найдены cookies Яндекса")
     return cookies
 
 
 def yandex_cookie_domains(cookies):
     domains = set()
     for c in cookies:
-        domain = (c.get("domain") or "").strip()
+        domain = (c.get("domain") or "").strip().lower()
         if domain:
-            domains.add(domain)
+            domains.add(domain.lstrip('.'))
     return sorted(domains)
 
 
-def verify_yandex_forms_access(cookies):
+def check_yandex_auth(cookies):
     req = requests.Session()
     apply_cookies_to_requests_session(req, cookies)
-    resp = req.get("https://forms.yandex.ru/admin/", timeout=15, allow_redirects=True)
-    if resp.status_code in (401, 403):
-        return False, resp.url or ""
+    resp = req.get("https://disk.yandex.ru/client/disk", timeout=15, allow_redirects=True)
     final_url = (resp.url or "").lower()
-    if "passport.yandex" in final_url:
+    if resp.status_code in (401, 403) or "passport.yandex" in final_url:
         return False, resp.url or ""
-    return resp.ok, resp.url or ""
+
+    if YANDEX_FORMS_TEST_URL:
+        probe = req.get(YANDEX_FORMS_TEST_URL, timeout=20, allow_redirects=True)
+        probe_url = (probe.url or "").lower()
+        if probe.status_code in (401, 403) or "passport.yandex" in probe_url:
+            return False, probe.url or ""
+    return True, resp.url or ""
 
 
-def log_yandex_complete(connect_id, status, table_id):
-    app.logger.info(
-        "[yandex_connect_complete] table_id=%s connect_id=%s status=%s",
-        table_id,
-        connect_id,
-        status,
-    )
+def has_global_yandex_session():
+    try:
+        cookies = read_yandex_cookies_from_chromium_profile()
+        app.logger.info(
+            "[yandex_connect] cookies_count=%s domains=%s",
+            len(cookies),
+            ",".join(yandex_cookie_domains(cookies)),
+        )
+        ok, final_url = check_yandex_auth(cookies)
+        if not ok:
+            app.logger.info("[yandex_connect] auth_required final_url=%s", final_url)
+        return ok
+    except Exception as exc:
+        app.logger.info("[yandex_connect] read_failed error=%s", str(exc))
+        return False
 
 
 def table_belongs_to_user(table_id, user_id):
     return query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user_id), one=True)
+
+
+@app.route("/api/yandex/connect", methods=["POST"])
+def yandex_connect():
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+
+    try:
+        cookies = read_yandex_cookies_from_chromium_profile()
+    except Exception as exc:
+        app.logger.info("[yandex_connect] profile_read_failed error=%s", str(exc))
+        return jsonify({"status": "need_login", "vnc_url": YANDEX_VNC_URL})
+
+    domains = yandex_cookie_domains(cookies)
+    app.logger.info("[yandex_connect] cookies_count=%s domains=%s", len(cookies), ",".join(domains))
+
+    access_ok, final_url = check_yandex_auth(cookies)
+    if not access_ok:
+        app.logger.info("[yandex_connect] need_login final_url=%s", final_url)
+        return jsonify({"status": "need_login", "vnc_url": YANDEX_VNC_URL})
+
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/tables/<int:table_id>/yandex/vnc/start", methods=["POST"])
@@ -929,167 +935,6 @@ def yandex_vnc_start(table_id):
     if not table_belongs_to_user(table_id, user["id"]):
         return jsonify({"detail": "Таблица не найдена"}), 404
     return jsonify({"vnc_url": YANDEX_VNC_URL})
-
-
-@app.route("/api/tables/<int:table_id>/yandex/vnc/finish", methods=["POST"])
-def yandex_vnc_finish(table_id):
-    user = table_user_from_request()
-    if not user:
-        return jsonify({"detail": "Не авторизован"}), 401
-    if not table_belongs_to_user(table_id, user["id"]):
-        return jsonify({"detail": "Таблица не найдена"}), 404
-
-    try:
-        cookies = read_yandex_cookies_from_chromium_profile()
-    except Exception as exc:
-        return jsonify({"detail": f"Не удалось прочитать cookies из профиля noVNC: {exc}"}), 500
-
-    domains = yandex_cookie_domains(cookies)
-    app.logger.info(
-        "[yandex_vnc_finish] cookies_count=%s domains=%s",
-        len(cookies),
-        ",".join(domains),
-    )
-
-    access_ok, final_url = verify_yandex_forms_access(cookies)
-    if not access_ok:
-        app.logger.info("[yandex_vnc_finish] verify_failed final_url=%s", final_url)
-        return jsonify({"detail": "Вы ещё не вошли в Яндекс в окне VNC или не открывали forms.yandex.ru/admin"}), 400
-
-    save_yandex_session(user["id"], cookies)
-    return jsonify({"status": "ok", "yandex_connected": True})
-
-
-@app.route("/api/tables/<int:table_id>/yandex/connect/start", methods=["POST"])
-def yandex_connect_start(table_id):
-    user = table_user_from_request()
-    if not user:
-        return jsonify({"detail": "Не авторизован"}), 401
-    if not table_belongs_to_user(table_id, user["id"]):
-        return jsonify({"detail": "Таблица не найдена"}), 404
-    connect_id = str(uuid.uuid4())
-    ts = now_iso()
-    expires_at = (datetime.datetime.utcnow() + datetime.timedelta(minutes=10)).isoformat()
-    query_db(
-        "INSERT INTO yandex_connect_sessions (connect_id, user_id, table_id, status, expires_at, created_at, updated_at) VALUES (?, ?, ?, 'waiting', ?, ?, ?)",
-        (connect_id, user["id"], table_id, expires_at, ts, ts),
-    )
-    done_url = url_for("yandex_connect_done_page", _external=True)
-    retpath = f"{done_url}?connect_id={connect_id}"
-    auth_url = f"https://passport.yandex.ru/auth?retpath={requests.utils.quote(retpath, safe='')}"
-    return jsonify({"connect_id": connect_id, "auth_url": auth_url})
-
-
-@app.route("/api/tables/<int:table_id>/yandex/connect/status", methods=["GET"])
-def yandex_connect_status(table_id):
-    user = table_user_from_request()
-    if not user:
-        return jsonify({"detail": "Не авторизован"}), 401
-    connect_id = (request.args.get("connect_id") or "").strip()
-    row = query_db(
-        "SELECT * FROM yandex_connect_sessions WHERE connect_id=? AND user_id=? AND table_id=?",
-        (connect_id, user["id"], table_id),
-        one=True,
-    )
-    if not row:
-        return jsonify({"status": "expired", "yandex_connected": yandex_session_file(user["id"]).exists()})
-    status = row["status"]
-    if row["expires_at"] < now_iso() and status == "waiting":
-        status = "expired"
-        query_db("UPDATE yandex_connect_sessions SET status='expired', updated_at=? WHERE connect_id=?", (now_iso(), connect_id))
-    return jsonify({"status": status, "yandex_connected": yandex_session_file(user["id"]).exists(), "error": row["error_message"]})
-
-
-@app.route("/yandex/connect/done")
-@login_required
-def yandex_connect_done_page():
-    user = table_user_from_request()
-    connect_id = (request.args.get("connect_id") or "").strip()
-    if not connect_id:
-        return render_template("yandex_connect.html", connect_id="", table_id=None, invalid_reason="Не передан connect_id")
-    row = query_db(
-        "SELECT * FROM yandex_connect_sessions WHERE connect_id=? AND user_id=?",
-        (connect_id, user["id"]),
-        one=True,
-    )
-    if not row:
-        return render_template(
-            "yandex_connect.html",
-            connect_id=connect_id,
-            table_id=None,
-            invalid_reason="Сессия подключения не найдена или недоступна",
-        )
-    return render_template("yandex_connect.html", connect_id=connect_id, table_id=row["table_id"], invalid_reason=None)
-
-
-@app.route("/api/tables/<int:table_id>/yandex/connect/complete", methods=["POST"])
-def yandex_connect_complete(table_id):
-    user = table_user_from_request()
-    if not user:
-        return jsonify({"detail": "Не авторизован"}), 401
-    payload = request.get_json(silent=True) or {}
-    connect_id = (request.form.get("connect_id") or payload.get("connect_id") or "").strip()
-    if not connect_id:
-        log_yandex_complete(connect_id, "rejected_missing_connect_id", table_id)
-        return jsonify({"detail": "connect_id обязателен"}), 400
-    row = query_db(
-        "SELECT * FROM yandex_connect_sessions WHERE connect_id=? AND user_id=? AND table_id=?",
-        (connect_id, user["id"], table_id),
-        one=True,
-    )
-    if not row:
-        log_yandex_complete(connect_id, "rejected_not_found", table_id)
-        return jsonify({"detail": "Сессия подключения не найдена"}), 404
-    if row["expires_at"] < now_iso():
-        query_db("UPDATE yandex_connect_sessions SET status='expired', updated_at=? WHERE connect_id=?", (now_iso(), connect_id))
-        log_yandex_complete(connect_id, "expired", table_id)
-        return jsonify({"detail": "Сессия подключения истекла", "fallback_required": True}), 400
-    if row["status"] == "success":
-        log_yandex_complete(connect_id, "success", table_id)
-        return jsonify({"status": "success", "yandex_connected": True})
-    if row["status"] != "waiting":
-        log_yandex_complete(connect_id, f"rejected_{row['status']}", table_id)
-        return jsonify({"detail": row["error_message"] or "Сессия уже завершена", "fallback_required": True}), 400
-
-    if yandex_session_file(user["id"]).exists():
-        query_db(
-            "UPDATE yandex_connect_sessions SET status='success', error_message=NULL, updated_at=? WHERE connect_id=?",
-            (now_iso(), connect_id),
-        )
-        log_yandex_complete(connect_id, "success", table_id)
-        return jsonify({"status": "success", "yandex_connected": True})
-
-    message = "Не удалось автоматически завершить подключение (возможна 2FA/капча). Загрузите cookies файлом."
-    query_db(
-        "UPDATE yandex_connect_sessions SET status='error', error_message=?, updated_at=? WHERE connect_id=?",
-        (message, now_iso(), connect_id),
-    )
-    log_yandex_complete(connect_id, "error", table_id)
-    return jsonify({"detail": message, "fallback_required": True}), 400
-
-
-@app.route("/api/yandex/connect/<connect_id>/upload", methods=["POST"])
-def yandex_connect_upload(connect_id):
-    user = table_user_from_request()
-    if not user:
-        return jsonify({"detail": "Не авторизован"}), 401
-    row = query_db("SELECT * FROM yandex_connect_sessions WHERE connect_id=? AND user_id=?", (connect_id, user["id"]), one=True)
-    if not row:
-        return jsonify({"detail": "Сессия подключения не найдена"}), 404
-    up = request.files.get("cookies_file")
-    if not up:
-        return jsonify({"detail": "Файл cookies обязателен"}), 400
-    try:
-        cookies = parse_uploaded_cookies(up.read().decode("utf-8", errors="ignore"))
-        save_yandex_session(user["id"], cookies)
-    except Exception as exc:
-        query_db("UPDATE yandex_connect_sessions SET status='error', error_message=?, updated_at=? WHERE connect_id=?", (str(exc), now_iso(), connect_id))
-        return jsonify({"detail": str(exc)}), 400
-    query_db(
-        "UPDATE yandex_connect_sessions SET status='success', error_message=NULL, updated_at=? WHERE connect_id=?",
-        (now_iso(), connect_id),
-    )
-    return jsonify({"status": "success"})
 
 
 @app.route("/api/tables/<int:table_id>", methods=["DELETE"])
@@ -1130,12 +975,11 @@ def connect_yandex(table_id):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    cookies_json = request.form.get("cookies_json") or "{}"
-    query_db(
-        "UPDATE table_workspaces SET yandex_session_json=?, updated_at=? WHERE id=? AND user_id=?",
-        (cookies_json, now_iso(), table_id, user["id"]),
-    )
-    return jsonify({"status": "ok"})
+    if not table_belongs_to_user(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    if has_global_yandex_session():
+        return jsonify({"status": "ok"})
+    return jsonify({"status": "need_login", "vnc_url": YANDEX_VNC_URL})
 
 
 @app.route("/api/tables/<int:table_id>/start-download", methods=["POST"])
@@ -1146,8 +990,8 @@ def start_download(table_id):
     t = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
     if not t:
         return jsonify({"detail": "Таблица не найдена"}), 404
-    if not yandex_session_file(user["id"]).exists():
-        return jsonify({"detail": "Яндекс не подключён"}), 400
+    if not has_global_yandex_session():
+        return jsonify({"detail": "Нужен вход администратора в Яндекс"}), 400
     threading.Thread(target=process_table_download, args=(table_id, user["id"]), daemon=True).start()
     return jsonify({"status": "started"})
 

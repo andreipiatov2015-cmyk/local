@@ -1,5 +1,6 @@
 let currentTableId = null;
 let yandexConnected = false;
+let lastVncUrl = null;
 
 const workspace = document.getElementById('workspace');
 const tableView = document.getElementById('tableView');
@@ -9,7 +10,7 @@ const progressEl = document.getElementById('progress');
 const tableTitle = document.getElementById('tableTitle');
 const yandexStatusEl = document.getElementById('yandexStatus');
 const startDownloadBtn = document.getElementById('startDownload');
-const finishYandexBtn = document.getElementById('finishYandex');
+const openAdminLoginBtn = document.getElementById('openAdminLogin');
 const yandexHintEl = document.getElementById('yandexHint');
 
 const viewer = document.getElementById('viewer');
@@ -38,28 +39,33 @@ function safeOpen(url) {
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
-function setYandexStatus(status) {
+function setYandexStatus(status, vncUrl = null) {
   if (status === 'success') {
-    yandexStatusEl.textContent = 'Яндекс: подключен';
+    yandexStatusEl.textContent = '✅ Яндекс подключен (используется сессия организатора)';
     yandexConnected = true;
     startDownloadBtn.disabled = false;
-    finishYandexBtn.disabled = true;
     yandexHintEl.textContent = '';
+    lastVncUrl = null;
+    openAdminLoginBtn.classList.add('hidden');
     return;
   }
-  if (status === 'waiting') {
-    yandexStatusEl.textContent = 'Яндекс: ожидается вход в noVNC…';
+
+  if (status === 'need_login') {
+    yandexStatusEl.textContent = '❌ Нужен вход администратора';
     yandexConnected = false;
     startDownloadBtn.disabled = true;
-    finishYandexBtn.disabled = false;
-    yandexHintEl.textContent = 'Открылось окно удалённого браузера. Войдите в Яндекс (аккаунт с формами). После входа нажмите «Готово».';
+    yandexHintEl.textContent = 'Сессия организатора не активна. Откройте окно входа администратора и выполните вход в Яндекс.';
+    lastVncUrl = vncUrl;
+    openAdminLoginBtn.classList.remove('hidden');
     return;
   }
+
   yandexStatusEl.textContent = 'Яндекс: не подключен';
   yandexConnected = false;
   startDownloadBtn.disabled = true;
-  finishYandexBtn.disabled = true;
   yandexHintEl.textContent = '';
+  lastVncUrl = null;
+  openAdminLoginBtn.classList.add('hidden');
 }
 
 async function refreshTables() {
@@ -104,6 +110,9 @@ async function refreshEntries() {
   if (cur) {
     progressEl.textContent = `Статус: ${cur.status}, прогресс: ${cur.progress ?? 0}%`;
     setYandexStatus(cur.yandex_connected ? 'success' : 'idle');
+    if (cur.status === 'need_login') {
+      setYandexStatus('need_login', lastVncUrl);
+    }
   }
 
   const rowsResp = await fetch(`/api/tables/${currentTableId}/entries`);
@@ -172,30 +181,37 @@ function initTablesSection() {
   };
 
   document.getElementById('connectYandex').onclick = async () => {
-    if (!currentTableId) return alert('Сначала выберите таблицу');
-    const resp = await fetch(`/api/tables/${currentTableId}/yandex/vnc/start`, { method: 'POST' });
-    if (requireAuth(resp)) return;
-    if (!resp.ok) return alert(await resp.text());
-    const data = await resp.json();
-
-    setYandexStatus('waiting');
-    const popup = window.open(data.vnc_url, 'yandex_vnc', 'width=520,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no');
-    if (!popup) {
-      alert('Не удалось открыть окно noVNC (проверьте блокировщик pop-up)');
-      setYandexStatus('idle');
-      return;
-    }
-  };
-
-  finishYandexBtn.onclick = async () => {
-    if (!currentTableId) return alert('Сначала выберите таблицу');
-    const resp = await fetch(`/api/tables/${currentTableId}/yandex/vnc/finish`, { method: 'POST' });
+    const resp = await fetch('/api/yandex/connect', { method: 'POST' });
     if (requireAuth(resp)) return;
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) return alert(data.detail || 'Не удалось сохранить сессию Яндекса');
-    setYandexStatus('success');
-    await refreshTables();
-    alert('Яндекс подключен');
+    if (!resp.ok) return alert(data.detail || 'Не удалось проверить сессию Яндекса');
+
+    if (data.status === 'ok') {
+      setYandexStatus('success');
+      await refreshTables();
+      return;
+    }
+
+    if (data.status === 'need_login') {
+      setYandexStatus('need_login', data.vnc_url || null);
+      return;
+    }
+
+    setYandexStatus('idle');
+  };
+
+  openAdminLoginBtn.onclick = async () => {
+    if (!currentTableId) return alert('Сначала выберите таблицу');
+    let vncUrl = lastVncUrl;
+    if (!vncUrl) {
+      const resp = await fetch(`/api/tables/${currentTableId}/yandex/vnc/start`, { method: 'POST' });
+      if (requireAuth(resp)) return;
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) return alert(data.detail || 'Не удалось получить ссылку VNC');
+      vncUrl = data.vnc_url;
+    }
+    const popup = window.open(vncUrl, 'yandex_vnc', 'width=520,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no');
+    if (!popup) alert('Не удалось открыть окно noVNC (проверьте блокировщик pop-up)');
   };
 
   document.getElementById('startDownload').onclick = async () => {
