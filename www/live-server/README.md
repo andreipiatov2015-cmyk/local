@@ -34,7 +34,16 @@
 ## Переменные окружения
 - `RTMP_STREAM_NAME` (по умолчанию `stream`)
 - `VK_START_AS_NOBODY=1` — запускать скрипт через `sudo -u nobody`
+- `HLS_STREAM_URL` — явный URL HLS-потока для интерфейса (если не задан, сервер сам собирает URL как `{scheme}://{host}/hls/stream.m3u8` из текущего запроса; fallback: `http://127.0.0.1:8082/hls/stream.m3u8`).
+- `YANDEX_CHROMIUM_PROFILE` — путь к Chromium-профилю noVNC, из которого сервер читает cookies (по умолчанию `/tmp/chromium-yandex-profile`).
 
+
+
+## Подключение Яндекса через noVNC
+- Скрипт `restart_astra.sh` запускает Chromium сразу на `https://forms.yandex.ru/admin/` (а не на `passport.yandex.ru`), чтобы после входа гарантированно появлялись cookies для `forms.yandex.ru`.
+- Endpoint `POST /api/tables/{id}/yandex/vnc/finish` проверяет доступ через `GET https://forms.yandex.ru/admin/` с cookies из профиля Chromium.
+- Если ответ уводит на `passport.yandex.ru` или возвращает `401/403`, подключение считается незавершённым.
+- В логи пишется только безопасная диагностика: количество cookies и список доменов (без значений cookies).
 
 ## Таблицы заявок
 - Раздел `/tables` работает в том же Flask-процессе, что и админка.

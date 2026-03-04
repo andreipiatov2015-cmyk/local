@@ -55,7 +55,7 @@ ENTRIES_FILE = os.path.join(BASE_DIR, "entries.json")
 PRESETS_FILE = os.path.join(BASE_DIR, "presets.json")
 VK_SETTINGS_FILE = os.path.join(BASE_DIR, "vk_settings.json")
 STREAM_TARGETS_FILE = os.path.join(BASE_DIR, "stream_targets.json")
-STREAM_URL = os.environ.get("HLS_STREAM_URL", "http://192.168.31.18:8080/hls/stream.m3u8")
+HLS_STREAM_URL = (os.environ.get("HLS_STREAM_URL") or "").strip()
 
 STORAGE_ROOT = os.environ.get("STORAGE_ROOT", "/var/mount_point/nfv/contest_storage")
 APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", os.path.join(BASE_DIR, "app_data")))
@@ -298,6 +298,16 @@ def ensure_admin_exists():
     )
     print(f"Создан администратор: {DEFAULT_ADMIN_USERNAME} / {DEFAULT_ADMIN_PASSWORD}")
 
+
+def resolve_stream_url():
+    if HLS_STREAM_URL:
+        return HLS_STREAM_URL
+    scheme = request.headers.get("X-Forwarded-Proto", request.scheme) or "http"
+    host = request.host
+    if not host:
+        return "http://127.0.0.1:8082/hls/stream.m3u8"
+    return f"{scheme}://{host}/hls/stream.m3u8"
+
 # ------------ Маршруты ------------
 @app.route("/")
 def index():
@@ -306,27 +316,27 @@ def index():
 @app.route("/admin")
 @login_required
 def admin():
-    return render_template("admin.html", user=get_current_user(), stream_url=STREAM_URL)
+    return render_template("admin.html", user=get_current_user(), stream_url=resolve_stream_url())
 
 @app.route("/staff")
 @roles_required("admin")
 def staff():
     users = query_db("SELECT id, username, email, role, is_verified FROM users ORDER BY id")
-    return render_template("staff.html", users=users, stream_url=STREAM_URL)
+    return render_template("staff.html", users=users, stream_url=resolve_stream_url())
 
 @app.route("/broadcast")
 def broadcast():
-    return render_template("broadcast.html", stream_url=STREAM_URL)
+    return render_template("broadcast.html", stream_url=resolve_stream_url())
 
 @app.route("/competition")
 def competition():
-    return render_template("competition.html", stream_url=STREAM_URL)
+    return render_template("competition.html", stream_url=resolve_stream_url())
 
 # --- Мероприятия ---
 @app.route("/editor")
 @login_required
 def editor_list():
-    return render_template("editor.html", stream_url=STREAM_URL)
+    return render_template("editor.html", stream_url=resolve_stream_url())
 
 @app.route("/events")
 def get_events():
@@ -346,7 +356,7 @@ def create_event():
 @app.route("/editor/<int:event_id>")
 @login_required
 def editor_event(event_id):
-    return render_template("admin.html", event_id=event_id, stream_url=STREAM_URL)
+    return render_template("admin.html", event_id=event_id, stream_url=resolve_stream_url())
 
 # --- Участники / пресеты ---
 @app.route("/entries")
@@ -877,16 +887,25 @@ def read_yandex_cookies_from_chromium_profile():
     return cookies
 
 
+def yandex_cookie_domains(cookies):
+    domains = set()
+    for c in cookies:
+        domain = (c.get("domain") or "").strip()
+        if domain:
+            domains.add(domain)
+    return sorted(domains)
+
+
 def verify_yandex_forms_access(cookies):
     req = requests.Session()
     apply_cookies_to_requests_session(req, cookies)
-    resp = req.get("https://forms.yandex.ru/", timeout=15, allow_redirects=True)
+    resp = req.get("https://forms.yandex.ru/admin/", timeout=15, allow_redirects=True)
     if resp.status_code in (401, 403):
-        return False
+        return False, resp.url or ""
     final_url = (resp.url or "").lower()
     if "passport.yandex" in final_url:
-        return False
-    return resp.ok
+        return False, resp.url or ""
+    return resp.ok, resp.url or ""
 
 
 def log_yandex_complete(connect_id, status, table_id):
@@ -925,8 +944,17 @@ def yandex_vnc_finish(table_id):
     except Exception as exc:
         return jsonify({"detail": f"Не удалось прочитать cookies из профиля noVNC: {exc}"}), 500
 
-    if not verify_yandex_forms_access(cookies):
-        return jsonify({"detail": "Похоже, вы ещё не вошли в Яндекс в окне noVNC. Войдите и попробуйте снова."}), 400
+    domains = yandex_cookie_domains(cookies)
+    app.logger.info(
+        "[yandex_vnc_finish] cookies_count=%s domains=%s",
+        len(cookies),
+        ",".join(domains),
+    )
+
+    access_ok, final_url = verify_yandex_forms_access(cookies)
+    if not access_ok:
+        app.logger.info("[yandex_vnc_finish] verify_failed final_url=%s", final_url)
+        return jsonify({"detail": "Вы ещё не вошли в Яндекс в окне VNC или не открывали forms.yandex.ru/admin"}), 400
 
     save_yandex_session(user["id"], cookies)
     return jsonify({"status": "ok", "yandex_connected": True})
@@ -1312,7 +1340,7 @@ def preview_url_for(settings):
 def vk_status():
     settings = load_vk_settings()
     settings["preview_url"] = preview_url_for(settings)
-    settings["stream_url"] = STREAM_URL
+    settings["stream_url"] = resolve_stream_url()
     settings["targets"] = load_stream_targets()
     settings.setdefault("target_ids", [])
     settings.setdefault("show_preview", False)
@@ -1340,7 +1368,7 @@ def vk_public_status():
     return jsonify({
         "enabled": settings.get("enabled", False),
         "preview_url": preview_url_for(settings),
-        "stream_url": STREAM_URL,
+        "stream_url": resolve_stream_url(),
         "show_preview": settings.get("show_preview", False)
     })
 
