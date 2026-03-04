@@ -752,25 +752,34 @@ def process_table_download(table_id, user_id):
             team = get_cell(row_values, mapping.get("studio_name"))
             unique_key = f"{row_id}|{number_title}|{fio}"
 
-            query_db(
-                """
-                INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, '', '', '', '', '', ?, ?)
-                """,
-                (
-                    table_id,
-                    row_id,
-                    number_title,
-                    fio,
-                    team,
-                    unique_key,
-                    get_cell(row_values, mapping.get("audio_url")),
-                    get_cell(row_values, mapping.get("receipt_url")),
-                    get_cell(row_values, mapping.get("presentation_url")),
-                    json.dumps(row_data, ensure_ascii=False),
-                    now_iso(),
-                ),
-            )
+            try:
+                query_db(
+                    """
+                    INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        table_id,
+                        row_id,
+                        number_title,
+                        fio,
+                        team,
+                        unique_key,
+                        get_cell(row_values, mapping.get("audio_url")),
+                        get_cell(row_values, mapping.get("receipt_url")),
+                        "",
+                        get_cell(row_values, mapping.get("presentation_url")),
+                        "",
+                        "",
+                        "",
+                        "",
+                        json.dumps(row_data, ensure_ascii=False),
+                        now_iso(),
+                    ),
+                )
+            except Exception:
+                app.logger.exception("[tables_download] table_id=%s row_id=%s insert_failed", table_id, row_id)
+                raise
             entry_id = query_db("SELECT last_insert_rowid() AS id", one=True)["id"]
 
             audio_local = ""
@@ -1171,13 +1180,34 @@ def upload_excel(table_id):
 
     for idx, row in enumerate(preview_rows, start=2):
         row_data = {str(i): v for i, v in enumerate(row)}
-        query_db(
-            """
-            INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
-            VALUES (?, ?, '', '', '', ?, '', '', '', '', '', '', '', '', ?, ?)
-            """,
-            (table_id, idx, f"preview-{idx}", json.dumps(row_data, ensure_ascii=False), now_iso()),
-        )
+        try:
+            query_db(
+                """
+                INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    table_id,
+                    idx,
+                    "",
+                    "",
+                    "",
+                    f"preview-{idx}",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    json.dumps(row_data, ensure_ascii=False),
+                    now_iso(),
+                ),
+            )
+        except Exception:
+            app.logger.exception("[tables_excel_preview] table_id=%s row_id=%s insert_failed", table_id, idx)
+            raise
 
     query_db(
         "UPDATE table_workspaces SET excel_headers_json=?, excel_preview_rows_json=?, excel_total_rows=?, excel_sheet_name=?, status='excel_loaded', progress=100, updated_at=? WHERE id=?",
