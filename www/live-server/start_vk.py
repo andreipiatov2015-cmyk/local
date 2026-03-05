@@ -15,7 +15,7 @@ TARGETS_FILE = BASE_DIR / "stream_targets.json"
 FFMPEG = os.environ.get("FFMPEG_PATH", "ffmpeg")
 
 # ВХОД: используем HLS (как в твоей рабочей ручной команде)
-LOCAL_HLS_TEMPLATE = os.environ.get("LOCAL_HLS_TEMPLATE", "http://127.0.0.1:8080/hls/{stream}.m3u8")
+LOCAL_HLS_TEMPLATE = os.environ.get("LOCAL_HLS_TEMPLATE", "http://127.0.0.1:8082/hls/{stream}.m3u8")
 
 # ЛОГИ
 LOG_DIR = BASE_DIR / "logs"
