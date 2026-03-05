@@ -46,7 +46,12 @@ app = Flask(__name__, template_folder="templates", static_folder="static")
 
 
 def resolve_app_secret_key():
-    env_secret = (os.environ.get("FLASK_SECRET_KEY") or os.environ.get("SECRET_KEY") or "").strip()
+    env_secret = (
+        os.environ.get("APP_SECRET_KEY")
+        or os.environ.get("FLASK_SECRET_KEY")
+        or os.environ.get("SECRET_KEY")
+        or ""
+    ).strip()
     if env_secret:
         return env_secret
 
@@ -383,16 +388,78 @@ DEFAULT_ADMIN_USERNAME = "admin"
 DEFAULT_ADMIN_EMAIL = "admin@local"
 DEFAULT_ADMIN_PASSWORD = "Gfnhbjnjd9"
 
+def get_configured_admin_email():
+    return (os.environ.get("ADMIN_EMAIL") or DEFAULT_ADMIN_EMAIL).strip() or DEFAULT_ADMIN_EMAIL
+
+
 def ensure_admin_exists():
-    query_db("DELETE FROM users")
+    admin_email = get_configured_admin_email()
+    existing = query_db(
+        "SELECT id FROM users WHERE username=? OR email=?",
+        (DEFAULT_ADMIN_USERNAME, admin_email),
+        one=True,
+    )
+    if existing:
+        return existing["id"]
+
     salt = make_salt()
     pwd_hash = hash_password(DEFAULT_ADMIN_PASSWORD, salt)
     now = datetime.datetime.utcnow().isoformat()
     query_db(
         "INSERT INTO users (username, email, password_hash, password_salt, role, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, 'admin', 1, ?, ?)",
-        (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL, pwd_hash, salt, now, now)
+        (DEFAULT_ADMIN_USERNAME, admin_email, pwd_hash, salt, now, now)
     )
+    created = query_db("SELECT id FROM users WHERE username=?", (DEFAULT_ADMIN_USERNAME,), one=True)
     print(f"Создан администратор: {DEFAULT_ADMIN_USERNAME} / {DEFAULT_ADMIN_PASSWORD}")
+    return created["id"] if created else None
+
+
+def migrate_tables_to_current_admin():
+    admin_email = get_configured_admin_email()
+    admin_candidates = query_db(
+        """
+        SELECT id, username, email
+        FROM users
+        WHERE username=? OR email=? OR email=?
+        ORDER BY id DESC
+        """,
+        (DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_EMAIL, admin_email),
+    )
+    if not admin_candidates:
+        app.logger.warning("[tables_migration] no admin candidate found; migration skipped")
+        return
+
+    current_admin = dict(admin_candidates[0])
+    admin_candidate_ids = [row["id"] for row in admin_candidates]
+    query_db(
+        """
+        UPDATE table_workspaces
+        SET user_id=?, updated_at=?
+        WHERE user_id IN (
+            SELECT tw.user_id
+            FROM table_workspaces tw
+            LEFT JOIN users u ON u.id = tw.user_id
+            WHERE u.id IS NULL
+        )
+        """,
+        (current_admin["id"], now_iso()),
+    )
+
+    old_existing_admin_ids = [uid for uid in admin_candidate_ids if uid != current_admin["id"]]
+    if old_existing_admin_ids:
+        placeholders = ",".join(["?"] * len(old_existing_admin_ids))
+        query_db(
+            f"UPDATE table_workspaces SET user_id=?, updated_at=? WHERE user_id IN ({placeholders})",
+            (current_admin["id"], now_iso(), *old_existing_admin_ids),
+        )
+
+    app.logger.info(
+        "[tables_migration] current_admin_id=%s username=%s email=%s old_admin_ids=%s",
+        current_admin["id"],
+        current_admin.get("username"),
+        current_admin.get("email"),
+        old_existing_admin_ids,
+    )
 
 
 def resolve_stream_url():
@@ -601,31 +668,28 @@ def sanitize_name(name):
 
 def table_user_from_request():
     session_user_id = session.get("user_id")
-    legacy_cookie_user_id = request.cookies.get("tables_user_id")
-    resolved_method = None
-    user_id = None
-
-    if session_user_id:
-        user_id = session_user_id
-        resolved_method = "session"
-    elif legacy_cookie_user_id:
-        user_id = legacy_cookie_user_id
-        resolved_method = "cookie"
-
-    if not user_id:
+    legacy_cookie_present = bool(request.cookies.get("tables_user_id"))
+    if not session_user_id:
         if request.path.startswith("/api/tables"):
-            app.logger.info("[tables_auth] resolved_user_id=None method=none")
+            reason = "missing_session"
+            if legacy_cookie_present:
+                reason = "missing_session_legacy_cookie_ignored"
+            app.logger.info("[tables_auth] resolved_user_id=None username=None email=None reason=%s", reason)
         return None
 
-    user = query_db("SELECT id, email FROM users WHERE id=?", (user_id,), one=True)
+    user = query_db("SELECT id, username, email FROM users WHERE id=?", (session_user_id,), one=True)
     if not user:
         if request.path.startswith("/api/tables"):
-            app.logger.info("[tables_auth] resolved_user_id=None method=%s", resolved_method or "none")
+            app.logger.info("[tables_auth] resolved_user_id=None username=None email=None reason=session_user_missing")
         return None
 
-    session["user_id"] = user["id"]
     if request.path.startswith("/api/tables"):
-        app.logger.info("[tables_auth] resolved_user_id=%s method=%s", user["id"], resolved_method or "none")
+        app.logger.info(
+            "[tables_auth] resolved_user_id=%s username=%s email=%s reason=session",
+            user["id"],
+            user.get("username"),
+            user.get("email"),
+        )
     return user
 
 
@@ -1166,12 +1230,7 @@ def tables_send_code():
 
 @app.route("/api/tables/verify_code", methods=["POST"])
 def tables_verify_code():
-    user = table_user_from_request()
-    if not user:
-        return jsonify({"detail": "Не авторизован. Используйте основной вход /login"}), 401
-    resp = make_response(jsonify({"status": "ok", "user_id": user["id"]}))
-    resp.set_cookie("tables_user_id", str(user["id"]), httponly=True, max_age=30 * 24 * 3600)
-    return resp
+    return jsonify({"detail": "Используйте основной вход /login"}), 410
 
 
 @app.route("/api/tables", methods=["GET"])
@@ -2170,8 +2229,9 @@ def stream_targets_update(target_id):
 
 # ------------ Запуск ------------
 init_db()
+ensure_admin_exists()
+migrate_tables_to_current_admin()
 start_tables_background_jobs()
 
 if __name__ == "__main__":
-    ensure_admin_exists()
     app.run(host="127.0.0.1", port=8083, debug=True)
