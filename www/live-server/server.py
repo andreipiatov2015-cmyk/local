@@ -43,7 +43,31 @@ load_env("/var/www/.env")
 
 # ------------ Flask ------------
 app = Flask(__name__, template_folder="templates", static_folder="static")
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change_this_secret_key_please")
+
+
+def resolve_app_secret_key():
+    env_secret = (os.environ.get("FLASK_SECRET_KEY") or os.environ.get("SECRET_KEY") or "").strip()
+    if env_secret:
+        return env_secret
+
+    secret_key_file = Path(os.environ.get("SECRET_KEY_FILE", os.path.join(BASE_DIR, ".flask_secret_key")))
+    if secret_key_file.exists():
+        key = secret_key_file.read_text(encoding="utf-8").strip()
+        if key:
+            return key
+
+    secret_key_file.parent.mkdir(parents=True, exist_ok=True)
+    generated = secrets.token_hex(32)
+    secret_key_file.write_text(generated, encoding="utf-8")
+    try:
+        os.chmod(secret_key_file, 0o600)
+    except OSError:
+        pass
+    app.logger.warning("[auth] SECRET_KEY not set in env; generated persistent key at %s", secret_key_file)
+    return generated
+
+
+app.secret_key = resolve_app_secret_key()
 
 # ------------ Константы (абсолютные пути) ------------
 DB_FILE = os.path.join(BASE_DIR, "app.db")
@@ -576,13 +600,32 @@ def sanitize_name(name):
 
 
 def table_user_from_request():
-    user_id = request.cookies.get("tables_user_id") or session.get("user_id")
+    session_user_id = session.get("user_id")
+    legacy_cookie_user_id = request.cookies.get("tables_user_id")
+    resolved_method = None
+    user_id = None
+
+    if session_user_id:
+        user_id = session_user_id
+        resolved_method = "session"
+    elif legacy_cookie_user_id:
+        user_id = legacy_cookie_user_id
+        resolved_method = "cookie"
+
     if not user_id:
+        if request.path.startswith("/api/tables"):
+            app.logger.info("[tables_auth] resolved_user_id=None method=none")
         return None
+
     user = query_db("SELECT id, email FROM users WHERE id=?", (user_id,), one=True)
     if not user:
+        if request.path.startswith("/api/tables"):
+            app.logger.info("[tables_auth] resolved_user_id=None method=%s", resolved_method or "none")
         return None
+
     session["user_id"] = user["id"]
+    if request.path.startswith("/api/tables"):
+        app.logger.info("[tables_auth] resolved_user_id=%s method=%s", user["id"], resolved_method or "none")
     return user
 
 
@@ -1118,45 +1161,14 @@ def tables_page():
 
 @app.route("/api/tables/send_code", methods=["POST"])
 def tables_send_code():
-    email = (request.form.get("email") or "").strip()
-    if not email:
-        return jsonify({"detail": "email обязателен"}), 400
-    code = str(int(time.time()))[-6:]
-    expires = (datetime.datetime.utcnow() + datetime.timedelta(minutes=10)).isoformat()
-    query_db("INSERT INTO email_codes (email, code, expires_at, created_at) VALUES (?, ?, ?, ?)", (email, code, expires, now_iso()))
-    print(f"[EMAIL-CODE] {email}: {code}")
-    return jsonify({"status": "ok"})
+    return jsonify({"detail": "Используйте основной вход /login"}), 410
 
 
 @app.route("/api/tables/verify_code", methods=["POST"])
 def tables_verify_code():
-    email = (request.form.get("email") or "").strip()
-    code = (request.form.get("code") or "").strip()
-    row = query_db(
-        "SELECT * FROM email_codes WHERE email=? AND code=? AND used=0 ORDER BY id DESC LIMIT 1",
-        (email, code),
-        one=True,
-    )
-    if not row or row["expires_at"] < now_iso():
-        return jsonify({"detail": "Неверный или просроченный код"}), 400
-
-    query_db("UPDATE email_codes SET used=1 WHERE id=?", (row["id"],))
-    user = query_db("SELECT id FROM users WHERE email=?", (email,), one=True)
+    user = table_user_from_request()
     if not user:
-        salt = "tables"
-        base_username = (email.split("@")[0] or "tables_user").strip()
-        username = base_username
-        suffix = 1
-        while query_db("SELECT id FROM users WHERE username=?", (username,), one=True):
-            suffix += 1
-            username = f"{base_username}_{suffix}"
-        query_db(
-            "INSERT INTO users (username, email, password_hash, password_salt, role, is_verified, created_at, updated_at) VALUES (?, ?, ?, ?, 'viewer', 1, ?, ?)",
-            (username, email, salt, salt, now_iso(), now_iso()),
-        )
-        user = query_db("SELECT id FROM users WHERE email=?", (email,), one=True)
-
-    session["user_id"] = user["id"]
+        return jsonify({"detail": "Не авторизован. Используйте основной вход /login"}), 401
     resp = make_response(jsonify({"status": "ok", "user_id": user["id"]}))
     resp.set_cookie("tables_user_id", str(user["id"]), httponly=True, max_age=30 * 24 * 3600)
     return resp
