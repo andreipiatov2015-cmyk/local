@@ -12,7 +12,8 @@ document.addEventListener("DOMContentLoaded", () => {
     return;
   }
 
-  const streamUrl = `${window.location.protocol}//${window.location.host}/hls/stream.m3u8`;
+  // Формируем URL относительно origin, чтобы всегда сохранялся текущий порт (например, :8082).
+  const streamUrl = new URL('/hls/stream.m3u8', window.location.origin).toString();
   let hls = null;
 
   function initPlayer(url) {

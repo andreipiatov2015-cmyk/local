@@ -2,32 +2,39 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Регистрация</title>
   <link rel="stylesheet" href="/static/admin.css">
 </head>
 <body class="auth-page">
-  <form class="card auth-card" method="post" action="/register">
+  <form class="card auth-card auth-form" method="post" action="/register">
     <h2>Регистрация</h2>
     <div class="form-field">
-      <label>Имя пользователя</label>
-      <input type="text" name="username" required />
+      <label for="username">Имя пользователя</label>
+      <input id="username" type="text" name="username" required />
     </div>
     <div class="form-field">
-      <label>E-mail</label>
-      <input type="email" name="email" required />
+      <label for="email">E-mail</label>
+      <input id="email" type="email" name="email" required />
     </div>
-    <div class="form-field" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+    <div class="form-field auth-form-grid">
       <div>
-        <label>Пароль</label>
-        <input type="password" name="password" required />
+        <label for="password">Пароль</label>
+        <input id="password" type="password" name="password" required />
       </div>
       <div>
-        <label>Повтор пароля</label>
-        <input type="password" name="confirm" required />
+        <label for="confirm">Повтор пароля</label>
+        <input id="confirm" type="password" name="confirm" required />
       </div>
     </div>
-    <button type="submit" class="btn btn-primary" style="width:100%;">Создать аккаунт</button>
-    <p style="margin-top:12px"><a href="/login">У меня уже есть аккаунт</a></p>
+    {% if status_message %}
+    <div class="auth-alert auth-alert-success">{{ status_message }}</div>
+    {% endif %}
+    {% if error_message %}
+    <div class="auth-alert auth-alert-error">{{ error_message }}</div>
+    {% endif %}
+    <button type="submit" class="btn btn-primary auth-submit">Создать аккаунт</button>
+    <a href="/login" class="auth-text-link">У меня уже есть аккаунт</a>
   </form>
 </body>
 </html>

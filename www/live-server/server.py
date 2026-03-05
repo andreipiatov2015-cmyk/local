@@ -15,6 +15,8 @@ import threading
 import shutil
 import re
 import uuid
+import traceback
+import logging
 from functools import wraps
 from pathlib import Path
 
@@ -43,6 +45,17 @@ load_env("/var/www/.env")
 
 # ------------ Flask ------------
 app = Flask(__name__, template_folder="templates", static_folder="static")
+
+LOG_FILE = os.environ.get("LIVE_SERVER_LOG_FILE", "/var/log/live-server.log")
+if not any(isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "") == LOG_FILE for h in app.logger.handlers):
+    try:
+        file_handler = logging.FileHandler(LOG_FILE)
+        file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+        file_handler.setLevel(logging.INFO)
+        app.logger.addHandler(file_handler)
+    except Exception:
+        # Если файловый лог не подключился (например, нет прав), используем стандартный логгер Flask.
+        app.logger.exception("[logging] failed to initialize file handler for %s", LOG_FILE)
 
 
 def resolve_app_secret_key():
@@ -338,12 +351,14 @@ def generate_token(n_bytes=24): return secrets.token_urlsafe(n_bytes)
 # ------------ Email ------------
 def send_email(to_email, subject, body):
     if not SMTP_HOST or not SMTP_USER or not SMTP_PASSWORD:
-        print("\n--- EMAIL DEBUG ---")
-        print("TO:", to_email)
-        print("SUBJECT:", subject)
-        print(body)
-        print("--- END EMAIL ---\n")
-        return
+        app.logger.error(
+            "[email] SMTP is not configured host=%s user_set=%s password_set=%s to=%s",
+            SMTP_HOST,
+            bool(SMTP_USER),
+            bool(SMTP_PASSWORD),
+            to_email,
+        )
+        raise RuntimeError("SMTP_NOT_CONFIGURED")
 
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = subject
@@ -354,8 +369,17 @@ def send_email(to_email, subject, body):
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.send_message(msg)
-    except Exception as e:
-        print("Ошибка отправки письма:", e)
+    except Exception as exc:
+        # Логируем traceback целиком для диагностики проблем SMTP.
+        app.logger.error(
+            "[email] send failed to=%s host=%s port=%s error=%s\n%s",
+            to_email,
+            SMTP_HOST,
+            SMTP_PORT,
+            exc,
+            traceback.format_exc(),
+        )
+        raise RuntimeError("SMTP_SEND_FAILED") from exc
 
 # ------------ Авторизация ------------
 def get_current_user():
@@ -464,10 +488,9 @@ def migrate_tables_to_current_admin():
 
 def resolve_stream_url():
     if HLS_STREAM_URL:
+        # Поддерживаем как абсолютный URL, так и относительный путь из env.
         return HLS_STREAM_URL
-    scheme = request.headers.get("X-Forwarded-Proto", request.scheme) or "http"
-    host = request.host or "127.0.0.1"
-    return f"{scheme}://{host}/hls/stream.m3u8"
+    return "/hls/stream.m3u8"
 
 # ------------ Маршруты ------------
 @app.route("/")
@@ -606,17 +629,20 @@ def staff_change_password(user_id):
 # --- Логин / Регистрация ---
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    error_message = None
     if request.method == "POST":
         username_or_email = request.form.get("username", "")
         password = request.form.get("password", "")
         row = query_db("SELECT * FROM users WHERE username=? OR email=?", (username_or_email, username_or_email), one=True)
         if not row or not verify_password(password, row["password_salt"], row["password_hash"]):
-            return "Неверный логин или пароль", 401
+            error_message = "Неверный логин или пароль"
+            return render_template("login.html", error_message=error_message), 401
         if row["is_verified"] != 1:
-            return "Подтвердите e-mail.", 403
+            error_message = "Подтвердите e-mail."
+            return render_template("login.html", error_message=error_message), 403
         session["user_id"] = row["id"]
         return redirect(url_for("admin"))
-    return render_template("login.html")
+    return render_template("login.html", error_message=error_message)
 
 @app.route("/logout")
 def logout():
@@ -625,15 +651,30 @@ def logout():
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
+    status_message = None
+    error_message = None
+    status_code = 200
     if request.method == "POST":
         username = request.form.get("username", "")
         email = request.form.get("email", "")
         password = request.form.get("password", "")
         confirm = request.form.get("confirm", "")
+        wants_json = request.is_json or "application/json" in (request.headers.get("Accept", ""))
+
         if not username or not email or not password or password != confirm:
-            return "Ошибка регистрации", 400
+            error_message = "Проверьте введённые данные и повторите попытку."
+            status_code = 400
+            if wants_json:
+                return jsonify({"detail": error_message}), status_code
+            return render_template("register.html", error_message=error_message, status_message=status_message), status_code
+
         if query_db("SELECT 1 FROM users WHERE username=? OR email=?", (username, email), one=True):
-            return "Такой пользователь уже есть", 409
+            error_message = "Такой пользователь уже есть"
+            status_code = 409
+            if wants_json:
+                return jsonify({"detail": error_message}), status_code
+            return render_template("register.html", error_message=error_message, status_message=status_message), status_code
+
         salt = make_salt()
         pwd_hash = hash_password(password, salt)
         token = generate_token()
@@ -641,9 +682,23 @@ def register():
         query_db("INSERT INTO users (username, email, password_hash, password_salt, role, is_verified, verify_token, created_at, updated_at) VALUES (?, ?, ?, ?, 'viewer', 0, ?, ?, ?)",
                  (username, email, pwd_hash, salt, token, now, now))
         verify_link = f"{request.host_url.rstrip('/')}{url_for('verify')}?token={token}"
-        send_email(email, "Подтверждение регистрации", f"Подтвердите ваш e-mail: {verify_link}")
-        return "Регистрация успешна, проверьте почту", 200
-    return render_template("register.html")
+
+        try:
+            send_email(email, "Подтверждение регистрации", f"Подтвердите ваш e-mail: {verify_link}")
+        except RuntimeError:
+            query_db("DELETE FROM users WHERE verify_token=?", (token,))
+            error_message = "Не удалось отправить письмо. Проверьте настройки SMTP."
+            status_code = 500
+            if wants_json:
+                return jsonify({"detail": error_message}), status_code
+            return render_template("register.html", error_message=error_message, status_message=status_message), status_code
+
+        status_message = f"Письмо отправлено на почту {email}. Проверьте входящие и папку спам."
+        if wants_json:
+            return jsonify({"detail": status_message}), 200
+        return render_template("register.html", status_message=status_message, error_message=error_message), 200
+
+    return render_template("register.html", status_message=status_message, error_message=error_message)
 
 @app.route("/verify")
 def verify():
