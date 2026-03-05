@@ -678,7 +678,10 @@ def table_user_from_request():
         return None
 
     user = query_db("SELECT id, username, email FROM users WHERE id=?", (session_user_id,), one=True)
-    if not user:
+    if user is not None and not isinstance(user, dict):
+        user = dict(user)
+
+    if user is None:
         if request.path.startswith("/api/tables"):
             app.logger.info("[tables_auth] resolved_user_id=None username=None email=None reason=session_user_missing")
         return None
