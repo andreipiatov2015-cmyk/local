@@ -8,6 +8,13 @@ PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 LIVE_SERVER_HOST="127.0.0.1"
 LIVE_SERVER_PORT="8083"
 
+# ===== SMTP (registration emails) =====
+export SMTP_HOST="${SMTP_HOST:-smtp.yandex.ru}"
+export SMTP_PORT="${SMTP_PORT:-465}"
+export SMTP_USER="${SMTP_USER:-kcdoregister@yandex.ru}"
+export SMTP_PASSWORD="${SMTP_PASSWORD:-Andrei25082002}"
+export SMTP_FROM="${SMTP_FROM:-kcdoregister@yandex.ru}"
+
 # Custom nginx (with RTMP) installed manually
 CUSTOM_NGINX_BIN="/usr/local/nginx/sbin/nginx"
 CUSTOM_NGINX_CONF="/usr/local/nginx/conf/nginx.conf"
