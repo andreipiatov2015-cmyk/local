@@ -168,3 +168,16 @@
     padding: 12px;
   }
 }
+
+.program-mode { margin-top: 12px; }
+#programTable { width: 100%; border-collapse: collapse; }
+#programTable th, #programTable td { border: 1px solid #e2e8f0; padding: 6px; }
+#programTable th { background: #f8fafc; position: sticky; top: 0; }
+.program-problem-row { background: #fee2e2; }
+.program-break-row { background: #e5e7eb; }
+.program-insert-row td { text-align: center; background: #f8fafc; }
+.insert-break-btn { border: none; background: transparent; color: #334155; cursor: pointer; }
+.drag-handle { cursor: grab; text-align: center; }
+.clickable-number { cursor: pointer; font-weight: 700; }
+.autosave-status { font-size: 13px; color: #334155; align-self: center; }
+#receiptViewerDialog img { max-width: 80vw; max-height: 70vh; display: block; margin-bottom: 12px; }
