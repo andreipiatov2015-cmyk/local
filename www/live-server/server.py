@@ -1869,6 +1869,15 @@ def list_program_items_raw(table_id):
     return query_db("SELECT * FROM table_program_items WHERE table_id=? ORDER BY sort_index, id", (table_id,))
 
 
+def has_local_entry_file(table_id, user_id, local_value, *, placeholder_for_audio=False):
+    file_name = str(local_value or "").strip()
+    if not file_name:
+        return False
+    if placeholder_for_audio and file_name.lower() == "audio.txt":
+        return False
+    return os.path.exists(os.path.join(storage_for_table(user_id, table_id), file_name))
+
+
 def apply_program_order(table_id, ordered_ids):
     ts = now_iso()
     for idx, item_id in enumerate(ordered_ids, start=1):
@@ -1879,7 +1888,7 @@ def apply_program_order(table_id, ordered_ids):
     query_db("UPDATE table_workspaces SET program_updated_at=?, updated_at=? WHERE id=?", (ts, ts, table_id))
 
 
-def get_program_items_payload(table_id):
+def get_program_items_payload(table_id, user_id):
     rows = list_program_items_raw(table_id)
     payload = []
     display_number = 0
@@ -1901,9 +1910,9 @@ def get_program_items_payload(table_id):
             continue
         entry = dict(entry)
         display_number += 1
-        has_audio = bool(entry.get("audio_local")) and str(entry.get("audio_local", "")).lower() != "audio.txt"
-        has_receipt = bool(entry.get("receipt_local"))
-        has_presentation = bool(entry.get("presentation_local"))
+        has_audio = has_local_entry_file(table_id, user_id, entry.get("audio_local"), placeholder_for_audio=True)
+        has_receipt = has_local_entry_file(table_id, user_id, entry.get("receipt_local"))
+        has_presentation = has_local_entry_file(table_id, user_id, entry.get("presentation_local"))
         payload.append(
             {
                 "program_item_id": item["id"],
@@ -2013,7 +2022,7 @@ def get_program(table_id):
     return jsonify({
         "table_id": table_id,
         "is_finalized": int(table["is_finalized"] or 0) == 1,
-        "items": get_program_items_payload(table_id),
+        "items": get_program_items_payload(table_id, user["id"]),
     })
 
 
@@ -2033,7 +2042,7 @@ def reorder_program(table_id):
     if sorted(existing_ids) != sorted(ids):
         return jsonify({"detail": "Список элементов не совпадает с программой"}), 400
     apply_program_order(table_id, ids)
-    return jsonify({"status": "ok", "items": get_program_items_payload(table_id)})
+    return jsonify({"status": "ok", "items": get_program_items_payload(table_id, user["id"])})
 
 
 @app.route("/api/tables/<int:table_id>/program/item/<int:item_id>/move_to_position", methods=["PATCH"])
@@ -2068,7 +2077,7 @@ def move_program_item(table_id, item_id):
 
     remaining_full.insert(insert_idx, item_id)
     apply_program_order(table_id, remaining_full)
-    return jsonify({"status": "ok", "items": get_program_items_payload(table_id)})
+    return jsonify({"status": "ok", "items": get_program_items_payload(table_id, user["id"])})
 
 
 @app.route("/api/tables/<int:table_id>/program/break", methods=["POST"])
@@ -2081,28 +2090,36 @@ def add_program_break(table_id):
     payload = request.get_json(silent=True) or {}
     minutes = int(payload.get("break_minutes") or 0)
     after_item_id = payload.get("after_item_id")
+    before_item_id = payload.get("before_item_id")
     if minutes <= 0:
         return jsonify({"detail": "break_minutes должен быть больше 0"}), 400
 
     rows = [dict(r) for r in list_program_items_raw(table_id)]
+    all_ids = [r["id"] for r in rows]
+
+    insert_index = len(all_ids)
+    if before_item_id is not None:
+        try:
+            before_item_id = int(before_item_id)
+            insert_index = all_ids.index(before_item_id)
+        except Exception:
+            return jsonify({"detail": "before_item_id не найден в программе"}), 400
+    elif after_item_id is not None:
+        try:
+            after_item_id = int(after_item_id)
+            insert_index = all_ids.index(after_item_id) + 1
+        except Exception:
+            return jsonify({"detail": "after_item_id не найден в программе"}), 400
+
     ts = now_iso()
     query_db(
         "INSERT INTO table_program_items (table_id, kind, entry_id, sort_index, break_minutes, created_at, updated_at) VALUES (?, 'break', NULL, ?, ?, ?, ?)",
         (table_id, (len(rows) + 1) * 1000, minutes, ts, ts),
     )
     new_item_id = query_db("SELECT last_insert_rowid() AS id", one=True)["id"]
-    all_ids = [r["id"] for r in rows]
-    if after_item_id is None:
-        all_ids.insert(0, new_item_id)
-    else:
-        try:
-            after_item_id = int(after_item_id)
-            idx = all_ids.index(after_item_id)
-            all_ids.insert(idx + 1, new_item_id)
-        except Exception:
-            all_ids.append(new_item_id)
+    all_ids.insert(insert_index, new_item_id)
     apply_program_order(table_id, all_ids)
-    return jsonify({"status": "ok", "items": get_program_items_payload(table_id)})
+    return jsonify({"status": "ok", "items": get_program_items_payload(table_id, user["id"])})
 
 
 @app.route("/api/tables/<int:table_id>/program/item/<int:item_id>", methods=["DELETE"])
@@ -2120,7 +2137,7 @@ def delete_program_item(table_id, item_id):
     query_db("DELETE FROM table_program_items WHERE id=? AND table_id=?", (item_id, table_id))
     rows = [r["id"] for r in list_program_items_raw(table_id)]
     apply_program_order(table_id, rows)
-    return jsonify({"status": "ok", "items": get_program_items_payload(table_id)})
+    return jsonify({"status": "ok", "items": get_program_items_payload(table_id, user["id"])})
 
 
 def send_program_file(table_id, item_id, kind, user_id):
@@ -2180,7 +2197,7 @@ def download_program_all(table_id):
         return jsonify({"detail": "Не авторизован"}), 401
     if not table_owned_or_404(table_id, user["id"]):
         return jsonify({"detail": "Таблица не найдена"}), 404
-    items = get_program_items_payload(table_id)
+    items = get_program_items_payload(table_id, user["id"])
     mem = io.BytesIO()
     with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for item in items:

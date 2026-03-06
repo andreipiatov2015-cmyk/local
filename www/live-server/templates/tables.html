@@ -45,7 +45,7 @@
     </div>
   </aside>
 
-  <main class="content container tables-content">
+  <main id="tablesContent" class="content container tables-content">
     <section id="workspace" class="card">
       <h1 class="page-title">Таблицы заявок конкурса</h1>
       <div class="row">
@@ -57,7 +57,7 @@
 
     <section id="tableView" class="card hidden">
       <h2 id="tableTitle">Таблица</h2>
-      <div class="row wrap">
+      <div id="prepareControls" class="row wrap">
         <input type="file" id="excelFile" accept=".xlsx,.xls" />
         <button id="uploadExcel" class="btn btn-secondary">Загрузить Excel</button>
         <button id="connectYandex" class="btn btn-secondary">Подключить Яндекс</button>
@@ -65,12 +65,12 @@
         <button id="startDownload" class="btn btn-primary" disabled>Старт скачивания</button>
         <button id="finalizeTable" class="btn btn-primary hidden">Сформировать</button>
       </div>
-      <p id="progress"></p>
-      <p id="yandexStatus" class="status-badge status-badge--muted">Яндекс: не подключен</p>
-      <p id="yandexHint"></p>
-      <p id="mappingAutofillInfo" class="mapping-autofill-info hidden"></p>
-      <p id="previewError" class="preview-error hidden"></p>
-      <section id="mappingPanel" class="mapping-panel">
+      <p id="progress" class="prepare-only"></p>
+      <p id="yandexStatus" class="status-badge status-badge--muted prepare-only">Яндекс: не подключен</p>
+      <p id="yandexHint" class="prepare-only"></p>
+      <p id="mappingAutofillInfo" class="mapping-autofill-info hidden prepare-only"></p>
+      <p id="previewError" class="preview-error hidden prepare-only"></p>
+      <section id="mappingPanel" class="mapping-panel prepare-only">
         <details id="mappingAccordion" class="mapping-accordion">
           <summary id="mappingSummary" class="mapping-summary">Схема: 0/0 заполнено</summary>
           <div class="mapping-expanded">
@@ -84,7 +84,7 @@
         </details>
       </section>
 
-      <div class="table-layout" id="prepareMode">
+      <div class="table-layout prepare-only" id="prepareMode">
         <div class="table-scroll">
           <table id="excelTable">
             <colgroup id="excelColgroup"></colgroup>
@@ -106,7 +106,7 @@
         <div class="table-scroll">
           <table id="programTable">
             <thead>
-              <tr><th>№</th><th>↕</th><th>Название</th><th>ФИО</th><th>Коллектив</th><th>Фонограмма</th><th>Квиток</th><th>Презентация</th><th>Действия</th></tr>
+              <tr><th>№</th><th>↕</th><th>Название</th><th>ФИО</th><th>Коллектив</th><th>Фонограмма</th><th>Квиток</th><th>Презентация</th></tr>
             </thead>
             <tbody id="programBody"></tbody>
           </table>

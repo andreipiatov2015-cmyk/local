@@ -1,7 +1,12 @@
 .tables-content {
   align-items: stretch;
-  width: calc(100% - 40px);
-  max-width: 1500px;
+  width: calc(100% - 24px);
+  max-width: 1800px;
+}
+
+.tables-content.program-only {
+  width: calc(100% - 24px);
+  max-width: none;
 }
 
 .tables-content .card {
@@ -169,10 +174,16 @@
   }
 }
 
-.program-mode { margin-top: 12px; }
-#programTable { width: 100%; border-collapse: collapse; }
-#programTable th, #programTable td { border: 1px solid #e2e8f0; padding: 6px; }
+.program-mode { margin-top: 12px; width: 100%; }
+.program-mode .table-scroll { max-height: 72vh; }
+#programTable { width: 100%; border-collapse: collapse; table-layout: fixed; }
+#programTable th, #programTable td { border: 1px solid #e2e8f0; padding: 8px; white-space: normal; overflow-wrap: anywhere; word-break: break-word; vertical-align: top; }
 #programTable th { background: #f8fafc; position: sticky; top: 0; }
+#programTable th:nth-child(1), #programTable td:nth-child(1) { width: 54px; text-align: center; }
+#programTable th:nth-child(2), #programTable td:nth-child(2) { width: 52px; text-align: center; }
+#programTable th:nth-child(6), #programTable td:nth-child(6),
+#programTable th:nth-child(7), #programTable td:nth-child(7),
+#programTable th:nth-child(8), #programTable td:nth-child(8) { width: 132px; }
 .program-problem-row { background: #fee2e2; }
 .program-break-row { background: #e5e7eb; }
 .program-insert-row td { text-align: center; background: #f8fafc; }
@@ -181,3 +192,6 @@
 .clickable-number { cursor: pointer; font-weight: 700; }
 .autosave-status { font-size: 13px; color: #334155; align-self: center; }
 #receiptViewerDialog img { max-width: 80vw; max-height: 70vh; display: block; margin-bottom: 12px; }
+
+.program-break-cell { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.btn-inline { padding: 6px 10px; }
