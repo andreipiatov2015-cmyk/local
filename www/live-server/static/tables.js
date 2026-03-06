@@ -30,6 +30,8 @@ const mappingDialogActions = document.getElementById('mappingDialogActions');
 const previewErrorEl = document.getElementById('previewError');
 const prepareModeEl = document.getElementById('prepareMode');
 const programModeEl = document.getElementById('programMode');
+const prepareControlsEl = document.getElementById('prepareControls');
+const tablesContentEl = document.getElementById('tablesContent');
 const programBody = document.getElementById('programBody');
 const programSearch = document.getElementById('programSearch');
 const filterNoAudio = document.getElementById('filterNoAudio');
@@ -68,9 +70,12 @@ function setAutosave(text) {
 function setProgramMode(enabled) {
   isProgramMode = !!enabled;
   programModeEl.classList.toggle('hidden', !isProgramMode);
-  prepareModeEl.classList.toggle('hidden', isProgramMode);
-  document.getElementById('mappingPanel').classList.toggle('hidden', isProgramMode);
+  document.querySelectorAll('.prepare-only').forEach((el) => {
+    el.classList.toggle('hidden', isProgramMode);
+  });
+  if (prepareControlsEl) prepareControlsEl.classList.toggle('hidden', isProgramMode);
   finalizeTableBtn.classList.toggle('hidden', isProgramMode);
+  tablesContentEl?.classList.toggle('program-only', isProgramMode);
 }
 
 function setYandexState(status, errText = '', vncUrl = null) {
@@ -398,7 +403,7 @@ function renderProgram() {
 
     if (item.kind === 'break') {
       tr.className = 'program-break-row';
-      tr.innerHTML = `<td></td><td>≡</td><td colspan="6">${item.label}</td><td><button class="btn btn-secondary">Удалить</button></td>`;
+      tr.innerHTML = `<td></td><td>≡</td><td colspan="6"><div class="program-break-cell"><span>${item.label}</span><button class="btn btn-secondary btn-inline">Удалить</button></div></td>`;
       tr.querySelector('button').onclick = () => deleteBreak(item.program_item_id);
     } else {
       tr.className = item.is_problematic ? 'program-problem-row' : '';
@@ -458,22 +463,15 @@ function renderProgram() {
         tdPres.appendChild(aPres);
       }
       tr.appendChild(tdPres);
-
-      const tdActions = document.createElement('td');
-      const plus = document.createElement('button');
-      plus.className = 'btn btn-secondary';
-      plus.textContent = '+ перерыв';
-      plus.onclick = () => addBreakAfter(item.program_item_id);
-      tdActions.appendChild(plus);
-      tr.appendChild(tdActions);
     }
 
     programBody.appendChild(tr);
     if (item.kind === 'entry' && idx < items.length - 1) {
       const plusRow = document.createElement('tr');
       plusRow.className = 'program-insert-row';
-      plusRow.innerHTML = '<td colspan="9"><button class="insert-break-btn">+ добавить перерыв здесь</button></td>';
-      plusRow.querySelector('button').onclick = () => addBreakAfter(item.program_item_id);
+      plusRow.innerHTML = '<td colspan="8"><button class="insert-break-btn">+ добавить перерыв здесь</button></td>';
+      const nextItem = items.slice(idx + 1).find((x) => x.kind === 'entry');
+      plusRow.querySelector('button').onclick = () => addBreakAfter(item.program_item_id, nextItem ? nextItem.program_item_id : null);
       programBody.appendChild(plusRow);
     }
   });
@@ -500,12 +498,12 @@ async function reorderByDrop(fromId, toId) {
   setAutosave('Изменения сохранены');
 }
 
-async function addBreakAfter(afterItemId) {
+async function addBreakAfter(afterItemId, beforeItemId = null) {
   const mins = Number(prompt('Перерыв в минутах', '10'));
   if (!mins) return;
   setAutosave('Сохраняю…');
   const resp = await fetch(`/api/tables/${currentTableId}/program/break`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ after_item_id: afterItemId, break_minutes: mins })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ after_item_id: afterItemId, before_item_id: beforeItemId, break_minutes: mins })
   });
   if (requireAuth(resp)) return;
   const data = await resp.json().catch(() => ({}));
@@ -547,10 +545,12 @@ async function openTable(id, title) {
   tableTitle.textContent = `Таблица: ${title} (#${id})`;
   tableView.classList.remove('hidden');
   showAutofillInfo('');
-  setProgramMode(false);
-  await refreshMapping();
-  await loadExcelPreview();
   await refreshTables();
+  await loadProgram();
+  if (!isProgramMode) {
+    await refreshMapping();
+    await loadExcelPreview();
+  }
 }
 
 function initTablesSection() {
