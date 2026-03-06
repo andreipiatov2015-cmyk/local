@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session, g, make_response, send_file
 import json
 import os
+import io
 import smtplib
 from email.mime.text import MIMEText
 import sqlite3
@@ -17,6 +18,7 @@ import re
 import uuid
 import traceback
 import logging
+import zipfile
 from functools import wraps
 from pathlib import Path
 
@@ -299,6 +301,21 @@ def init_db():
     """)
 
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS table_program_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            entry_id INTEGER,
+            sort_index REAL NOT NULL,
+            break_minutes INTEGER,
+            notes TEXT,
+            is_hidden INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS yandex_connect_sessions (
             connect_id TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL,
@@ -323,8 +340,13 @@ def init_db():
         "ALTER TABLE table_workspaces ADD COLUMN yandex_status TEXT NOT NULL DEFAULT 'disconnected'",
         "ALTER TABLE table_workspaces ADD COLUMN yandex_last_error TEXT",
         "ALTER TABLE table_workspaces ADD COLUMN yandex_last_checked_at TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN is_finalized INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE table_workspaces ADD COLUMN finalized_at TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN program_updated_at TEXT",
         "ALTER TABLE table_entries ADD COLUMN row_id INTEGER",
         "ALTER TABLE table_entries ADD COLUMN row_data_json TEXT",
+        "ALTER TABLE table_program_items ADD COLUMN notes TEXT",
+        "ALTER TABLE table_program_items ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0",
     ]:
         try:
             cur.execute(stmt)
@@ -1297,7 +1319,7 @@ def list_tables():
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
     rows = query_db(
-        "SELECT id, title, status, total_count, processed_count, progress, last_error, created_at, mapping_json, yandex_status, yandex_last_error, yandex_last_checked_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC",
+        "SELECT id, title, status, total_count, processed_count, progress, last_error, created_at, mapping_json, yandex_status, yandex_last_error, yandex_last_checked_at, is_finalized, finalized_at, program_updated_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC",
         (user["id"],),
     )
     result = []
@@ -1826,6 +1848,375 @@ def list_table_entries(table_id):
         return jsonify({"detail": "Таблица не найдена"}), 404
     rows = query_db("SELECT * FROM table_entries WHERE table_id=? ORDER BY id", (table_id,))
     return jsonify([dict(r) for r in rows])
+
+
+def table_owned_or_404(table_id, user_id):
+    return query_db("SELECT * FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user_id), one=True)
+
+
+def break_label(minutes):
+    mins = int(minutes or 0)
+    h = mins // 60
+    m = mins % 60
+    if h and m:
+        return f"Перерыв — {h} ч {m} мин"
+    if h:
+        return f"Перерыв — {h} ч"
+    return f"Перерыв — {m} минут"
+
+
+def list_program_items_raw(table_id):
+    return query_db("SELECT * FROM table_program_items WHERE table_id=? ORDER BY sort_index, id", (table_id,))
+
+
+def apply_program_order(table_id, ordered_ids):
+    ts = now_iso()
+    for idx, item_id in enumerate(ordered_ids, start=1):
+        query_db(
+            "UPDATE table_program_items SET sort_index=?, updated_at=? WHERE id=? AND table_id=?",
+            (idx * 1000, ts, item_id, table_id),
+        )
+    query_db("UPDATE table_workspaces SET program_updated_at=?, updated_at=? WHERE id=?", (ts, ts, table_id))
+
+
+def get_program_items_payload(table_id):
+    rows = list_program_items_raw(table_id)
+    payload = []
+    display_number = 0
+    for r in rows:
+        item = dict(r)
+        if item["kind"] == "break":
+            payload.append(
+                {
+                    "program_item_id": item["id"],
+                    "kind": "break",
+                    "break_minutes": item["break_minutes"],
+                    "label": break_label(item["break_minutes"]),
+                }
+            )
+            continue
+
+        entry = query_db("SELECT * FROM table_entries WHERE id=? AND table_id=?", (item["entry_id"], table_id), one=True)
+        if not entry:
+            continue
+        entry = dict(entry)
+        display_number += 1
+        has_audio = bool(entry.get("audio_local")) and str(entry.get("audio_local", "")).lower() != "audio.txt"
+        has_receipt = bool(entry.get("receipt_local"))
+        has_presentation = bool(entry.get("presentation_local"))
+        payload.append(
+            {
+                "program_item_id": item["id"],
+                "kind": "entry",
+                "entry_id": entry["id"],
+                "display_number": display_number,
+                "row_id": entry.get("row_id"),
+                "number_title": entry.get("number_title") or "",
+                "fio": entry.get("fio") or "",
+                "team": entry.get("team") or "",
+                "has_audio": has_audio,
+                "has_receipt": has_receipt,
+                "has_presentation": has_presentation,
+                "audio_download_url": f"/api/tables/{table_id}/program/download/audio/{item['id']}",
+                "receipt_open_url": f"/api/tables/{table_id}/program/download/receipt/{item['id']}",
+                "receipt_download_url": f"/api/tables/{table_id}/program/download/receipt/{item['id']}?download=1",
+                "presentation_download_url": f"/api/tables/{table_id}/program/download/presentation/{item['id']}",
+                "is_problematic": not has_audio,
+            }
+        )
+    return payload
+
+
+def clean_name_part(text, fallback):
+    raw = str(text or "").strip()
+    raw = re.sub(r"\s+", " ", raw)
+    raw = re.sub(r'[\/:*?"<>|]', " ", raw)
+    raw = re.sub(r"\s*-\s*-+", " - ", raw)
+    raw = raw.strip(" .-")
+    return raw or fallback
+
+
+def build_program_filename(display_number, entry, ext):
+    entry_id = entry.get("id")
+    title = clean_name_part(entry.get("number_title"), f"entry-{entry_id}")
+    fio = clean_name_part(entry.get("fio"), f"entry-{entry_id}")
+    base = f"{int(display_number):03d} - {title} - {fio}"
+    base = re.sub(r"\s+", " ", base)
+    base = re.sub(r"-\s*-+", "-", base)
+    base = base.strip()
+    return make_safe_basename(base, fallback=f"{int(display_number):03d}-entry-{entry_id}") + f".{ext}"
+
+
+def get_program_entry_item(table_id, item_id, user_id):
+    table = table_owned_or_404(table_id, user_id)
+    if not table:
+        return None, None, (jsonify({"detail": "Таблица не найдена"}), 404)
+    rows = list_program_items_raw(table_id)
+    display_number = 0
+    target = None
+    for row in rows:
+        row = dict(row)
+        if row["kind"] == "entry":
+            display_number += 1
+        if row["id"] == item_id:
+            target = row
+            break
+    if not target:
+        return None, None, (jsonify({"detail": "Элемент программы не найден"}), 404)
+    if target["kind"] != "entry":
+        return None, None, (jsonify({"detail": "Элемент не является выступлением"}), 400)
+    entry = query_db("SELECT * FROM table_entries WHERE id=? AND table_id=?", (target["entry_id"], table_id), one=True)
+    if not entry:
+        return None, None, (jsonify({"detail": "Строка выступления не найдена"}), 404)
+    return dict(target), {**dict(entry), "display_number": display_number}, None
+
+
+@app.route("/api/tables/<int:table_id>/finalize", methods=["POST"])
+def finalize_table(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = table_owned_or_404(table_id, user["id"])
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    existing = query_db("SELECT id FROM table_program_items WHERE table_id=? LIMIT 1", (table_id,), one=True)
+    if existing:
+        query_db(
+            "UPDATE table_workspaces SET is_finalized=1, finalized_at=COALESCE(finalized_at, ?), program_updated_at=COALESCE(program_updated_at, ?), updated_at=? WHERE id=?",
+            (now_iso(), now_iso(), now_iso(), table_id),
+        )
+        return jsonify({"status": "ok", "already_finalized": True})
+
+    entries = query_db("SELECT id FROM table_entries WHERE table_id=? ORDER BY COALESCE(row_id, id), id", (table_id,))
+    ts = now_iso()
+    for idx, e in enumerate(entries, start=1):
+        query_db(
+            "INSERT INTO table_program_items (table_id, kind, entry_id, sort_index, break_minutes, created_at, updated_at) VALUES (?, 'entry', ?, ?, NULL, ?, ?)",
+            (table_id, e["id"], idx * 1000, ts, ts),
+        )
+    query_db(
+        "UPDATE table_workspaces SET is_finalized=1, finalized_at=?, program_updated_at=?, updated_at=? WHERE id=?",
+        (ts, ts, ts, table_id),
+    )
+    return jsonify({"status": "ok", "created_items": len(entries)})
+
+
+@app.route("/api/tables/<int:table_id>/program", methods=["GET"])
+def get_program(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = table_owned_or_404(table_id, user["id"])
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    return jsonify({
+        "table_id": table_id,
+        "is_finalized": int(table["is_finalized"] or 0) == 1,
+        "items": get_program_items_payload(table_id),
+    })
+
+
+@app.route("/api/tables/<int:table_id>/program/reorder", methods=["PATCH"])
+def reorder_program(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not table_owned_or_404(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get("program_item_ids") if isinstance(payload, dict) else None
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"detail": "program_item_ids должен быть непустым списком"}), 400
+    rows = list_program_items_raw(table_id)
+    existing_ids = [r["id"] for r in rows]
+    if sorted(existing_ids) != sorted(ids):
+        return jsonify({"detail": "Список элементов не совпадает с программой"}), 400
+    apply_program_order(table_id, ids)
+    return jsonify({"status": "ok", "items": get_program_items_payload(table_id)})
+
+
+@app.route("/api/tables/<int:table_id>/program/item/<int:item_id>/move_to_position", methods=["PATCH"])
+def move_program_item(table_id, item_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not table_owned_or_404(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    payload = request.get_json(silent=True) or {}
+    position = int(payload.get("position") or 0)
+    if position <= 0:
+        return jsonify({"detail": "position должен быть больше 0"}), 400
+
+    rows = [dict(r) for r in list_program_items_raw(table_id)]
+    by_id = {r["id"]: r for r in rows}
+    if item_id not in by_id:
+        return jsonify({"detail": "Элемент программы не найден"}), 404
+    if by_id[item_id]["kind"] != "entry":
+        return jsonify({"detail": "Можно перемещать только выступления"}), 400
+
+    full_ids = [r["id"] for r in rows]
+    remaining_full = [i for i in full_ids if i != item_id]
+    remaining_entries = [r["id"] for r in rows if r["kind"] == "entry" and r["id"] != item_id]
+    target_pos = min(max(position, 1), len(remaining_entries) + 1)
+
+    if target_pos > len(remaining_entries):
+        insert_idx = len(remaining_full)
+    else:
+        target_entry_id = remaining_entries[target_pos - 1]
+        insert_idx = remaining_full.index(target_entry_id)
+
+    remaining_full.insert(insert_idx, item_id)
+    apply_program_order(table_id, remaining_full)
+    return jsonify({"status": "ok", "items": get_program_items_payload(table_id)})
+
+
+@app.route("/api/tables/<int:table_id>/program/break", methods=["POST"])
+def add_program_break(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not table_owned_or_404(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    payload = request.get_json(silent=True) or {}
+    minutes = int(payload.get("break_minutes") or 0)
+    after_item_id = payload.get("after_item_id")
+    if minutes <= 0:
+        return jsonify({"detail": "break_minutes должен быть больше 0"}), 400
+
+    rows = [dict(r) for r in list_program_items_raw(table_id)]
+    ts = now_iso()
+    query_db(
+        "INSERT INTO table_program_items (table_id, kind, entry_id, sort_index, break_minutes, created_at, updated_at) VALUES (?, 'break', NULL, ?, ?, ?, ?)",
+        (table_id, (len(rows) + 1) * 1000, minutes, ts, ts),
+    )
+    new_item_id = query_db("SELECT last_insert_rowid() AS id", one=True)["id"]
+    all_ids = [r["id"] for r in rows]
+    if after_item_id is None:
+        all_ids.insert(0, new_item_id)
+    else:
+        try:
+            after_item_id = int(after_item_id)
+            idx = all_ids.index(after_item_id)
+            all_ids.insert(idx + 1, new_item_id)
+        except Exception:
+            all_ids.append(new_item_id)
+    apply_program_order(table_id, all_ids)
+    return jsonify({"status": "ok", "items": get_program_items_payload(table_id)})
+
+
+@app.route("/api/tables/<int:table_id>/program/item/<int:item_id>", methods=["DELETE"])
+def delete_program_item(table_id, item_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not table_owned_or_404(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    item = query_db("SELECT * FROM table_program_items WHERE id=? AND table_id=?", (item_id, table_id), one=True)
+    if not item:
+        return jsonify({"detail": "Элемент программы не найден"}), 404
+    if item["kind"] != "break":
+        return jsonify({"detail": "Удалять можно только перерывы"}), 400
+    query_db("DELETE FROM table_program_items WHERE id=? AND table_id=?", (item_id, table_id))
+    rows = [r["id"] for r in list_program_items_raw(table_id)]
+    apply_program_order(table_id, rows)
+    return jsonify({"status": "ok", "items": get_program_items_payload(table_id)})
+
+
+def send_program_file(table_id, item_id, kind, user_id):
+    item, entry, err = get_program_entry_item(table_id, item_id, user_id)
+    if err:
+        return err
+
+    column = f"{kind}_local"
+    local_value = entry.get(column) or ""
+    ext = "txt" if (kind == "audio" and (not local_value or local_value.lower() == "audio.txt")) else os.path.splitext(local_value)[1].lstrip(".").lower()
+    if not ext:
+        ext = "bin"
+    filename = build_program_filename(entry["display_number"], entry, ext)
+
+    base_path = os.path.join(storage_for_table(user_id, table_id), local_value)
+    if kind == "audio" and (not local_value or local_value.lower() == "audio.txt" or not os.path.exists(base_path)):
+        msg = "Фонограмма не предоставлена"
+        buf = io.BytesIO(msg.encode("utf-8"))
+        return send_file(buf, as_attachment=True, download_name=build_program_filename(entry["display_number"], entry, "txt"), mimetype="text/plain; charset=utf-8")
+
+    if not local_value or not os.path.exists(base_path):
+        return jsonify({"detail": "Файл не найден"}), 404
+
+    if kind == "receipt" and request.args.get("download") != "1" and ext == "pdf":
+        return send_file(base_path, as_attachment=False, download_name=filename, mimetype="application/pdf")
+    return send_file(base_path, as_attachment=True, download_name=filename)
+
+
+@app.route("/api/tables/<int:table_id>/program/download/audio/<int:item_id>", methods=["GET"])
+def download_program_audio(table_id, item_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    return send_program_file(table_id, item_id, "audio", user["id"])
+
+
+@app.route("/api/tables/<int:table_id>/program/download/receipt/<int:item_id>", methods=["GET"])
+def download_program_receipt(table_id, item_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    return send_program_file(table_id, item_id, "receipt", user["id"])
+
+
+@app.route("/api/tables/<int:table_id>/program/download/presentation/<int:item_id>", methods=["GET"])
+def download_program_presentation(table_id, item_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    return send_program_file(table_id, item_id, "presentation", user["id"])
+
+
+@app.route("/api/tables/<int:table_id>/program/download_all", methods=["GET"])
+def download_program_all(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not table_owned_or_404(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    items = get_program_items_payload(table_id)
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for item in items:
+            if item["kind"] != "entry":
+                continue
+            entry = query_db("SELECT * FROM table_entries WHERE id=? AND table_id=?", (item["entry_id"], table_id), one=True)
+            if not entry:
+                continue
+            entry = dict(entry)
+            display = item["display_number"]
+            # audio
+            audio_local = entry.get("audio_local") or ""
+            if not audio_local or audio_local.lower() == "audio.txt":
+                txt_name = build_program_filename(display, entry, "txt")
+                zf.writestr(f"Фонограммы/{txt_name}", "Фонограмма не предоставлена")
+            else:
+                src = os.path.join(storage_for_table(user["id"], table_id), audio_local)
+                if os.path.exists(src):
+                    ext = os.path.splitext(audio_local)[1].lstrip(".") or "bin"
+                    zf.write(src, arcname=f"Фонограммы/{build_program_filename(display, entry, ext)}")
+            # receipt
+            receipt_local = entry.get("receipt_local") or ""
+            if receipt_local:
+                src = os.path.join(storage_for_table(user["id"], table_id), receipt_local)
+                if os.path.exists(src):
+                    ext = os.path.splitext(receipt_local)[1].lstrip(".") or "bin"
+                    zf.write(src, arcname=f"Квитки/{build_program_filename(display, entry, ext)}")
+            # presentation
+            pres_local = entry.get("presentation_local") or ""
+            if pres_local:
+                src = os.path.join(storage_for_table(user["id"], table_id), pres_local)
+                if os.path.exists(src):
+                    ext = os.path.splitext(pres_local)[1].lstrip(".") or "bin"
+                    zf.write(src, arcname=f"Презентации/{build_program_filename(display, entry, ext)}")
+    mem.seek(0)
+    return send_file(mem, as_attachment=True, download_name=f"program_table_{table_id}.zip", mimetype="application/zip")
 
 
 def resolve_file(entry_id, ftype):

@@ -63,6 +63,7 @@
         <button id="connectYandex" class="btn btn-secondary">Подключить Яндекс</button>
         <button id="openAdminLogin" class="btn btn-secondary hidden">Открыть вход администратора (VNC)</button>
         <button id="startDownload" class="btn btn-primary" disabled>Старт скачивания</button>
+        <button id="finalizeTable" class="btn btn-primary hidden">Сформировать</button>
       </div>
       <p id="progress"></p>
       <p id="yandexStatus" class="status-badge status-badge--muted">Яндекс: не подключен</p>
@@ -83,7 +84,7 @@
         </details>
       </section>
 
-      <div class="table-layout">
+      <div class="table-layout" id="prepareMode">
         <div class="table-scroll">
           <table id="excelTable">
             <colgroup id="excelColgroup"></colgroup>
@@ -92,6 +93,25 @@
           </table>
         </div>
       </div>
+
+      <section id="programMode" class="program-mode hidden">
+        <div class="program-toolbar row wrap">
+          <input id="programSearch" placeholder="Поиск по номеру, названию, ФИО, коллективу" />
+          <label><input type="checkbox" id="filterNoAudio" /> Нет фонограммы</label>
+          <label><input type="checkbox" id="filterNoReceipt" /> Нет квитка</label>
+          <label><input type="checkbox" id="filterNoPresentation" /> Нет презентации</label>
+          <button id="downloadAllProgram" class="btn btn-secondary">Скачать всё</button>
+          <span id="autosaveStatus" class="autosave-status">Изменения сохранены</span>
+        </div>
+        <div class="table-scroll">
+          <table id="programTable">
+            <thead>
+              <tr><th>№</th><th>↕</th><th>Название</th><th>ФИО</th><th>Коллектив</th><th>Фонограмма</th><th>Квиток</th><th>Презентация</th><th>Действия</th></tr>
+            </thead>
+            <tbody id="programBody"></tbody>
+          </table>
+        </div>
+      </section>
     </section>
 
     <dialog id="mappingDialog">
@@ -99,6 +119,7 @@
       <div id="mappingDialogActions" class="mapping-dialog-actions"></div>
       <button id="closeMappingDialog" class="btn btn-secondary">Закрыть</button>
     </dialog>
+      <dialog id="receiptViewerDialog"><img id="receiptViewerImage" alt="Квиток" /><div class="row"><a id="receiptViewerDownload" class="btn btn-primary" download>Скачать</a><button id="closeReceiptViewer" class="btn btn-secondary">Закрыть</button></div></dialog>
   </main>
 
   <script src="/static/layout.js"></script>

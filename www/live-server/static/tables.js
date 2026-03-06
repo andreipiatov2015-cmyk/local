@@ -4,12 +4,16 @@ let currentMapping = {};
 let mappingFields = {};
 let currentHeaders = [];
 let currentYandexStatus = 'disconnected';
+let currentProgramItems = [];
+let isProgramMode = false;
+let draggedProgramItemId = null;
 
 const tableList = document.getElementById('tableList');
 const progressEl = document.getElementById('progress');
 const tableTitle = document.getElementById('tableTitle');
 const yandexStatusEl = document.getElementById('yandexStatus');
 const startDownloadBtn = document.getElementById('startDownload');
+const finalizeTableBtn = document.getElementById('finalizeTable');
 const openAdminLoginBtn = document.getElementById('openAdminLogin');
 const yandexHintEl = document.getElementById('yandexHint');
 const mappingAutofillInfoEl = document.getElementById('mappingAutofillInfo');
@@ -24,6 +28,18 @@ const rememberMappingBtn = document.getElementById('rememberMapping');
 const mappingDialog = document.getElementById('mappingDialog');
 const mappingDialogActions = document.getElementById('mappingDialogActions');
 const previewErrorEl = document.getElementById('previewError');
+const prepareModeEl = document.getElementById('prepareMode');
+const programModeEl = document.getElementById('programMode');
+const programBody = document.getElementById('programBody');
+const programSearch = document.getElementById('programSearch');
+const filterNoAudio = document.getElementById('filterNoAudio');
+const filterNoReceipt = document.getElementById('filterNoReceipt');
+const filterNoPresentation = document.getElementById('filterNoPresentation');
+const autosaveStatus = document.getElementById('autosaveStatus');
+const downloadAllProgramBtn = document.getElementById('downloadAllProgram');
+const receiptViewerDialog = document.getElementById('receiptViewerDialog');
+const receiptViewerImage = document.getElementById('receiptViewerImage');
+const receiptViewerDownload = document.getElementById('receiptViewerDownload');
 
 const REQUIRED_FIELDS = ['number_title', 'participant_fio', 'audio_url', 'receipt_url', 'receipt_payer', 'presentation_url'];
 
@@ -43,6 +59,18 @@ async function postForm(url, data) {
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.detail || JSON.stringify(body));
   return body;
+}
+
+function setAutosave(text) {
+  autosaveStatus.textContent = text;
+}
+
+function setProgramMode(enabled) {
+  isProgramMode = !!enabled;
+  programModeEl.classList.toggle('hidden', !isProgramMode);
+  prepareModeEl.classList.toggle('hidden', isProgramMode);
+  document.getElementById('mappingPanel').classList.toggle('hidden', isProgramMode);
+  finalizeTableBtn.classList.toggle('hidden', isProgramMode);
 }
 
 function setYandexState(status, errText = '', vncUrl = null) {
@@ -209,7 +237,7 @@ async function loadExcelPreview() {
 }
 
 async function refreshMapping() {
-  if (!currentTableId) return;
+  if (!currentTableId || isProgramMode) return;
   const tableId = currentTableId;
   const r = await fetch(`/api/tables/${tableId}/mapping`);
   if (requireAuth(r) || !r.ok) return;
@@ -302,11 +330,13 @@ async function refreshTables() {
     if (cur) {
       progressEl.textContent = formatProgressText(cur);
       setYandexState(cur.yandex_status || 'disconnected', cur.yandex_last_error || '', lastVncUrl);
+      finalizeTableBtn.classList.toggle('hidden', Number(cur.is_finalized || 0) === 1);
+      if (Number(cur.is_finalized || 0) === 1 && !isProgramMode) {
+        await loadProgram();
+      }
     }
   }
 }
-
-
 
 async function refreshYandexSession(tableId, openVncOnFail = false) {
   const resp = await fetch(`/api/tables/${tableId}/yandex/refresh`, { method: 'POST' });
@@ -333,11 +363,191 @@ async function refreshYandexSession(tableId, openVncOnFail = false) {
   return { ok: false, needLogin: true };
 }
 
+function filteredProgramItems() {
+  const q = (programSearch.value || '').toLowerCase().trim();
+  return currentProgramItems.filter((item) => {
+    if (item.kind === 'break') return true;
+    if (filterNoAudio.checked && item.has_audio) return false;
+    if (filterNoReceipt.checked && item.has_receipt) return false;
+    if (filterNoPresentation.checked && item.has_presentation) return false;
+    if (!q) return true;
+    const hay = `${item.display_number || ''} ${item.number_title || ''} ${item.fio || ''} ${item.team || ''}`.toLowerCase();
+    return hay.includes(q);
+  });
+}
+
+function openReceipt(item) {
+  const openUrl = item.receipt_open_url || '';
+  if (!openUrl) return;
+  const isPdf = openUrl.toLowerCase().includes('.pdf') || openUrl.includes('/receipt/');
+  if (isPdf) {
+    window.open(openUrl, '_blank');
+    return;
+  }
+  receiptViewerImage.src = openUrl;
+  receiptViewerDownload.href = item.receipt_download_url || openUrl;
+  receiptViewerDialog.showModal();
+}
+
+function renderProgram() {
+  programBody.innerHTML = '';
+  const items = filteredProgramItems();
+  items.forEach((item, idx) => {
+    const tr = document.createElement('tr');
+    tr.dataset.itemId = String(item.program_item_id);
+
+    if (item.kind === 'break') {
+      tr.className = 'program-break-row';
+      tr.innerHTML = `<td></td><td>≡</td><td colspan="6">${item.label}</td><td><button class="btn btn-secondary">Удалить</button></td>`;
+      tr.querySelector('button').onclick = () => deleteBreak(item.program_item_id);
+    } else {
+      tr.className = item.is_problematic ? 'program-problem-row' : '';
+      tr.draggable = true;
+      tr.ondragstart = () => { draggedProgramItemId = item.program_item_id; };
+      tr.ondragover = (e) => e.preventDefault();
+      tr.ondrop = async () => {
+        if (!draggedProgramItemId || draggedProgramItemId === item.program_item_id) return;
+        await reorderByDrop(draggedProgramItemId, item.program_item_id);
+      };
+
+      const no = document.createElement('td');
+      no.textContent = String(item.display_number || '');
+      no.className = 'clickable-number';
+      no.onclick = async () => {
+        const v = prompt('Введите новую позицию', String(item.display_number || ''));
+        if (!v) return;
+        setAutosave('Сохраняю…');
+        const resp = await fetch(`/api/tables/${currentTableId}/program/item/${item.program_item_id}/move_to_position`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: Number(v) })
+        });
+        if (requireAuth(resp)) return;
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) return alert(data.detail || 'Не удалось переместить');
+        currentProgramItems = data.items || [];
+        renderProgram();
+        setAutosave('Изменения сохранены');
+      };
+
+      tr.appendChild(no);
+      tr.innerHTML += `<td class="drag-handle">≡</td><td>${item.number_title || ''}</td><td>${item.fio || ''}</td><td>${item.team || ''}</td>`;
+
+      const tdAudio = document.createElement('td');
+      const aAudio = document.createElement('a');
+      aAudio.className = 'btn btn-secondary';
+      aAudio.href = item.audio_download_url;
+      aAudio.textContent = 'Скачать';
+      tdAudio.appendChild(aAudio);
+      tr.appendChild(tdAudio);
+
+      const tdReceipt = document.createElement('td');
+      if (item.has_receipt) {
+        const b = document.createElement('button');
+        b.className = 'btn btn-secondary';
+        b.textContent = 'Открыть';
+        b.onclick = () => openReceipt(item);
+        tdReceipt.appendChild(b);
+      }
+      tr.appendChild(tdReceipt);
+
+      const tdPres = document.createElement('td');
+      if (item.has_presentation) {
+        const aPres = document.createElement('a');
+        aPres.className = 'btn btn-secondary';
+        aPres.href = item.presentation_download_url;
+        aPres.textContent = 'Скачать';
+        tdPres.appendChild(aPres);
+      }
+      tr.appendChild(tdPres);
+
+      const tdActions = document.createElement('td');
+      const plus = document.createElement('button');
+      plus.className = 'btn btn-secondary';
+      plus.textContent = '+ перерыв';
+      plus.onclick = () => addBreakAfter(item.program_item_id);
+      tdActions.appendChild(plus);
+      tr.appendChild(tdActions);
+    }
+
+    programBody.appendChild(tr);
+    if (item.kind === 'entry' && idx < items.length - 1) {
+      const plusRow = document.createElement('tr');
+      plusRow.className = 'program-insert-row';
+      plusRow.innerHTML = '<td colspan="9"><button class="insert-break-btn">+ добавить перерыв здесь</button></td>';
+      plusRow.querySelector('button').onclick = () => addBreakAfter(item.program_item_id);
+      programBody.appendChild(plusRow);
+    }
+  });
+}
+
+async function reorderByDrop(fromId, toId) {
+  setAutosave('Сохраняю…');
+  const ids = currentProgramItems.map((x) => x.program_item_id);
+  const fromIndex = ids.indexOf(fromId);
+  const toIndex = ids.indexOf(toId);
+  if (fromIndex < 0 || toIndex < 0) return;
+  ids.splice(fromIndex, 1);
+  ids.splice(toIndex, 0, fromId);
+  const resp = await fetch(`/api/tables/${currentTableId}/program/reorder`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ program_item_ids: ids })
+  });
+  if (requireAuth(resp)) return;
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data.detail || 'Ошибка reorder');
+  currentProgramItems = data.items || [];
+  renderProgram();
+  setAutosave('Изменения сохранены');
+}
+
+async function addBreakAfter(afterItemId) {
+  const mins = Number(prompt('Перерыв в минутах', '10'));
+  if (!mins) return;
+  setAutosave('Сохраняю…');
+  const resp = await fetch(`/api/tables/${currentTableId}/program/break`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ after_item_id: afterItemId, break_minutes: mins })
+  });
+  if (requireAuth(resp)) return;
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data.detail || 'Ошибка добавления перерыва');
+  currentProgramItems = data.items || [];
+  renderProgram();
+  setAutosave('Изменения сохранены');
+}
+
+async function deleteBreak(itemId) {
+  if (!confirm('Удалить перерыв?')) return;
+  setAutosave('Сохраняю…');
+  const resp = await fetch(`/api/tables/${currentTableId}/program/item/${itemId}`, { method: 'DELETE' });
+  if (requireAuth(resp)) return;
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data.detail || 'Ошибка удаления');
+  currentProgramItems = data.items || [];
+  renderProgram();
+  setAutosave('Изменения сохранены');
+}
+
+async function loadProgram() {
+  if (!currentTableId) return;
+  const resp = await fetch(`/api/tables/${currentTableId}/program`);
+  if (requireAuth(resp)) return;
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return;
+  if (!data.is_finalized) {
+    setProgramMode(false);
+    return;
+  }
+  setProgramMode(true);
+  currentProgramItems = data.items || [];
+  renderProgram();
+}
+
 async function openTable(id, title) {
   currentTableId = id;
   tableTitle.textContent = `Таблица: ${title} (#${id})`;
   tableView.classList.remove('hidden');
   showAutofillInfo('');
+  setProgramMode(false);
   await refreshMapping();
   await loadExcelPreview();
   await refreshTables();
@@ -345,6 +555,29 @@ async function openTable(id, title) {
 
 function initTablesSection() {
   document.getElementById('closeMappingDialog').onclick = () => mappingDialog.close();
+  document.getElementById('closeReceiptViewer').onclick = () => receiptViewerDialog.close();
+
+  [programSearch, filterNoAudio, filterNoReceipt, filterNoPresentation].forEach((el) => {
+    el.addEventListener('input', renderProgram);
+    el.addEventListener('change', renderProgram);
+  });
+
+  downloadAllProgramBtn.onclick = () => {
+    if (!currentTableId) return;
+    window.location.href = `/api/tables/${currentTableId}/program/download_all`;
+  };
+
+  finalizeTableBtn.onclick = async () => {
+    if (!currentTableId) return alert('Сначала выберите таблицу');
+    setAutosave('Сохраняю…');
+    const resp = await fetch(`/api/tables/${currentTableId}/finalize`, { method: 'POST' });
+    if (requireAuth(resp)) return;
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) return alert(data.detail || 'Не удалось сформировать программу');
+    await loadProgram();
+    setAutosave('Изменения сохранены');
+    await refreshTables();
+  };
 
   resetMappingBtn.onclick = async () => {
     currentMapping = {};
@@ -433,7 +666,8 @@ function initTablesSection() {
   setInterval(async () => {
     await refreshTables();
     await refreshMapping();
-  }, 4000);
+    if (isProgramMode) await loadProgram();
+  }, 6000);
 }
 
 document.addEventListener('DOMContentLoaded', initTablesSection);
