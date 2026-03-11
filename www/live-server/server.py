@@ -112,25 +112,111 @@ YANDEX_CHROMIUM_RESTART_CMD = (os.environ.get("YANDEX_CHROMIUM_RESTART_CMD") or 
 YANDEX_CHROMIUM_OPEN_CMD = (os.environ.get("YANDEX_CHROMIUM_OPEN_CMD") or "").strip()
 
 MAPPING_FIELDS = {
+    "territory": "Территория",
     "municipality": "Муниципалитет",
     "institution_full_name": "Полное название учреждения",
+    "institution_short_name": "Краткое название учреждения",
+    "institution_phone": "Телефон учреждения",
+    "institution_email": "Email учреждения",
+    "leader_fio": "ФИО руководителя",
+    "leader_position": "Должность руководителя",
+    "leader_phone": "Телефон руководителя",
+    "leader_email": "Email руководителя",
+    "teachers_fio": "ФИО педагогов",
+    "escort_teacher_fio": "ФИО сопровождающего педагога",
+    "escort_teacher_phone": "Телефон сопровождающего педагога",
     "head_fio": "ФИО руководителя",
     "teacher_fio": "ФИО педагога",
     "contacts": "Контактные данные",
     "email": "Email",
     "nomination": "Номинация",
+    "sub_nomination": "Подноминация",
+    "category": "Категория",
     "age_category": "Возрастная категория",
+    "league": "Лига",
+    "form": "Форма",
+    "genre": "Жанр",
+    "result": "Результат",
+    "score": "Баллы",
+    "score_total": "Сумма баллов",
+    "test_result": "Тест/результат",
+    "collective_name": "Название коллектива",
     "studio_name": "Название студии",
     "participants_count": "Количество участников",
     "participant_fio": "ФИО участника(ов)",
+    "participants_list": "Список участников",
+    "participant_birthdate": "Дата рождения участника",
+    "participant_age": "Возраст участника",
+    "participant_phone": "Телефон участника",
+    "participant_certificate": "Свидетельство участника",
     "number_title": "Название номера",
+    "number_duration": "Длительность номера",
+    "video_url": "Видео (ссылка)",
     "audio_url": "Фонограмма (скачивание)",
+    "application_file": "Заявка на конкурс",
+    "generic_file": "Файл (неоднозначно)",
+    "work_photo": "Фото работы",
+    "delegation_list": "Общий список делегации",
+    "participants_word_list": "Список участников (Word)",
     "equipment": "Необходимое оборудование",
+    "equipment_needed": "Необходимое оборудование",
+    "technical_rider": "Технический райдер",
+    "support_group_count": "Количество группы поддержки",
     "receipt_url": "Квитанция об оплате (скачивание)",
     "receipt_payer": "За кого оплата (для имени квитанции)",
+    "consent_url": "Согласие на обработку ПД",
     "presentation_url": "Презентация (скачивание)",
 }
-FILE_MAPPING_FIELDS = {"audio_url", "receipt_url", "presentation_url"}
+BASE_PROGRAM_FIELDS = ["number_title", "participant_fio", "studio_name", "territory", "municipality", "nomination", "age_category", "league"]
+DOCUMENT_COLUMN_META = {
+    "audio_url": {"title": "Фонограмма", "kind": "file"},
+    "receipt_url": {"title": "Квитанция / чек", "kind": "document"},
+    "consent_url": {"title": "Согласие на обработку ПД", "kind": "document_list"},
+    "application_file": {"title": "Заявка на конкурс", "kind": "document"},
+    "presentation_url": {"title": "Презентация", "kind": "document"},
+    "video_url": {"title": "Видео", "kind": "link"},
+}
+FILE_MAPPING_FIELDS = {"audio_url", "receipt_url", "presentation_url", "consent_url", "application_file"}
+
+HEADER_ALIASES = {
+    "municipality": ["муниципалитет", "название округа муниципальный городской", "территория название округа муниципальный городской", "территория"],
+    "territory": ["территория", "территория муниципалитет"],
+    "institution_full_name": ["полное название учреждения", "наименование учреждения"],
+    "institution_short_name": ["краткое название учреждения"],
+    "institution_phone": ["телефон учреждения"],
+    "institution_email": ["email учреждения", "e mail учреждения"],
+    "leader_fio": ["фио руководителя", "руководитель фио"],
+    "leader_phone": ["телефон руководителя"],
+    "leader_email": ["email руководителя", "e mail руководителя"],
+    "teachers_fio": ["фио педагогов", "педагог"],
+    "collective_name": ["название коллектива", "коллектив", "ансамбль"],
+    "participant_fio": ["фио участника", "участник исполнитель", "фио"],
+    "participants_count": ["количество участников"],
+    "number_title": ["название номера", "название", "номер"],
+    "nomination": ["номинация"],
+    "age_category": ["возрастная категория"],
+    "league": ["лига"],
+    "audio_url": ["фонограмма"],
+    "receipt_url": ["квитанция", "чек об оплате"],
+    "receipt_payer": ["за кого внесена оплата", "за кого оплата"],
+    "consent_url": ["согласие на обработку персональных данных", "заявления и согласия"],
+    "application_file": ["заявка на конкурс", "заявка"],
+    "presentation_url": ["презентация", "видео сопровождение", "презентация при наличии"],
+    "video_url": ["ссылка на видеозапись", "ссылка на видео", "ссылка на творческий номер", "ссылка на видеозапись конкурсного номера", "ссылка на видео для заочного этапа конкурса", "ссылка на интернет ресурс", "ссылка на конкурсные материалы размещенные в социальной сети vk", "видеозапись", "видео"],
+    "technical_rider": ["технический райдер"],
+    "participants_word_list": ["список участников в word", "список участников"],
+    "work_photo": ["фото работы"],
+    "generic_file": ["файл"],
+}
+
+GROUPED_HEADER_RULES = {
+    "territory": ["территория"],
+    "municipality": ["муниципалитет", "территория"],
+    "nomination": ["номинация"],
+    "age_category": ["возрастная категория"],
+    "league": ["лига"],
+    "craft_technique": ["техника дпи использованная в работе", "техника дпи"],
+}
 MAPPING_PRESET_FALLBACKS = [
     ("nomination", ["номинац"]),
     ("audio_url", ["фонограм"]),
@@ -292,10 +378,15 @@ def init_db():
             audio_url TEXT,
             receipt_url TEXT,
             consent_url TEXT,
+            application_file TEXT,
+            generic_file TEXT,
+            video_url TEXT,
             presentation_url TEXT,
             audio_local TEXT,
             receipt_local TEXT,
             consent_local TEXT,
+            application_local TEXT,
+            generic_local TEXT,
             presentation_local TEXT,
             created_at TEXT NOT NULL
         )
@@ -349,6 +440,13 @@ def init_db():
         "ALTER TABLE table_entries ADD COLUMN row_data_json TEXT",
         "ALTER TABLE table_program_items ADD COLUMN notes TEXT",
         "ALTER TABLE table_program_items ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE table_entries ADD COLUMN conflicts_json TEXT",
+        "ALTER TABLE table_entries ADD COLUMN resolved_fields_json TEXT",
+        "ALTER TABLE table_entries ADD COLUMN generic_local TEXT",
+        "ALTER TABLE table_entries ADD COLUMN application_local TEXT",
+        "ALTER TABLE table_entries ADD COLUMN video_url TEXT",
+        "ALTER TABLE table_entries ADD COLUMN generic_file TEXT",
+        "ALTER TABLE table_entries ADD COLUMN application_file TEXT",
     ]:
         try:
             cur.execute(stmt)
@@ -833,8 +931,13 @@ def normalize_mapping(mapping):
 
 
 def normalize_header_text(value):
-    text = str(value or "").strip().lower().replace("ё", "е")
-    text = re.sub(r"[^\w\s]+", " ", text, flags=re.UNICODE)
+    text = str(value or "").lower().replace("ё", "е")
+    text = text.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    text = text.replace("«", '"').replace("»", '"').replace("“", '"').replace("”", '"')
+    text = re.sub(r"\be\s*[- ]\s*mail\b", "email", text)
+    text = re.sub(r"\bф\s*\.\s*и\s*\.\s*о\s*\.?\b", "фио", text)
+    text = re.sub(r"\bконтактный\s*\(([^)]*)\)\s*телефон\b", "контактный телефон", text)
+    text = re.sub(r"[^\w\s/]+", " ", text, flags=re.UNICODE)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -859,6 +962,26 @@ def apply_mapping_templates_and_presets(user_id, headers):
 
     mapping = {}
     used_cols = set()
+
+    def assign_column(label, idx):
+        if label in mapping or idx in used_cols or label not in MAPPING_FIELDS:
+            return
+        mapping[label] = idx
+        used_cols.add(idx)
+
+    # built-in aliases first
+    for label, aliases in HEADER_ALIASES.items():
+        if label in mapping or label not in MAPPING_FIELDS:
+            continue
+        alias_norms = [normalize_header_text(a) for a in aliases]
+        for idx, header in enumerate(normalized_headers):
+            if idx in used_cols:
+                continue
+            if header in alias_norms:
+                assign_column(label, idx)
+                break
+
+    # user presets have higher priority for remaining fields
     presets = query_db(
         """
         SELECT label, pattern, match_type
@@ -872,13 +995,6 @@ def apply_mapping_templates_and_presets(user_id, headers):
         """,
         (user_id,),
     )
-
-    def assign_column(label, idx):
-        if label in mapping or idx in used_cols or label not in MAPPING_FIELDS:
-            return
-        mapping[label] = idx
-        used_cols.add(idx)
-
     for preset in presets:
         label = (preset["label"] or "").strip()
         pattern = normalize_header_text(preset["pattern"])
@@ -906,6 +1022,60 @@ def apply_mapping_templates_and_presets(user_id, headers):
                 break
 
     return normalize_mapping(mapping), signature, "presets_or_fallback"
+
+
+def parse_grouped_header(field_name, normalized_header):
+    prefixes = GROUPED_HEADER_RULES.get(field_name) or []
+    for prefix in prefixes:
+        prefix_norm = normalize_header_text(prefix)
+        if normalized_header.startswith(prefix_norm + " /"):
+            return normalized_header.split("/", 1)[1].strip()
+    return ""
+
+
+def resolve_grouped_value(row_values, grouped_mappings):
+    options = []
+    for item in grouped_mappings:
+        idx = item.get("idx")
+        if idx is None or idx >= len(row_values):
+            continue
+        value = str(row_values[idx] or "").strip()
+        if value:
+            options.append(item.get("choice") or "")
+    uniq = [x for x in dict.fromkeys(options) if x]
+    if len(uniq) == 1:
+        return uniq[0], uniq, False
+    if len(uniq) > 1:
+        return "", uniq, True
+    return "", [], False
+
+
+def detect_grouped_headers(headers):
+    result = {k: [] for k in GROUPED_HEADER_RULES.keys()}
+    for idx, header in enumerate(headers or []):
+        normalized = normalize_header_text(header)
+        for field_name in GROUPED_HEADER_RULES.keys():
+            choice = parse_grouped_header(field_name, normalized)
+            if choice:
+                result[field_name].append({"idx": idx, "choice": choice, "header": header})
+    return result
+
+
+def build_visible_columns(table_id, mapping):
+    base = [field for field in BASE_PROGRAM_FIELDS if field in mapping]
+    documents = []
+    for field in DOCUMENT_COLUMN_META.keys():
+        if field in mapping:
+            documents.append(field)
+            continue
+        row = query_db(
+            f"SELECT 1 FROM table_entries WHERE table_id=? AND COALESCE({field}, '') <> '' LIMIT 1",
+            (table_id,),
+            one=True,
+        )
+        if row:
+            documents.append(field)
+    return {"base": base, "documents": documents}
 
 
 def save_mapping_template(user_id, signature, mapping):
@@ -946,10 +1116,10 @@ def update_table_yandex_status(table_id, status, error_text=None):
 def table_required_mapping_status(mapping):
     assigned_files = [f for f in FILE_MAPPING_FIELDS if f in mapping]
     if not assigned_files:
-        return False, "Нужно назначить хотя бы один файловый столбец: фонограмма/квитанция/презентация"
+        return False, "Нужно назначить хотя бы один файловый/документный столбец: фонограмма/квитанция/презентация/согласие/заявка"
 
     needs = []
-    if "audio_url" in mapping or "presentation_url" in mapping:
+    if any(f in mapping for f in ["audio_url", "presentation_url", "video_url", "application_file"]):
         if "number_title" not in mapping:
             needs.append("Название номера")
         if "participant_fio" not in mapping:
@@ -1150,10 +1320,21 @@ def rebuild_entries_from_excel(table_id, user_id, mapping, *, preserve_files=Tru
         "with_presentation_local": 0,
     }
 
+    grouped_headers = detect_grouped_headers(rows[0] if rows else [])
+
     for i, row in enumerate(data_rows, start=1):
         row_id = i + 1
         row_values = ["" if x is None else str(x).strip() for x in row]
         row_data = {str(idx): val for idx, val in enumerate(row_values)}
+
+        resolved_fields = {}
+        conflicts = {}
+        for grouped_field, grouped_map in grouped_headers.items():
+            value, options, conflicted = resolve_grouped_value(row_values, grouped_map)
+            if conflicted:
+                conflicts[grouped_field] = options
+            if value:
+                resolved_fields[grouped_field] = value
 
         number_title = get_cell(row_values, mapping.get("number_title"))
         fio = get_cell(row_values, mapping.get("participant_fio"))
@@ -1167,8 +1348,8 @@ def rebuild_entries_from_excel(table_id, user_id, mapping, *, preserve_files=Tru
 
         query_db(
             """
-            INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, application_file, generic_file, video_url, presentation_url, audio_local, receipt_local, consent_local, application_local, generic_local, presentation_local, row_data_json, resolved_fields_json, conflicts_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 table_id,
@@ -1179,13 +1360,20 @@ def rebuild_entries_from_excel(table_id, user_id, mapping, *, preserve_files=Tru
                 unique_key,
                 get_cell(row_values, mapping.get("audio_url")),
                 get_cell(row_values, mapping.get("receipt_url")),
-                "",
+                get_cell(row_values, mapping.get("consent_url")),
+                get_cell(row_values, mapping.get("application_file")),
+                get_cell(row_values, mapping.get("generic_file")),
+                get_cell(row_values, mapping.get("video_url")),
                 get_cell(row_values, mapping.get("presentation_url")),
                 audio_local,
                 receipt_local,
                 "",
+                "",
+                "",
                 presentation_local,
                 json.dumps(row_data, ensure_ascii=False),
+                json.dumps(resolved_fields, ensure_ascii=False),
+                json.dumps(conflicts, ensure_ascii=False),
                 now_iso(),
             ),
         )
@@ -1418,6 +1606,7 @@ def process_table_download(table_id, user_id):
             total,
         )
 
+        grouped_headers = detect_grouped_headers(headers)
         for i, row in enumerate(data_rows, start=1):
             row_id = i + 1
             if row_id < start_row_id:
@@ -1425,6 +1614,14 @@ def process_table_download(table_id, user_id):
 
             row_values = ["" if x is None else str(x).strip() for x in row]
             row_data = {str(idx): val for idx, val in enumerate(row_values)}
+            resolved_fields = {}
+            conflicts = {}
+            for grouped_field, grouped_map in grouped_headers.items():
+                value, options, conflicted = resolve_grouped_value(row_values, grouped_map)
+                if conflicted:
+                    conflicts[grouped_field] = options
+                if value:
+                    resolved_fields[grouped_field] = value
 
             number_title = get_cell(row_values, mapping.get("number_title"))
             fio = get_cell(row_values, mapping.get("participant_fio"))
@@ -1460,7 +1657,7 @@ def process_table_download(table_id, user_id):
                 query_db(
                     """
                     UPDATE table_entries
-                    SET number_title=?, fio=?, team=?, unique_key=?, audio_url=?, receipt_url=?, presentation_url=?, row_data_json=?
+                    SET number_title=?, fio=?, team=?, unique_key=?, audio_url=?, receipt_url=?, consent_url=?, application_file=?, generic_file=?, video_url=?, presentation_url=?, row_data_json=?, resolved_fields_json=?, conflicts_json=?
                     WHERE id=?
                     """,
                     (
@@ -1470,16 +1667,22 @@ def process_table_download(table_id, user_id):
                         unique_key,
                         audio_url,
                         receipt_url,
+                        get_cell(row_values, mapping.get("consent_url")),
+                        get_cell(row_values, mapping.get("application_file")),
+                        get_cell(row_values, mapping.get("generic_file")),
+                        get_cell(row_values, mapping.get("video_url")),
                         presentation_url,
                         json.dumps(row_data, ensure_ascii=False),
+                        json.dumps(resolved_fields, ensure_ascii=False),
+                        json.dumps(conflicts, ensure_ascii=False),
                         entry_id,
                     ),
                 )
             else:
                 query_db(
                     """
-                    INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, application_file, generic_file, video_url, presentation_url, audio_local, receipt_local, consent_local, application_local, generic_local, presentation_local, row_data_json, resolved_fields_json, conflicts_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         table_id,
@@ -1490,13 +1693,20 @@ def process_table_download(table_id, user_id):
                         unique_key,
                         audio_url,
                         receipt_url,
-                        "",
+                        get_cell(row_values, mapping.get("consent_url")),
+                        get_cell(row_values, mapping.get("application_file")),
+                        get_cell(row_values, mapping.get("generic_file")),
+                        get_cell(row_values, mapping.get("video_url")),
                         presentation_url,
                         prev_audio_local,
                         prev_receipt_local,
                         "",
+                        "",
+                        "",
                         prev_presentation_local,
                         json.dumps(row_data, ensure_ascii=False),
+                        json.dumps(resolved_fields, ensure_ascii=False),
+                        json.dumps(conflicts, ensure_ascii=False),
                         now_iso(),
                     ),
                 )
@@ -2037,8 +2247,8 @@ def upload_excel(table_id):
         try:
             query_db(
                 """
-                INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, application_file, generic_file, video_url, presentation_url, audio_local, receipt_local, consent_local, application_local, generic_local, presentation_local, row_data_json, resolved_fields_json, conflicts_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     table_id,
@@ -2055,7 +2265,14 @@ def upload_excel(table_id):
                     "",
                     "",
                     "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
                     json.dumps(row_data, ensure_ascii=False),
+                    json.dumps({}, ensure_ascii=False),
+                    json.dumps({}, ensure_ascii=False),
                     now_iso(),
                 ),
             )
@@ -2358,7 +2575,13 @@ def get_program_items_payload(table_id, user_id):
             te.team,
             te.audio_local,
             te.receipt_local,
-            te.presentation_local
+            te.consent_url,
+            te.application_file,
+            te.generic_file,
+            te.video_url,
+            te.presentation_local,
+            te.resolved_fields_json,
+            te.conflicts_json
         FROM table_program_items tpi
         LEFT JOIN table_entries te ON te.id = tpi.entry_id AND te.table_id = tpi.table_id
         WHERE tpi.table_id=?
@@ -2416,6 +2639,10 @@ def get_program_items_payload(table_id, user_id):
                 "team": item.get("team") or "",
                 "audio_local": item.get("audio_local") or "",
                 "receipt_local": item.get("receipt_local") or "",
+                "consent_url": item.get("consent_url") or "",
+                "application_file": item.get("application_file") or "",
+                "generic_file": item.get("generic_file") or "",
+                "video_url": item.get("video_url") or "",
                 "presentation_local": item.get("presentation_local") or "",
                 "has_audio": has_audio,
                 "has_receipt": has_receipt,
@@ -2424,7 +2651,9 @@ def get_program_items_payload(table_id, user_id):
                 "receipt_open_url": f"/api/tables/{table_id}/program/download/receipt/{item['program_item_id']}",
                 "receipt_download_url": f"/api/tables/{table_id}/program/download/receipt/{item['program_item_id']}?download=1",
                 "presentation_download_url": f"/api/tables/{table_id}/program/download/presentation/{item['program_item_id']}",
-                "is_problematic": not has_audio,
+                "resolved_fields": json.loads(item.get("resolved_fields_json") or "{}"),
+                "conflicts": json.loads(item.get("conflicts_json") or "{}"),
+                "is_problematic": (not has_audio) or bool(json.loads(item.get("conflicts_json") or "{}")),
             }
         )
     return payload
@@ -2578,11 +2807,37 @@ def get_program(table_id):
     table = table_owned_or_404(table_id, user["id"])
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
+    table_dict = dict(table)
+    mapping = normalize_mapping(json.loads(table_dict.get("mapping_json") or "{}"))
     return jsonify({
         "table_id": table_id,
         "is_finalized": int(table["is_finalized"] or 0) == 1,
         "items": get_program_items_payload(table_id, user["id"]),
+        "visible_columns": build_visible_columns(table_id, mapping),
+        "document_column_meta": DOCUMENT_COLUMN_META,
     })
+
+
+@app.route("/api/tables/<int:table_id>/entries/<int:entry_id>/resolve", methods=["PATCH"])
+def resolve_entry_grouped_conflict(table_id, entry_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not table_belongs_to_user(table_id, user["id"]):
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    entry = query_db("SELECT id, resolved_fields_json FROM table_entries WHERE id=? AND table_id=?", (entry_id, table_id), one=True)
+    if not entry:
+        return jsonify({"detail": "Строка не найдена"}), 404
+    payload = request.get_json(silent=True) or {}
+    field = str(payload.get("field") or "").strip()
+    value = str(payload.get("value") or "").strip()
+    if not field:
+        return jsonify({"detail": "field обязателен"}), 400
+    entry_dict = dict(entry)
+    resolved = json.loads(entry_dict.get("resolved_fields_json") or "{}")
+    resolved[field] = value
+    query_db("UPDATE table_entries SET resolved_fields_json=? WHERE id=? AND table_id=?", (json.dumps(resolved, ensure_ascii=False), entry_id, table_id))
+    return jsonify({"status": "ok", "resolved_fields": resolved})
 
 
 @app.route("/api/tables/<int:table_id>/program/reorder", methods=["PATCH"])

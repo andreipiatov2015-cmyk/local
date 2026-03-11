@@ -6,6 +6,8 @@ let currentHeaders = [];
 let currentYandexStatus = 'disconnected';
 let currentProgramItems = [];
 let isProgramMode = false;
+let currentVisibleColumns = { base: [], documents: [] };
+let documentColumnMeta = {};
 let draggedProgramItemId = null;
 
 const tableList = document.getElementById('tableList');
@@ -42,6 +44,7 @@ const downloadAllProgramBtn = document.getElementById('downloadAllProgram');
 const receiptViewerDialog = document.getElementById('receiptViewerDialog');
 const receiptViewerImage = document.getElementById('receiptViewerImage');
 const receiptViewerDownload = document.getElementById('receiptViewerDownload');
+const programHeadRow = document.getElementById('programHeadRow');
 
 const REQUIRED_FIELDS = ['number_title', 'participant_fio', 'audio_url', 'receipt_url', 'receipt_payer', 'presentation_url'];
 
@@ -441,6 +444,32 @@ function openReceipt(item) {
   receiptViewerDialog.showModal();
 }
 
+function renderProgramHead() {
+  if (!programHeadRow) return;
+  const docs = currentVisibleColumns.documents || [];
+  programHeadRow.innerHTML = '<th>№</th><th>↕</th><th>Название</th><th>ФИО</th><th>Коллектив</th>';
+  const thConflict = document.createElement('th');
+  thConflict.textContent = 'Конфликт';
+  programHeadRow.appendChild(thConflict);
+  docs.forEach((field) => {
+    const th = document.createElement('th');
+    th.textContent = (documentColumnMeta[field] && documentColumnMeta[field].title) || field;
+    programHeadRow.appendChild(th);
+  });
+}
+
+async function resolveGroupedConflict(entryId, field, value) {
+  const resp = await fetch(`/api/tables/${currentTableId}/entries/${entryId}/resolve`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field, value })
+  });
+  if (!resp.ok) return;
+  const data = await resp.json().catch(() => ({}));
+  const target = currentProgramItems.find((x) => x.entry_id === entryId);
+  if (target) target.resolved_fields = data.resolved_fields || {};
+}
+
 function renderProgram() {
   programBody.innerHTML = '';
   const items = filteredProgramItems();
@@ -482,41 +511,70 @@ function renderProgram() {
 
       tr.appendChild(no);
       tr.innerHTML += `<td class="drag-handle">≡</td><td>${item.number_title || ''}</td><td>${item.fio || ''}</td><td>${item.team || ''}</td>`;
+      (currentVisibleColumns.documents || []).forEach((field) => {
+        const td = document.createElement('td');
+        if (field === 'audio_url' && item.has_audio) {
+          const aAudio = document.createElement('a');
+          aAudio.className = 'btn btn-secondary';
+          aAudio.href = item.audio_download_url;
+          aAudio.textContent = 'Скачать';
+          td.appendChild(aAudio);
+        } else if (field === 'receipt_url' && item.has_receipt) {
+          const b = document.createElement('button');
+          b.className = 'btn btn-secondary';
+          b.textContent = 'Открыть';
+          b.onclick = () => openReceipt(item);
+          td.appendChild(b);
+        } else if (field === 'presentation_url' && item.has_presentation) {
+          const aPres = document.createElement('a');
+          aPres.className = 'btn btn-secondary';
+          aPres.href = item.presentation_download_url;
+          aPres.textContent = 'Скачать';
+          td.appendChild(aPres);
+        } else if (field === 'video_url' && item.video_url) {
+          const aVideo = document.createElement('a');
+          aVideo.href = item.video_url;
+          aVideo.target = '_blank';
+          aVideo.rel = 'noopener';
+          aVideo.textContent = 'Ссылка';
+          td.appendChild(aVideo);
+        } else if (field === 'consent_url' && item.consent_url) {
+          const docs = String(item.consent_url).split(/[;,]/).map((x) => x.trim()).filter(Boolean);
+          docs.forEach((doc, i) => {
+            const a = document.createElement('a');
+            a.className = 'btn btn-secondary';
+            a.href = doc;
+            a.target = '_blank';
+            a.textContent = docs.length > 1 ? `Файл ${i + 1}` : 'Открыть';
+            td.appendChild(a);
+          });
+        }
+        tr.appendChild(td);
+      });
 
-      const tdAudio = document.createElement('td');
-      const aAudio = document.createElement('a');
-      aAudio.className = 'btn btn-secondary';
-      aAudio.href = item.audio_download_url;
-      aAudio.textContent = 'Скачать';
-      tdAudio.appendChild(aAudio);
-      tr.appendChild(tdAudio);
-
-      const tdReceipt = document.createElement('td');
-      if (item.has_receipt) {
-        const b = document.createElement('button');
-        b.className = 'btn btn-secondary';
-        b.textContent = 'Открыть';
-        b.onclick = () => openReceipt(item);
-        tdReceipt.appendChild(b);
+      const conflicts = item.conflicts || {};
+      const conflictFields = Object.keys(conflicts);
+      if (conflictFields.length) {
+        tr.classList.add('program-problem-row');
+        const conflictField = conflictFields[0];
+        const tdConflict = document.createElement('td');
+        const select = document.createElement('select');
+        select.innerHTML = '<option value="">Конфликт: выбрать</option>' + (conflicts[conflictField] || []).map((v) => `<option value="${v}">${v}</option>`).join('');
+        const resolved = (item.resolved_fields || {})[conflictField] || '';
+        if (resolved) select.value = resolved;
+        select.onchange = async () => {
+          await resolveGroupedConflict(item.entry_id, conflictField, select.value);
+        };
+        tdConflict.appendChild(select);
+        tr.appendChild(tdConflict);
       }
-      tr.appendChild(tdReceipt);
-
-      const tdPres = document.createElement('td');
-      if (item.has_presentation) {
-        const aPres = document.createElement('a');
-        aPres.className = 'btn btn-secondary';
-        aPres.href = item.presentation_download_url;
-        aPres.textContent = 'Скачать';
-        tdPres.appendChild(aPres);
-      }
-      tr.appendChild(tdPres);
     }
 
     programBody.appendChild(tr);
     if (item.kind === 'entry' && idx < items.length - 1) {
       const plusRow = document.createElement('tr');
       plusRow.className = 'program-insert-row';
-      plusRow.innerHTML = '<td colspan="8"><button class="insert-break-btn">+ добавить перерыв здесь</button></td>';
+      plusRow.innerHTML = `<td colspan="${5 + (currentVisibleColumns.documents || []).length + 1}"><button class="insert-break-btn">+ добавить перерыв здесь</button></td>`;
       const nextItem = items.slice(idx + 1).find((x) => x.kind === 'entry');
       plusRow.querySelector('button').onclick = () => addBreakAfter(item.program_item_id, nextItem ? nextItem.program_item_id : null);
       programBody.appendChild(plusRow);
@@ -584,6 +642,9 @@ async function loadProgram() {
   }
   setProgramMode(true);
   currentProgramItems = data.items || [];
+  currentVisibleColumns = data.visible_columns || { base: [], documents: [] };
+  documentColumnMeta = data.document_column_meta || {};
+  renderProgramHead();
   renderProgram();
 }
 
