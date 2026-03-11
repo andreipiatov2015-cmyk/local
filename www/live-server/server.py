@@ -968,6 +968,150 @@ def excel_path_for_table(user_id, table_id):
     return excel_path
 
 
+def get_table_owner_id(table_id):
+    row = query_db("SELECT user_id FROM table_workspaces WHERE id=?", (table_id,), one=True)
+    if not row:
+        return None
+    return int(row["user_id"])
+
+
+def collect_table_entries_stats(table_id):
+    row = query_db(
+        """
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN TRIM(COALESCE(number_title, '')) <> '' THEN 1 ELSE 0 END) AS with_number_title,
+            SUM(CASE WHEN TRIM(COALESCE(fio, '')) <> '' THEN 1 ELSE 0 END) AS with_fio,
+            SUM(CASE WHEN TRIM(COALESCE(audio_local, '')) <> '' THEN 1 ELSE 0 END) AS with_audio_local,
+            SUM(CASE WHEN TRIM(COALESCE(receipt_local, '')) <> '' THEN 1 ELSE 0 END) AS with_receipt_local,
+            SUM(CASE WHEN TRIM(COALESCE(presentation_local, '')) <> '' THEN 1 ELSE 0 END) AS with_presentation_local
+        FROM table_entries
+        WHERE table_id=?
+        """,
+        (table_id,),
+        one=True,
+    )
+    return {k: int((row[k] if row else 0) or 0) for k in [
+        "total",
+        "with_number_title",
+        "with_fio",
+        "with_audio_local",
+        "with_receipt_local",
+        "with_presentation_local",
+    ]}
+
+
+def log_table_entries_stats(stage, table_id, *, previous=None):
+    stats = collect_table_entries_stats(table_id)
+    drop_msg = ""
+    if previous:
+        drops = []
+        for key in ["with_audio_local", "with_receipt_local", "with_presentation_local"]:
+            prev_val = int(previous.get(key) or 0)
+            curr_val = int(stats.get(key) or 0)
+            if prev_val > 0 and curr_val == 0:
+                drops.append(f"{key}:{prev_val}->0")
+        if drops:
+            drop_msg = " drops=" + ",".join(drops)
+    app.logger.info(
+        "[tables_entries_stats] stage=%s table_id=%s total=%s with_number_title=%s with_fio=%s with_audio_local=%s with_receipt_local=%s with_presentation_local=%s%s",
+        stage,
+        table_id,
+        stats["total"],
+        stats["with_number_title"],
+        stats["with_fio"],
+        stats["with_audio_local"],
+        stats["with_receipt_local"],
+        stats["with_presentation_local"],
+        drop_msg,
+    )
+    return stats
+
+
+def _name_token(value):
+    return re.sub(r"[^a-zа-я0-9]+", "", (value or "").lower(), flags=re.IGNORECASE)
+
+
+def repair_table_local_paths(table_id, user_id):
+    base = storage_for_table(user_id, table_id)
+    field_config = {
+        "audio_local": ("phonograms", "phonogram"),
+        "receipt_local": ("receipts", "receipt"),
+        "presentation_local": ("presentations", "presentation"),
+    }
+    files_by_field = {}
+    for field_name, (folder, _) in field_config.items():
+        folder_path = Path(base) / folder
+        files_by_field[field_name] = [
+            p for p in folder_path.iterdir()
+            if p.is_file()
+        ] if folder_path.exists() else []
+
+    rows = query_db(
+        "SELECT id, row_id, number_title, fio, audio_local, receipt_local, presentation_local FROM table_entries WHERE table_id=? ORDER BY id",
+        (table_id,),
+    )
+    repaired = {"audio_local": 0, "receipt_local": 0, "presentation_local": 0}
+    used_paths = set()
+    for row in rows:
+        row = dict(row)
+        updates = {}
+        for field_name, (folder, fallback_prefix) in field_config.items():
+            current_value = (row.get(field_name) or "").strip()
+            _, current_full_path = resolve_table_local_path(table_id, user_id, current_value)
+            if current_value and os.path.exists(current_full_path):
+                used_paths.add(Path(current_full_path).resolve(strict=False))
+                continue
+
+            row_id = int(row.get("row_id") or 0)
+            expected_base = make_safe_basename(row.get("number_title"), row.get("fio"), fallback=f"{fallback_prefix}-{row_id}")
+            expected_token = _name_token(expected_base)
+            fio_token = _name_token(row.get("fio"))
+            title_token = _name_token(row.get("number_title"))
+            best_score = -1
+            best_file = None
+            for file_path in files_by_field[field_name]:
+                candidate_resolved = file_path.resolve(strict=False)
+                if candidate_resolved in used_paths:
+                    continue
+                stem_token = _name_token(file_path.stem)
+                score = 0
+                if expected_token and stem_token == expected_token:
+                    score += 5
+                elif expected_token and (expected_token in stem_token or stem_token in expected_token):
+                    score += 3
+                if row_id and str(row_id) in file_path.stem:
+                    score += 2
+                if fio_token and fio_token in stem_token:
+                    score += 1
+                if title_token and title_token in stem_token:
+                    score += 1
+                if score > best_score:
+                    best_score = score
+                    best_file = file_path
+
+            if best_file is not None and best_score > 0:
+                rel = f"{folder}/{best_file.name}"
+                updates[field_name] = rel
+                used_paths.add(best_file.resolve(strict=False))
+                repaired[field_name] += 1
+
+        if updates:
+            query_db(
+                "UPDATE table_entries SET audio_local=COALESCE(?, audio_local), receipt_local=COALESCE(?, receipt_local), presentation_local=COALESCE(?, presentation_local) WHERE id=?",
+                (updates.get("audio_local"), updates.get("receipt_local"), updates.get("presentation_local"), row["id"]),
+            )
+
+    app.logger.info(
+        "[tables_entries_repair] table_id=%s repaired_audio=%s repaired_receipt=%s repaired_presentation=%s",
+        table_id,
+        repaired["audio_local"],
+        repaired["receipt_local"],
+        repaired["presentation_local"],
+    )
+    return repaired
+
+
 def rebuild_entries_from_excel(table_id, user_id, mapping, *, preserve_files=True, clear_existing=True):
     excel_path = excel_path_for_table(user_id, table_id)
     if not os.path.exists(excel_path):
@@ -1056,6 +1200,9 @@ def rebuild_entries_from_excel(table_id, user_id, mapping, *, preserve_files=Tru
         if presentation_local:
             stats["with_presentation_local"] += 1
 
+    if preserve_files:
+        repair_table_local_paths(table_id, user_id)
+        stats = collect_table_entries_stats(table_id)
     return stats
 
 
@@ -1126,6 +1273,22 @@ def process_table_download(table_id, user_id):
                 (reason, now_iso(), table_id),
             )
             return
+
+        owner_user_id = get_table_owner_id(table_id)
+        if owner_user_id is None:
+            query_db(
+                "UPDATE table_workspaces SET status='error', total_count=0, processed_count=0, progress=0, last_error=?, updated_at=? WHERE id=?",
+                ("Таблица не найдена", now_iso(), table_id),
+            )
+            return
+        if owner_user_id != int(user_id):
+            app.logger.warning(
+                "[tables_storage_owner_mismatch] table_id=%s worker_user_id=%s owner_user_id=%s",
+                table_id,
+                user_id,
+                owner_user_id,
+            )
+        user_id = owner_user_id
 
         base = storage_for_table(user_id, table_id)
         excel_path = excel_path_for_table(user_id, table_id)
@@ -1198,6 +1361,16 @@ def process_table_download(table_id, user_id):
         for folder in ["phonograms", "receipts", "presentations", "meta"]:
             os.makedirs(os.path.join(base, folder), exist_ok=True)
 
+        existing_rows = query_db(
+            "SELECT row_id, audio_local, receipt_local, presentation_local FROM table_entries WHERE table_id=?",
+            (table_id,),
+        )
+        existing_by_row_id = {
+            int(r["row_id"]): dict(r)
+            for r in existing_rows
+            if r["row_id"] is not None
+        }
+        before_download_stats = collect_table_entries_stats(table_id)
         query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
 
         used_names = {"phonograms": set(), "receipts": set(), "presentations": set()}
@@ -1211,6 +1384,11 @@ def process_table_download(table_id, user_id):
             fio = get_cell(row_values, mapping.get("participant_fio"))
             team = get_cell(row_values, mapping.get("studio_name"))
             unique_key = f"{row_id}|{number_title}|{fio}"
+
+            prev = existing_by_row_id.get(row_id) or {}
+            prev_audio_local = (prev.get("audio_local") or "").strip()
+            prev_receipt_local = (prev.get("receipt_local") or "").strip()
+            prev_presentation_local = (prev.get("presentation_local") or "").strip()
 
             try:
                 query_db(
@@ -1229,10 +1407,10 @@ def process_table_download(table_id, user_id):
                         get_cell(row_values, mapping.get("receipt_url")),
                         "",
                         get_cell(row_values, mapping.get("presentation_url")),
+                        prev_audio_local,
+                        prev_receipt_local,
                         "",
-                        "",
-                        "",
-                        "",
+                        prev_presentation_local,
                         json.dumps(row_data, ensure_ascii=False),
                         now_iso(),
                     ),
@@ -1242,9 +1420,9 @@ def process_table_download(table_id, user_id):
                 raise
             entry_id = query_db("SELECT last_insert_rowid() AS id", one=True)["id"]
 
-            audio_local = ""
-            receipt_local = ""
-            presentation_local = ""
+            audio_local = prev_audio_local
+            receipt_local = prev_receipt_local
+            presentation_local = prev_presentation_local
 
             audio_url = get_cell(row_values, mapping.get("audio_url"))
             if "audio_url" in mapping:
@@ -1357,31 +1535,8 @@ def process_table_download(table_id, user_id):
                 (processed_count, progress, now_iso(), table_id),
             )
 
-        stats_row = query_db(
-            """
-            SELECT
-                COUNT(*) AS total,
-                SUM(CASE WHEN TRIM(COALESCE(number_title, '')) <> '' THEN 1 ELSE 0 END) AS with_number_title,
-                SUM(CASE WHEN TRIM(COALESCE(fio, '')) <> '' THEN 1 ELSE 0 END) AS with_fio,
-                SUM(CASE WHEN TRIM(COALESCE(audio_local, '')) <> '' THEN 1 ELSE 0 END) AS with_audio_local,
-                SUM(CASE WHEN TRIM(COALESCE(receipt_local, '')) <> '' THEN 1 ELSE 0 END) AS with_receipt_local,
-                SUM(CASE WHEN TRIM(COALESCE(presentation_local, '')) <> '' THEN 1 ELSE 0 END) AS with_presentation_local
-            FROM table_entries
-            WHERE table_id=?
-            """,
-            (table_id,),
-            one=True,
-        )
-        app.logger.info(
-            "[tables_entries_stats] stage=download_done table_id=%s total=%s with_number_title=%s with_fio=%s with_audio_local=%s with_receipt_local=%s with_presentation_local=%s",
-            table_id,
-            int(stats_row["total"] or 0),
-            int(stats_row["with_number_title"] or 0),
-            int(stats_row["with_fio"] or 0),
-            int(stats_row["with_audio_local"] or 0),
-            int(stats_row["with_receipt_local"] or 0),
-            int(stats_row["with_presentation_local"] or 0),
-        )
+        repair_table_local_paths(table_id, user_id)
+        log_table_entries_stats("download_done", table_id, previous=before_download_stats)
 
         query_db(
             "UPDATE table_workspaces SET status='done', processed_count=?, progress=100, last_error=NULL, updated_at=? WHERE id=?",
@@ -1420,25 +1575,14 @@ def repair_empty_entries_for_finalized_tables():
     )
     for t in rows:
         table_id = t["id"]
-        user_id = t["user_id"]
+        user_id = int(t["user_id"])
         mapping = normalize_mapping(json.loads(t.get("mapping_json") or "{}"))
-        stats = query_db(
-            """
-            SELECT
-                COUNT(*) AS total,
-                SUM(CASE WHEN TRIM(COALESCE(number_title, '')) <> '' THEN 1 ELSE 0 END) AS with_number_title,
-                SUM(CASE WHEN TRIM(COALESCE(fio, '')) <> '' THEN 1 ELSE 0 END) AS with_fio
-            FROM table_entries
-            WHERE table_id=?
-            """,
-            (table_id,),
-            one=True,
-        )
-        total = int(stats["total"] or 0)
-        with_number_title = int(stats["with_number_title"] or 0)
-        with_fio = int(stats["with_fio"] or 0)
-        if total == 0 or (with_number_title == 0 and with_fio == 0):
-            try:
+        before_stats = collect_table_entries_stats(table_id)
+        total = before_stats["total"]
+        with_number_title = before_stats["with_number_title"]
+        with_fio = before_stats["with_fio"]
+        try:
+            if total == 0 or (with_number_title == 0 and with_fio == 0):
                 rebuild_stats = rebuild_entries_from_excel(table_id, user_id, mapping, preserve_files=True, clear_existing=True)
                 app.logger.info(
                     "[tables_entries_rebuild] stage=startup_repair table_id=%s total=%s with_number_title=%s with_fio=%s with_audio_local=%s with_receipt_local=%s with_presentation_local=%s",
@@ -1450,8 +1594,10 @@ def repair_empty_entries_for_finalized_tables():
                     rebuild_stats["with_receipt_local"],
                     rebuild_stats["with_presentation_local"],
                 )
-            except Exception as exc:
-                app.logger.warning("[tables_entries_rebuild] stage=startup_repair table_id=%s skipped error=%s", table_id, str(exc))
+            repair_table_local_paths(table_id, user_id)
+            log_table_entries_stats("startup_repair", table_id, previous=before_stats)
+        except Exception as exc:
+            app.logger.warning("[tables_entries_rebuild] stage=startup_repair table_id=%s skipped error=%s", table_id, str(exc))
 
 
 def start_tables_background_jobs():
@@ -1946,6 +2092,7 @@ def set_table_mapping(table_id):
     mapping = normalize_mapping(payload.get("mapping") if isinstance(payload, dict) else payload)
     query_db("UPDATE table_workspaces SET mapping_json=?, updated_at=? WHERE id=?", (json.dumps(mapping, ensure_ascii=False), now_iso(), table_id))
     try:
+        before_stats = collect_table_entries_stats(table_id)
         stats = rebuild_entries_from_excel(table_id, user["id"], mapping, preserve_files=True, clear_existing=True)
         app.logger.info(
             "[tables_entries_rebuild] stage=mapping_saved table_id=%s total=%s with_number_title=%s with_fio=%s with_audio_local=%s with_receipt_local=%s with_presentation_local=%s",
@@ -1957,6 +2104,7 @@ def set_table_mapping(table_id):
             stats["with_receipt_local"],
             stats["with_presentation_local"],
         )
+        log_table_entries_stats("mapping_saved", table_id, previous=before_stats)
     except Exception as exc:
         app.logger.warning("[tables_entries_rebuild] stage=mapping_saved table_id=%s skipped error=%s", table_id, str(exc))
     can_start, reason = table_required_mapping_status(mapping)
@@ -2057,14 +2205,16 @@ def resolve_table_local_path(table_id, user_id, local_value):
     if not raw_value:
         return "", ""
 
+    owner_user_id = get_table_owner_id(table_id) or user_id
     normalized = raw_value.replace("\\", "/")
-    table_storage = Path(storage_for_table(user_id, table_id)).resolve()
+    table_storage = Path(storage_for_table(owner_user_id, table_id)).resolve()
     candidate = Path(normalized)
     if candidate.is_absolute():
         full_path = candidate.resolve(strict=False)
     else:
         full_path = (table_storage / candidate).resolve(strict=False)
     return raw_value, str(full_path)
+
 
 
 def has_local_entry_file(table_id, user_id, entry_id, field_name, local_value, *, placeholder_for_audio=False):
@@ -2257,6 +2407,7 @@ def finalize_table(table_id):
 
     if total_entries == 0 or (total_entries > 0 and nonempty_titles == 0 and nonempty_fio == 0):
         try:
+            before_stats = collect_table_entries_stats(table_id)
             rebuild_stats = rebuild_entries_from_excel(table_id, user["id"], mapping, preserve_files=True, clear_existing=True)
             app.logger.info(
                 "[tables_entries_rebuild] stage=finalize table_id=%s total=%s with_number_title=%s with_fio=%s with_audio_local=%s with_receipt_local=%s with_presentation_local=%s",
@@ -2268,6 +2419,7 @@ def finalize_table(table_id):
                 rebuild_stats["with_receipt_local"],
                 rebuild_stats["with_presentation_local"],
             )
+            log_table_entries_stats("finalize", table_id, previous=before_stats)
         except Exception as exc:
             return jsonify({"detail": f"Данные таблицы не подготовлены для финализации: {str(exc)}"}), 400
 
@@ -2461,7 +2613,8 @@ def send_program_file(table_id, item_id, kind, user_id):
         ext = "bin"
     filename = build_program_filename(entry["display_number"], entry, ext)
 
-    base_path = os.path.join(storage_for_table(user_id, table_id), local_value)
+    owner_user_id = get_table_owner_id(table_id) or user_id
+    base_path = os.path.join(storage_for_table(owner_user_id, table_id), local_value)
     if kind == "audio" and (not local_value or local_value.lower() == "audio.txt" or not os.path.exists(base_path)):
         msg = "Фонограмма не предоставлена"
         buf = io.BytesIO(msg.encode("utf-8"))
@@ -2507,6 +2660,7 @@ def download_program_all(table_id):
     if not table_owned_or_404(table_id, user["id"]):
         return jsonify({"detail": "Таблица не найдена"}), 404
     items = get_program_items_payload(table_id, user["id"])
+    owner_user_id = get_table_owner_id(table_id) or user["id"]
     mem = io.BytesIO()
     with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for item in items:
@@ -2523,21 +2677,21 @@ def download_program_all(table_id):
                 txt_name = build_program_filename(display, entry, "txt")
                 zf.writestr(f"Фонограммы/{txt_name}", "Фонограмма не предоставлена")
             else:
-                src = os.path.join(storage_for_table(user["id"], table_id), audio_local)
+                src = os.path.join(storage_for_table(owner_user_id, table_id), audio_local)
                 if os.path.exists(src):
                     ext = os.path.splitext(audio_local)[1].lstrip(".") or "bin"
                     zf.write(src, arcname=f"Фонограммы/{build_program_filename(display, entry, ext)}")
             # receipt
             receipt_local = entry.get("receipt_local") or ""
             if receipt_local:
-                src = os.path.join(storage_for_table(user["id"], table_id), receipt_local)
+                src = os.path.join(storage_for_table(owner_user_id, table_id), receipt_local)
                 if os.path.exists(src):
                     ext = os.path.splitext(receipt_local)[1].lstrip(".") or "bin"
                     zf.write(src, arcname=f"Квитки/{build_program_filename(display, entry, ext)}")
             # presentation
             pres_local = entry.get("presentation_local") or ""
             if pres_local:
-                src = os.path.join(storage_for_table(user["id"], table_id), pres_local)
+                src = os.path.join(storage_for_table(owner_user_id, table_id), pres_local)
                 if os.path.exists(src):
                     ext = os.path.splitext(pres_local)[1].lstrip(".") or "bin"
                     zf.write(src, arcname=f"Презентации/{build_program_filename(display, entry, ext)}")
