@@ -245,6 +245,7 @@ def init_db():
             status TEXT NOT NULL DEFAULT 'new',
             total_count INTEGER NOT NULL DEFAULT 0,
             processed_count INTEGER NOT NULL DEFAULT 0,
+            download_cursor_row_id INTEGER,
             progress INTEGER NOT NULL DEFAULT 0,
             last_error TEXT,
             created_at TEXT NOT NULL,
@@ -336,6 +337,7 @@ def init_db():
         "ALTER TABLE table_workspaces ADD COLUMN mapping_json TEXT",
         "ALTER TABLE table_workspaces ADD COLUMN total_count INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE table_workspaces ADD COLUMN processed_count INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE table_workspaces ADD COLUMN download_cursor_row_id INTEGER",
         "ALTER TABLE table_workspaces ADD COLUMN last_error TEXT",
         "ALTER TABLE table_workspaces ADD COLUMN yandex_status TEXT NOT NULL DEFAULT 'disconnected'",
         "ALTER TABLE table_workspaces ADD COLUMN yandex_last_error TEXT",
@@ -1269,7 +1271,7 @@ def process_table_download(table_id, user_id):
         ok_to_run, reason = table_required_mapping_status(mapping)
         if not ok_to_run:
             query_db(
-                "UPDATE table_workspaces SET status='error', total_count=0, processed_count=0, progress=0, last_error=?, updated_at=? WHERE id=?",
+                "UPDATE table_workspaces SET status='error', total_count=0, processed_count=0, download_cursor_row_id=NULL, progress=0, last_error=?, updated_at=? WHERE id=?",
                 (reason, now_iso(), table_id),
             )
             return
@@ -1277,7 +1279,7 @@ def process_table_download(table_id, user_id):
         owner_user_id = get_table_owner_id(table_id)
         if owner_user_id is None:
             query_db(
-                "UPDATE table_workspaces SET status='error', total_count=0, processed_count=0, progress=0, last_error=?, updated_at=? WHERE id=?",
+                "UPDATE table_workspaces SET status='error', total_count=0, processed_count=0, download_cursor_row_id=NULL, progress=0, last_error=?, updated_at=? WHERE id=?",
                 ("Таблица не найдена", now_iso(), table_id),
             )
             return
@@ -1294,7 +1296,7 @@ def process_table_download(table_id, user_id):
         excel_path = excel_path_for_table(user_id, table_id)
         if not os.path.exists(excel_path) or openpyxl is None:
             query_db(
-                "UPDATE table_workspaces SET status='error', total_count=0, processed_count=0, progress=0, last_error=?, updated_at=? WHERE id=?",
+                "UPDATE table_workspaces SET status='error', total_count=0, processed_count=0, download_cursor_row_id=NULL, progress=0, last_error=?, updated_at=? WHERE id=?",
                 ("Excel файл не найден или openpyxl недоступен", now_iso(), table_id),
             )
             return
@@ -1304,34 +1306,46 @@ def process_table_download(table_id, user_id):
         rows = list(ws.values)
         if not rows:
             query_db(
-                "UPDATE table_workspaces SET status='done', total_count=0, processed_count=0, progress=100, last_error=NULL, updated_at=? WHERE id=?",
+                "UPDATE table_workspaces SET status='done', total_count=0, processed_count=0, download_cursor_row_id=NULL, progress=100, last_error=NULL, updated_at=? WHERE id=?",
                 (now_iso(), table_id),
             )
             return
 
         data_rows = rows[1:]
         total = len(data_rows)
+        existing_processed = int(t["processed_count"] or 0)
+        existing_cursor = t["download_cursor_row_id"]
+        is_resume = str(t["status"] or "").lower() in {"auth_required", "paused", "downloading_partial"}
+
         query_db(
-            "UPDATE table_workspaces SET status='running', total_count=?, processed_count=0, progress=0, last_error=NULL, updated_at=? WHERE id=?",
-            (total, now_iso(), table_id),
+            "UPDATE table_workspaces SET status='downloading', total_count=?, processed_count=?, progress=?, last_error=NULL, updated_at=? WHERE id=?",
+            (
+                total,
+                existing_processed if is_resume else 0,
+                (100 if total == 0 else int(((existing_processed if is_resume else 0) / total) * 100)),
+                now_iso(),
+                table_id,
+            ),
         )
 
         try:
             cookies = read_yandex_cookies_from_chromium_profile()
         except Exception as exc:
-            update_table_yandex_status(table_id, "auth_required", short_error_message(exc, "Нужен вход администратора в Яндекс."))
+            error_text = short_error_message(exc, "Нужен вход администратора в Яндекс.")
+            update_table_yandex_status(table_id, "auth_required", error_text)
             query_db(
-                "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
-                ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+                "UPDATE table_workspaces SET status='auth_required', last_error=?, updated_at=? WHERE id=?",
+                (error_text, now_iso(), table_id),
             )
             return
 
         access_ok, final_url = check_yandex_auth(cookies)
         if not access_ok:
+            error_text = "Нужен вход администратора в Яндекс."
             update_table_yandex_status(table_id, "auth_required", f"Нужен вход администратора в Яндекс: {final_url}")
             query_db(
-                "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
-                ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
+                "UPDATE table_workspaces SET status='auth_required', last_error=?, updated_at=? WHERE id=?",
+                (error_text, now_iso(), table_id),
             )
             return
         update_table_yandex_status(table_id, "connected", None)
@@ -1339,20 +1353,34 @@ def process_table_download(table_id, user_id):
         req_session = requests.Session()
         apply_cookies_to_requests_session(req_session, cookies)
 
-        def handle_auth_required_with_refresh():
-            app.logger.info("[tables_download] table_id=%s auto_refresh_on_auth_required", table_id)
+        def persist_auth_required_stop(row_id, reason):
+            query_db(
+                "UPDATE table_workspaces SET status='auth_required', download_cursor_row_id=?, last_error=?, updated_at=? WHERE id=?",
+                (row_id, reason, now_iso(), table_id),
+            )
+            app.logger.warning(
+                "[tables_download] table_id=%s stopped_auth_required row_id=%s processed=%s/%s reason=%s",
+                table_id,
+                row_id,
+                int(query_db("SELECT processed_count FROM table_workspaces WHERE id=?", (table_id,), one=True)["processed_count"] or 0),
+                total,
+                reason,
+            )
+
+        def handle_auth_required_with_refresh(row_id):
+            app.logger.info("[tables_download] table_id=%s auto_refresh_on_auth_required row_id=%s", table_id, row_id)
             result = try_refresh_yandex_session(table_id, user_id, reason="download_auto")
             if result.get("status") != "ok":
-                update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
-                query_db(
-                    "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
-                    ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
-                )
+                reason = "Нужен вход администратора в Яндекс."
+                update_table_yandex_status(table_id, "auth_required", reason)
+                persist_auth_required_stop(row_id, reason)
                 return False
 
             try:
                 refreshed = read_yandex_cookies_from_chromium_profile()
             except Exception:
+                reason = "Нужен вход администратора в Яндекс."
+                persist_auth_required_stop(row_id, reason)
                 return False
             req_session.cookies.clear()
             apply_cookies_to_requests_session(req_session, refreshed)
@@ -1362,7 +1390,7 @@ def process_table_download(table_id, user_id):
             os.makedirs(os.path.join(base, folder), exist_ok=True)
 
         existing_rows = query_db(
-            "SELECT row_id, audio_local, receipt_local, presentation_local FROM table_entries WHERE table_id=?",
+            "SELECT id, row_id, audio_local, receipt_local, presentation_local FROM table_entries WHERE table_id=?",
             (table_id,),
         )
         existing_by_row_id = {
@@ -1370,13 +1398,31 @@ def process_table_download(table_id, user_id):
             for r in existing_rows
             if r["row_id"] is not None
         }
+
         before_download_stats = collect_table_entries_stats(table_id)
-        query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
+        if not is_resume:
+            query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
+            existing_by_row_id = {}
 
         used_names = {"phonograms": set(), "receipts": set(), "presentations": set()}
-        processed_count = 0
+        processed_count = existing_processed if is_resume else 0
+        skipped_completed_rows = 0
+        downloaded_files = 0
+        start_row_id = int(existing_cursor or 2) if is_resume else 2
+        app.logger.info(
+            "[tables_download] table_id=%s mode=%s resume_from_row=%s processed=%s/%s",
+            table_id,
+            "resume" if is_resume else "start",
+            start_row_id,
+            processed_count,
+            total,
+        )
+
         for i, row in enumerate(data_rows, start=1):
             row_id = i + 1
+            if row_id < start_row_id:
+                continue
+
             row_values = ["" if x is None else str(x).strip() for x in row]
             row_data = {str(idx): val for idx, val in enumerate(row_values)}
 
@@ -1389,8 +1435,47 @@ def process_table_download(table_id, user_id):
             prev_audio_local = (prev.get("audio_local") or "").strip()
             prev_receipt_local = (prev.get("receipt_local") or "").strip()
             prev_presentation_local = (prev.get("presentation_local") or "").strip()
+            entry_id = prev.get("id")
 
-            try:
+            audio_url = get_cell(row_values, mapping.get("audio_url"))
+            receipt_url = get_cell(row_values, mapping.get("receipt_url"))
+            presentation_url = get_cell(row_values, mapping.get("presentation_url"))
+
+            audio_done = bool(prev_audio_local and os.path.exists(os.path.join(base, prev_audio_local))) if audio_url else True
+            receipt_done = bool(prev_receipt_local and os.path.exists(os.path.join(base, prev_receipt_local))) if receipt_url else True
+            presentation_done = bool(prev_presentation_local and os.path.exists(os.path.join(base, prev_presentation_local))) if presentation_url else True
+
+            row_fully_done = audio_done and receipt_done and presentation_done
+            if row_fully_done and entry_id:
+                skipped_completed_rows += 1
+                processed_count += 1
+                progress = 100 if total == 0 else int((processed_count / total) * 100)
+                query_db(
+                    "UPDATE table_workspaces SET processed_count=?, progress=?, updated_at=? WHERE id=?",
+                    (processed_count, progress, now_iso(), table_id),
+                )
+                continue
+
+            if entry_id:
+                query_db(
+                    """
+                    UPDATE table_entries
+                    SET number_title=?, fio=?, team=?, unique_key=?, audio_url=?, receipt_url=?, presentation_url=?, row_data_json=?
+                    WHERE id=?
+                    """,
+                    (
+                        number_title,
+                        fio,
+                        team,
+                        unique_key,
+                        audio_url,
+                        receipt_url,
+                        presentation_url,
+                        json.dumps(row_data, ensure_ascii=False),
+                        entry_id,
+                    ),
+                )
+            else:
                 query_db(
                     """
                     INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, presentation_url, audio_local, receipt_local, consent_local, presentation_local, row_data_json, created_at)
@@ -1403,10 +1488,10 @@ def process_table_download(table_id, user_id):
                         fio,
                         team,
                         unique_key,
-                        get_cell(row_values, mapping.get("audio_url")),
-                        get_cell(row_values, mapping.get("receipt_url")),
+                        audio_url,
+                        receipt_url,
                         "",
-                        get_cell(row_values, mapping.get("presentation_url")),
+                        presentation_url,
                         prev_audio_local,
                         prev_receipt_local,
                         "",
@@ -1415,57 +1500,44 @@ def process_table_download(table_id, user_id):
                         now_iso(),
                     ),
                 )
-            except Exception:
-                app.logger.exception("[tables_download] table_id=%s row_id=%s insert_failed", table_id, row_id)
-                raise
-            entry_id = query_db("SELECT last_insert_rowid() AS id", one=True)["id"]
+                entry_id = query_db("SELECT last_insert_rowid() AS id", one=True)["id"]
+
+            query_db(
+                "UPDATE table_workspaces SET download_cursor_row_id=?, updated_at=? WHERE id=?",
+                (row_id, now_iso(), table_id),
+            )
 
             audio_local = prev_audio_local
             receipt_local = prev_receipt_local
             presentation_local = prev_presentation_local
 
-            audio_url = get_cell(row_values, mapping.get("audio_url"))
-            if "audio_url" in mapping:
+            if "audio_url" in mapping and audio_url and not audio_done:
                 phonogram_base = add_row_suffix_if_needed(
                     make_safe_basename(number_title, fio, fallback=f"phonogram-{row_id}"),
                     row_id,
                     used_names["phonograms"],
                 )
-                if audio_url:
-                    ext = extension_from_url(audio_url, "mp3")
-                    audio_name = f"{phonogram_base}.{ext}"
-                    audio_path = os.path.join(base, "phonograms", audio_name)
+                ext = extension_from_url(audio_url, "mp3")
+                audio_name = f"{phonogram_base}.{ext}"
+                audio_path = os.path.join(base, "phonograms", audio_name)
+                try:
+                    download_with_retries(req_session, audio_url, audio_path)
+                    audio_local = os.path.join("phonograms", audio_name)
+                    downloaded_files += 1
+                except YandexAuthRequiredError:
+                    if not handle_auth_required_with_refresh(row_id):
+                        return
                     try:
                         download_with_retries(req_session, audio_url, audio_path)
                         audio_local = os.path.join("phonograms", audio_name)
+                        downloaded_files += 1
                     except YandexAuthRequiredError:
-                        if not handle_auth_required_with_refresh():
-                            return
-                        try:
-                            download_with_retries(req_session, audio_url, audio_path)
-                            audio_local = os.path.join("phonograms", audio_name)
-                        except YandexAuthRequiredError:
-                            update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
-                            query_db(
-                                "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
-                                ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
-                            )
-                            return
-                    except Exception:
-                        placeholder_name = f"{phonogram_base}.txt"
-                        miss_path = os.path.join(base, "phonograms", placeholder_name)
-                        with open(miss_path, "w", encoding="utf-8") as f:
-                            f.write("Не удалось скачать фонограмму")
-                        audio_local = os.path.join("phonograms", placeholder_name)
-                else:
-                    placeholder_name = f"{phonogram_base}.txt"
-                    miss_path = os.path.join(base, "phonograms", placeholder_name)
-                    with open(miss_path, "w", encoding="utf-8") as f:
-                        f.write("Фонограмма не предоставлена")
-                    audio_local = os.path.join("phonograms", placeholder_name)
+                        persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
+                        return
+                except Exception:
+                    pass
 
-            receipt_url = get_cell(row_values, mapping.get("receipt_url"))
-            if receipt_url:
+            if receipt_url and not receipt_done:
                 payer = get_cell(row_values, mapping.get("receipt_payer"))
                 receipt_base = add_row_suffix_if_needed(
                     make_safe_basename(payer, fallback=f"receipt-{row_id}"),
@@ -1478,24 +1550,21 @@ def process_table_download(table_id, user_id):
                 try:
                     download_with_retries(req_session, receipt_url, receipt_path)
                     receipt_local = os.path.join("receipts", receipt_name)
+                    downloaded_files += 1
                 except YandexAuthRequiredError:
-                    if not handle_auth_required_with_refresh():
+                    if not handle_auth_required_with_refresh(row_id):
                         return
                     try:
                         download_with_retries(req_session, receipt_url, receipt_path)
                         receipt_local = os.path.join("receipts", receipt_name)
+                        downloaded_files += 1
                     except YandexAuthRequiredError:
-                        update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
-                        query_db(
-                            "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
-                            ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
-                        )
+                        persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
                         return
                 except Exception:
                     pass
 
-            presentation_url = get_cell(row_values, mapping.get("presentation_url"))
-            if presentation_url:
+            if presentation_url and not presentation_done:
                 presentation_base = add_row_suffix_if_needed(
                     make_safe_basename(number_title, fio, fallback=f"presentation-{row_id}"),
                     row_id,
@@ -1507,18 +1576,16 @@ def process_table_download(table_id, user_id):
                 try:
                     download_with_retries(req_session, presentation_url, presentation_path)
                     presentation_local = os.path.join("presentations", presentation_name)
+                    downloaded_files += 1
                 except YandexAuthRequiredError:
-                    if not handle_auth_required_with_refresh():
+                    if not handle_auth_required_with_refresh(row_id):
                         return
                     try:
                         download_with_retries(req_session, presentation_url, presentation_path)
                         presentation_local = os.path.join("presentations", presentation_name)
+                        downloaded_files += 1
                     except YandexAuthRequiredError:
-                        update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс.")
-                        query_db(
-                            "UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?",
-                            ("Нужен вход администратора в Яндекс.", now_iso(), table_id),
-                        )
+                        persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
                         return
                 except Exception:
                     pass
@@ -1538,8 +1605,16 @@ def process_table_download(table_id, user_id):
         repair_table_local_paths(table_id, user_id)
         log_table_entries_stats("download_done", table_id, previous=before_download_stats)
 
+        app.logger.info(
+            "[tables_download] table_id=%s completed processed=%s/%s skipped_completed_rows=%s downloaded_files=%s",
+            table_id,
+            processed_count,
+            total,
+            skipped_completed_rows,
+            downloaded_files,
+        )
         query_db(
-            "UPDATE table_workspaces SET status='done', processed_count=?, progress=100, last_error=NULL, updated_at=? WHERE id=?",
+            "UPDATE table_workspaces SET status='done', processed_count=?, download_cursor_row_id=NULL, progress=100, last_error=NULL, updated_at=? WHERE id=?",
             (processed_count, now_iso(), table_id),
         )
     except Exception as exc:
@@ -1633,7 +1708,7 @@ def list_tables():
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
     rows = query_db(
-        "SELECT id, title, status, total_count, processed_count, progress, last_error, created_at, mapping_json, yandex_status, yandex_last_error, yandex_last_checked_at, is_finalized, finalized_at, program_updated_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC",
+        "SELECT id, title, status, total_count, processed_count, download_cursor_row_id, progress, last_error, created_at, mapping_json, yandex_status, yandex_last_error, yandex_last_checked_at, is_finalized, finalized_at, program_updated_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC",
         (user["id"],),
     )
     result = []
@@ -2150,23 +2225,46 @@ def start_download(table_id):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    t = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    t = query_db(
+        "SELECT id, status, processed_count, download_cursor_row_id, mapping_json, excel_total_rows FROM table_workspaces WHERE id=? AND user_id=?",
+        (table_id, user["id"]),
+        one=True,
+    )
     if not t:
         return jsonify({"detail": "Таблица не найдена"}), 404
-    full_table = query_db("SELECT mapping_json FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
-    mapping = normalize_mapping(json.loads(full_table["mapping_json"] or "{}"))
+
+    mapping = normalize_mapping(json.loads(t["mapping_json"] or "{}"))
     can_start, reason = table_required_mapping_status(mapping)
     if not can_start:
         return jsonify({"detail": reason}), 400
+
+    resume_statuses = {"auth_required", "paused", "downloading_partial"}
+    current_status = str(t["status"] or "new").lower()
+    is_resume = current_status in resume_statuses and int(t["processed_count"] or 0) > 0
+
     if not has_global_yandex_session():
         update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс")
-        query_db("UPDATE table_workspaces SET status='error', last_error=?, updated_at=? WHERE id=?", ("Нужен вход администратора в Яндекс", now_iso(), table_id))
+        query_db(
+            "UPDATE table_workspaces SET status='auth_required', last_error=?, updated_at=? WHERE id=?",
+            ("Нужен вход администратора в Яндекс", now_iso(), table_id),
+        )
         return jsonify({"status": "need_login", "detail": "Нужен вход администратора в Яндекс", "vnc_url": YANDEX_VNC_URL}), 400
+
     update_table_yandex_status(table_id, "connected", None)
-    total_rows = int(query_db("SELECT excel_total_rows FROM table_workspaces WHERE id=?", (table_id,), one=True)["excel_total_rows"] or 0)
-    query_db("UPDATE table_workspaces SET status='queued', total_count=?, processed_count=0, progress=0, last_error=NULL, updated_at=? WHERE id=?", (total_rows, now_iso(), table_id))
+    total_rows = int(t["excel_total_rows"] or 0)
+    if is_resume:
+        query_db(
+            "UPDATE table_workspaces SET status='downloading_partial', total_count=?, last_error=NULL, updated_at=? WHERE id=?",
+            (total_rows, now_iso(), table_id),
+        )
+    else:
+        query_db(
+            "UPDATE table_workspaces SET status='downloading', total_count=?, processed_count=0, download_cursor_row_id=2, progress=0, last_error=NULL, updated_at=? WHERE id=?",
+            (total_rows, now_iso(), table_id),
+        )
+
     threading.Thread(target=process_table_download, args=(table_id, user["id"]), daemon=True).start()
-    return jsonify({"status": "started"})
+    return jsonify({"status": "resumed" if is_resume else "started", "mode": "resume" if is_resume else "start"})
 
 
 @app.route("/api/tables/<int:table_id>/entries", methods=["GET"])

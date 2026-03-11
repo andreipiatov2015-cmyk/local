@@ -314,7 +314,10 @@ function formatProgressText(t) {
   const progress = t.progress ?? 0;
   const processed = t.processed_count ?? 0;
   const total = t.total_count ?? 0;
-  const error = t.status === 'error' && t.last_error ? `, ошибка: ${t.last_error}` : '';
+  if ((status === 'auth_required' || status === 'paused' || status === 'downloading_partial') && (t.download_cursor_row_id || 0) > 0) {
+    return `Скачивание остановлено на строке ${t.download_cursor_row_id}. Требуется повторное подключение Яндекса.`;
+  }
+  const error = t.last_error ? `, ошибка: ${t.last_error}` : '';
   return `Статус: ${status}, прогресс: ${progress}% (${processed}/${total})${error}`;
 }
 
@@ -355,6 +358,9 @@ async function refreshTables() {
     if (cur) {
       progressEl.textContent = formatProgressText(cur);
       setYandexState(cur.yandex_status || 'disconnected', cur.yandex_last_error || '', lastVncUrl);
+      const resumeStatuses = new Set(['auth_required', 'paused', 'downloading_partial']);
+      const isResumeReady = resumeStatuses.has(cur.status || '');
+      startDownloadBtn.textContent = isResumeReady ? 'Продолжить скачивание' : 'Старт скачивания';
       finalizeTableBtn.classList.toggle('hidden', Number(cur.is_finalized || 0) === 1);
       if (Number(cur.is_finalized || 0) === 1 && !isProgramMode) {
         await loadProgram();
@@ -698,7 +704,7 @@ function initTablesSection() {
     if (requireAuth(resp)) return;
     if (!resp.ok) return alert(data.detail || 'Ошибка запуска');
     await refreshTables();
-    alert('Фоновая загрузка запущена');
+    alert(data.mode === 'resume' ? 'Продолжение скачивания запущено' : 'Фоновая загрузка запущена');
   };
 
   renderMappingPanel();
