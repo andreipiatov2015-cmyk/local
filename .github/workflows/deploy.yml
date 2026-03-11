@@ -23,7 +23,7 @@ jobs:
           rsync -av \
             --exclude ".git/" \
             --exclude ".github/" \
-            "$GITHUB_WORKSPACE"/ /var/www/
+             "$GITHUB_WORKSPACE"/www/ /var/www/
 
       - name: Set permissions
         run: |
