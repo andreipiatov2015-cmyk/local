@@ -2190,6 +2190,8 @@ def finalize_table(table_id):
     table = table_owned_or_404(table_id, user["id"])
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
+    if table is not None and not isinstance(table, dict):
+        table = dict(table)
 
     mapping = normalize_mapping(json.loads(table.get("mapping_json") or "{}"))
 
