@@ -37,6 +37,41 @@
   background: #eff6ff;
 }
 
+.table-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.table-open-btn {
+  flex: 1;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: #0f172a;
+  font: inherit;
+}
+
+.table-delete-btn {
+  border: 1px solid #fecaca;
+  background: #fff1f2;
+  color: #be123c;
+  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  line-height: 20px;
+  font-size: 18px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.table-delete-btn:hover {
+  background: #ffe4e6;
+}
+
 .mapping-panel {
   border: 1px solid #dbe4f1;
   border-radius: 10px;

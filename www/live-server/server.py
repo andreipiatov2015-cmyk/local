@@ -1769,6 +1769,7 @@ def delete_table(table_id):
     table = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
+    query_db("DELETE FROM table_program_items WHERE table_id=?", (table_id,))
     query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
     query_db("DELETE FROM table_workspaces WHERE id=?", (table_id,))
     shutil.rmtree(storage_for_table(user["id"], table_id), ignore_errors=True)
@@ -2051,13 +2052,37 @@ def list_program_items_raw(table_id):
     return query_db("SELECT * FROM table_program_items WHERE table_id=? ORDER BY sort_index, id", (table_id,))
 
 
-def has_local_entry_file(table_id, user_id, local_value, *, placeholder_for_audio=False):
-    file_name = str(local_value or "").strip()
-    if not file_name:
+def resolve_table_local_path(table_id, user_id, local_value):
+    raw_value = str(local_value or "").strip()
+    if not raw_value:
+        return "", ""
+
+    normalized = raw_value.replace("\\", "/")
+    table_storage = Path(storage_for_table(user_id, table_id)).resolve()
+    candidate = Path(normalized)
+    if candidate.is_absolute():
+        full_path = candidate.resolve(strict=False)
+    else:
+        full_path = (table_storage / candidate).resolve(strict=False)
+    return raw_value, str(full_path)
+
+
+def has_local_entry_file(table_id, user_id, entry_id, field_name, local_value, *, placeholder_for_audio=False):
+    local_raw, full_path = resolve_table_local_path(table_id, user_id, local_value)
+    if not local_raw:
         return False
-    if placeholder_for_audio and file_name.lower() == "audio.txt":
+    if placeholder_for_audio and local_raw.lower() == "audio.txt":
         return False
-    return os.path.exists(os.path.join(storage_for_table(user_id, table_id), file_name))
+    if os.path.exists(full_path):
+        return True
+    app.logger.warning(
+        "[tables_program_missing_local_file] table_id=%s entry_id=%s field=%s path=%s",
+        table_id,
+        entry_id,
+        field_name,
+        local_raw,
+    )
+    return False
 
 
 def apply_program_order(table_id, ordered_ids):
@@ -2109,9 +2134,28 @@ def get_program_items_payload(table_id, user_id):
             continue
 
         display_number += 1
-        has_audio = has_local_entry_file(table_id, user_id, item.get("audio_local"), placeholder_for_audio=True)
-        has_receipt = has_local_entry_file(table_id, user_id, item.get("receipt_local"))
-        has_presentation = has_local_entry_file(table_id, user_id, item.get("presentation_local"))
+        has_audio = has_local_entry_file(
+            table_id,
+            user_id,
+            item.get("entry_id"),
+            "audio_local",
+            item.get("audio_local"),
+            placeholder_for_audio=True,
+        )
+        has_receipt = has_local_entry_file(
+            table_id,
+            user_id,
+            item.get("entry_id"),
+            "receipt_local",
+            item.get("receipt_local"),
+        )
+        has_presentation = has_local_entry_file(
+            table_id,
+            user_id,
+            item.get("entry_id"),
+            "presentation_local",
+            item.get("presentation_local"),
+        )
         payload.append(
             {
                 "program_item_id": item["program_item_id"],

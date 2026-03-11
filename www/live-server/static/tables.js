@@ -325,8 +325,28 @@ async function refreshTables() {
   tableList.innerHTML = '';
   tables.forEach((t) => {
     const li = document.createElement('li');
-    li.textContent = `#${t.id} ${t.title} [${t.status}] ${t.progress ?? 0}% (${t.processed_count ?? 0}/${t.total_count ?? 0})`;
-    li.onclick = () => openTable(t.id, t.title);
+    li.className = 'table-list-item';
+
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'table-open-btn';
+    openBtn.textContent = `#${t.id} ${t.title} [${t.status}] ${t.progress ?? 0}% (${t.processed_count ?? 0}/${t.total_count ?? 0})`;
+    openBtn.onclick = () => openTable(t.id, t.title);
+
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'table-delete-btn';
+    delBtn.title = 'Удалить таблицу';
+    delBtn.setAttribute('aria-label', `Удалить таблицу ${t.title}`);
+    delBtn.textContent = '×';
+    delBtn.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await deleteTableById(t.id);
+    };
+
+    li.appendChild(openBtn);
+    li.appendChild(delBtn);
     tableList.appendChild(li);
   });
 
@@ -343,6 +363,27 @@ async function refreshTables() {
   }
 }
 
+
+async function deleteTableById(tableId) {
+  const ok = confirm('Удалить таблицу? Это действие удалит таблицу, программу выступлений и связанные файлы.');
+  if (!ok) return;
+
+  const resp = await fetch(`/api/tables/${tableId}`, { method: 'DELETE' });
+  if (requireAuth(resp)) return;
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    alert(data.detail || 'Не удалось удалить таблицу');
+    return;
+  }
+
+  if (currentTableId === tableId) {
+    currentTableId = null;
+    tableView.classList.add('hidden');
+    setProgramMode(false);
+  }
+
+  await refreshTables();
+}
 async function refreshYandexSession(tableId, openVncOnFail = false) {
   const resp = await fetch(`/api/tables/${tableId}/yandex/refresh`, { method: 'POST' });
   if (requireAuth(resp)) return { ok: false, needLogin: false };
