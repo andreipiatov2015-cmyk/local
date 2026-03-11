@@ -1,0 +1,32 @@
+name: Deploy to server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-var-www
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, prod]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync repository to /var/www
+        run: |
+          rsync -av \
+            --exclude ".git/" \
+            --exclude ".github/" \
+            "$GITHUB_WORKSPACE"/ /var/www/
+
+      - name: Set permissions
+        run: |
+          chown -R github-runner:www-data /var/www
+          find /var/www -type d -exec chmod 775 {} \;
+          find /var/www -type f -exec chmod 664 {} \;
