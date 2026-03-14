@@ -110,63 +110,10 @@ YANDEX_FORMS_TEST_URL = (os.environ.get("YANDEX_FORMS_TEST_URL") or "").strip()
 YANDEX_REFRESH_URL = (os.environ.get("YANDEX_REFRESH_URL") or "https://disk.yandex.ru/client/disk").strip()
 YANDEX_CHROMIUM_RESTART_CMD = (os.environ.get("YANDEX_CHROMIUM_RESTART_CMD") or "").strip()
 YANDEX_CHROMIUM_OPEN_CMD = (os.environ.get("YANDEX_CHROMIUM_OPEN_CMD") or "").strip()
+TABLE_HEADER_TAGS_FILE = os.environ.get("TABLE_HEADER_TAGS_FILE", os.path.join(BASE_DIR, "config", "table_header_tags.json"))
 
-MAPPING_FIELDS = {
-    "territory": "Территория",
-    "municipality": "Муниципалитет",
-    "institution_full_name": "Полное название учреждения",
-    "institution_short_name": "Краткое название учреждения",
-    "institution_phone": "Телефон учреждения",
-    "institution_email": "Email учреждения",
-    "leader_fio": "ФИО руководителя",
-    "leader_position": "Должность руководителя",
-    "leader_phone": "Телефон руководителя",
-    "leader_email": "Email руководителя",
-    "teachers_fio": "ФИО педагогов",
-    "escort_teacher_fio": "ФИО сопровождающего педагога",
-    "escort_teacher_phone": "Телефон сопровождающего педагога",
-    "head_fio": "ФИО руководителя",
-    "teacher_fio": "ФИО педагога",
-    "contacts": "Контактные данные",
-    "email": "Email",
-    "nomination": "Номинация",
-    "sub_nomination": "Подноминация",
-    "category": "Категория",
-    "age_category": "Возрастная категория",
-    "league": "Лига",
-    "form": "Форма",
-    "genre": "Жанр",
-    "result": "Результат",
-    "score": "Баллы",
-    "score_total": "Сумма баллов",
-    "test_result": "Тест/результат",
-    "collective_name": "Название коллектива",
-    "studio_name": "Название студии",
-    "participants_count": "Количество участников",
-    "participant_fio": "ФИО участника(ов)",
-    "participants_list": "Список участников",
-    "participant_birthdate": "Дата рождения участника",
-    "participant_age": "Возраст участника",
-    "participant_phone": "Телефон участника",
-    "participant_certificate": "Свидетельство участника",
-    "number_title": "Название номера",
-    "number_duration": "Длительность номера",
-    "video_url": "Видео (ссылка)",
-    "audio_url": "Фонограмма (скачивание)",
-    "application_file": "Заявка на конкурс",
-    "generic_file": "Файл (неоднозначно)",
-    "work_photo": "Фото работы",
-    "delegation_list": "Общий список делегации",
-    "participants_word_list": "Список участников (Word)",
-    "equipment": "Необходимое оборудование",
-    "equipment_needed": "Необходимое оборудование",
-    "technical_rider": "Технический райдер",
-    "support_group_count": "Количество группы поддержки",
-    "receipt_url": "Квитанция об оплате (скачивание)",
-    "receipt_payer": "За кого оплата (для имени квитанции)",
-    "consent_url": "Согласие на обработку ПД",
-    "presentation_url": "Презентация (скачивание)",
-}
+MAPPING_FIELDS = {}
+HEADER_ALIASES = {}
 BASE_PROGRAM_FIELDS = ["number_title", "participant_fio", "studio_name", "territory", "municipality", "nomination", "age_category", "league"]
 DOCUMENT_COLUMN_META = {
     "audio_url": {"title": "Фонограмма", "kind": "file"},
@@ -176,57 +123,77 @@ DOCUMENT_COLUMN_META = {
     "presentation_url": {"title": "Презентация", "kind": "document"},
     "video_url": {"title": "Видео", "kind": "link"},
 }
-FILE_MAPPING_FIELDS = {"audio_url", "receipt_url", "presentation_url", "consent_url", "application_file"}
-
-HEADER_ALIASES = {
-    "municipality": ["муниципалитет", "название округа муниципальный городской", "территория название округа муниципальный городской", "территория"],
-    "territory": ["территория", "территория муниципалитет"],
-    "institution_full_name": ["полное название учреждения", "наименование учреждения"],
-    "institution_short_name": ["краткое название учреждения"],
-    "institution_phone": ["телефон учреждения"],
-    "institution_email": ["email учреждения", "e mail учреждения"],
-    "leader_fio": ["фио руководителя", "руководитель фио"],
-    "leader_phone": ["телефон руководителя"],
-    "leader_email": ["email руководителя", "e mail руководителя"],
-    "teachers_fio": ["фио педагогов", "педагог"],
-    "collective_name": ["название коллектива", "коллектив", "ансамбль"],
-    "participant_fio": ["фио участника", "участник исполнитель", "фио"],
-    "participants_count": ["количество участников"],
-    "number_title": ["название номера", "название", "номер"],
-    "nomination": ["номинация"],
-    "age_category": ["возрастная категория"],
-    "league": ["лига"],
-    "audio_url": ["фонограмма"],
-    "receipt_url": ["квитанция", "чек об оплате"],
-    "receipt_payer": ["за кого внесена оплата", "за кого оплата"],
-    "consent_url": ["согласие на обработку персональных данных", "заявления и согласия"],
-    "application_file": ["заявка на конкурс", "заявка"],
-    "presentation_url": ["презентация", "видео сопровождение", "презентация при наличии"],
-    "video_url": ["ссылка на видеозапись", "ссылка на видео", "ссылка на творческий номер", "ссылка на видеозапись конкурсного номера", "ссылка на видео для заочного этапа конкурса", "ссылка на интернет ресурс", "ссылка на конкурсные материалы размещенные в социальной сети vk", "видеозапись", "видео"],
-    "technical_rider": ["технический райдер"],
-    "participants_word_list": ["список участников в word", "список участников"],
-    "work_photo": ["фото работы"],
-    "generic_file": ["файл"],
-}
+FILE_MAPPING_FIELDS = {"audio_url", "presentation_url", "consent_url"}
 
 GROUPED_HEADER_RULES = {
-    "territory": ["территория"],
-    "municipality": ["муниципалитет", "территория"],
-    "nomination": ["номинация"],
-    "age_category": ["возрастная категория"],
-    "league": ["лига"],
-    "craft_technique": ["техника дпи использованная в работе", "техника дпи"],
+    "territory": ["Территория"],
+    "municipality": ["Муниципалитет", "Территория"],
+    "nomination": ["Номинация"],
+    "age_category": ["Возрастная категория"],
+    "league": ["Лига"],
+    "craft_technique": ["Техника ДПИ, использованная в работе", "Техника ДПИ"],
 }
-MAPPING_PRESET_FALLBACKS = [
-    ("nomination", ["номинац"]),
-    ("audio_url", ["фонограм"]),
-    ("receipt_url", ["квитанц", "оплат"]),
-    ("receipt_payer", ["квитанц", "оплат"]),
-    ("presentation_url", ["презентац"]),
-    ("participant_fio", ["участник", "фио"]),
-    ("studio_name", ["коллектив", "студия"]),
-    ("equipment", ["оборудован"]),
-]
+
+
+
+def _safe_trim(value):
+    text = str(value or "")
+    text = text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
+def load_table_header_tags_config():
+    empty = {"version": 1, "tags": []}
+    try:
+        with open(TABLE_HEADER_TAGS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        app.logger.error("[table_tags] config file is missing: %s", TABLE_HEADER_TAGS_FILE)
+        return empty
+    except json.JSONDecodeError as exc:
+        app.logger.error("[table_tags] config file is invalid JSON: %s (%s)", TABLE_HEADER_TAGS_FILE, exc)
+        return empty
+    except Exception:
+        app.logger.exception("[table_tags] failed to load config file: %s", TABLE_HEADER_TAGS_FILE)
+        return empty
+
+    if not isinstance(data, dict):
+        app.logger.error("[table_tags] config root must be object: %s", TABLE_HEADER_TAGS_FILE)
+        return empty
+
+    tags = data.get("tags")
+    if not isinstance(tags, list):
+        app.logger.error("[table_tags] config 'tags' must be list: %s", TABLE_HEADER_TAGS_FILE)
+        return empty
+
+    cleaned_tags = []
+    for i, item in enumerate(tags):
+        if not isinstance(item, dict):
+            app.logger.warning("[table_tags] skipping non-object tag entry at index=%s", i)
+            continue
+        key = _safe_trim(item.get("key"))
+        tag = _safe_trim(item.get("tag"))
+        aliases = item.get("aliases")
+        if not key or not tag or not isinstance(aliases, list):
+            app.logger.warning("[table_tags] skipping invalid tag entry at index=%s key=%s tag=%s", i, key, tag)
+            continue
+        alias_values = [str(a) for a in aliases if isinstance(a, str)]
+        cleaned_tags.append({"key": key, "tag": tag, "aliases": alias_values})
+
+    return {"version": data.get("version", 1), "tags": cleaned_tags}
+
+
+def init_table_header_tags():
+    global MAPPING_FIELDS, HEADER_ALIASES
+    config = load_table_header_tags_config()
+    MAPPING_FIELDS = {}
+    HEADER_ALIASES = {}
+    for item in config.get("tags", []):
+        key = item["key"]
+        MAPPING_FIELDS[key] = item["tag"]
+        HEADER_ALIASES[key] = list(item.get("aliases", []))
+    app.logger.info("[table_tags] loaded tags=%s aliases=%s from %s", len(MAPPING_FIELDS), sum(len(v) for v in HEADER_ALIASES.values()), TABLE_HEADER_TAGS_FILE)
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
@@ -931,15 +898,10 @@ def normalize_mapping(mapping):
 
 
 def normalize_header_text(value):
-    text = str(value or "").lower().replace("ё", "е")
-    text = text.replace("\n", " ").replace("\r", " ").replace("\t", " ")
-    text = text.replace("«", '"').replace("»", '"').replace("“", '"').replace("”", '"')
-    text = re.sub(r"\be\s*[- ]\s*mail\b", "email", text)
-    text = re.sub(r"\bф\s*\.\s*и\s*\.\s*о\s*\.?\b", "фио", text)
-    text = re.sub(r"\bконтактный\s*\(([^)]*)\)\s*телефон\b", "контактный телефон", text)
-    text = re.sub(r"[^\w\s/]+", " ", text, flags=re.UNICODE)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    text = str(value or "")
+    text = text.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
 
 
 def mapping_signature(headers):
@@ -961,67 +923,29 @@ def apply_mapping_templates_and_presets(user_id, headers):
         return mapping, signature, "template"
 
     mapping = {}
-    used_cols = set()
+    conflicts = []
 
-    def assign_column(label, idx):
-        if label in mapping or idx in used_cols or label not in MAPPING_FIELDS:
-            return
-        mapping[label] = idx
-        used_cols.add(idx)
-
-    # built-in aliases first
-    for label, aliases in HEADER_ALIASES.items():
-        if label in mapping or label not in MAPPING_FIELDS:
-            continue
-        alias_norms = [normalize_header_text(a) for a in aliases]
-        for idx, header in enumerate(normalized_headers):
-            if idx in used_cols:
+    for idx, header in enumerate(normalized_headers):
+        matches = []
+        for label, aliases in HEADER_ALIASES.items():
+            if label not in MAPPING_FIELDS:
                 continue
-            if header in alias_norms:
-                assign_column(label, idx)
-                break
+            for alias in aliases:
+                if header == normalize_header_text(alias):
+                    matches.append(label)
+                    break
+        uniq = list(dict.fromkeys(matches))
+        if len(uniq) == 1:
+            label = uniq[0]
+            if label not in mapping:
+                mapping[label] = idx
+        elif len(uniq) > 1:
+            conflicts.append({"idx": idx, "header": headers[idx], "labels": uniq})
 
-    # user presets have higher priority for remaining fields
-    presets = query_db(
-        """
-        SELECT label, pattern, match_type
-        FROM user_mapping_presets
-        WHERE user_id=?
-        ORDER BY
-            CASE match_type WHEN 'exact' THEN 0 ELSE 1 END,
-            priority ASC,
-            updated_at DESC,
-            id DESC
-        """,
-        (user_id,),
-    )
-    for preset in presets:
-        label = (preset["label"] or "").strip()
-        pattern = normalize_header_text(preset["pattern"])
-        match_type = (preset["match_type"] or "").strip().lower()
-        if not label or not pattern or label in mapping:
-            continue
-        for idx, header in enumerate(normalized_headers):
-            if idx in used_cols:
-                continue
-            if match_type == "exact" and header == pattern:
-                assign_column(label, idx)
-                break
-            if match_type == "contains" and pattern in header:
-                assign_column(label, idx)
-                break
+    if conflicts:
+        app.logger.warning("[table_tags] mapping conflicts detected: %s", conflicts)
 
-    for label, tokens in MAPPING_PRESET_FALLBACKS:
-        if label in mapping:
-            continue
-        for idx, header in enumerate(normalized_headers):
-            if idx in used_cols:
-                continue
-            if any(token in header for token in tokens):
-                assign_column(label, idx)
-                break
-
-    return normalize_mapping(mapping), signature, "presets_or_fallback"
+    return normalize_mapping(mapping), signature, "tags_config"
 
 
 def parse_grouped_header(field_name, normalized_header):
@@ -1116,19 +1040,11 @@ def update_table_yandex_status(table_id, status, error_text=None):
 def table_required_mapping_status(mapping):
     assigned_files = [f for f in FILE_MAPPING_FIELDS if f in mapping]
     if not assigned_files:
-        return False, "Нужно назначить хотя бы один файловый/документный столбец: фонограмма/квитанция/презентация/согласие/заявка"
+        return False, "Нужно назначить хотя бы один файловый/документный столбец: фонограмма/презентация/согласие"
 
-    needs = []
-    if any(f in mapping for f in ["audio_url", "presentation_url", "video_url", "application_file"]):
+    if any(f in mapping for f in ["audio_url", "presentation_url", "video_url", "application_file", "consent_url"]):
         if "number_title" not in mapping:
-            needs.append("Название номера")
-        if "participant_fio" not in mapping:
-            needs.append("ФИО участника(ов)")
-    if "receipt_url" in mapping and "receipt_payer" not in mapping:
-        needs.append("За кого оплата")
-
-    if needs:
-        return False, "Не назначены обязательные колонки: " + ", ".join(needs)
+            return False, "Не назначена обязательная колонка: Навание номреа"
     return True, "ok"
 
 
@@ -3510,6 +3426,7 @@ def stream_targets_update(target_id):
 # =====================================================
 
 # ------------ Запуск ------------
+init_table_header_tags()
 init_db()
 ensure_admin_exists()
 migrate_tables_to_current_admin()
