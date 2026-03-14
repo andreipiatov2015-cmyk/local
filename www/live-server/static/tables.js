@@ -46,7 +46,7 @@ const receiptViewerImage = document.getElementById('receiptViewerImage');
 const receiptViewerDownload = document.getElementById('receiptViewerDownload');
 const programHeadRow = document.getElementById('programHeadRow');
 
-const REQUIRED_FIELDS = ['number_title', 'participant_fio', 'audio_url', 'receipt_url', 'receipt_payer', 'presentation_url'];
+const REQUIRED_FIELDS = ['number_title', 'audio_url', 'consent_url', 'presentation_url'];
 
 function requireAuth(resp) {
   if (resp.status === 401) {
