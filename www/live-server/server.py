@@ -126,8 +126,8 @@ DOCUMENT_COLUMN_META = {
 FILE_MAPPING_FIELDS = {"audio_url", "presentation_url", "consent_url"}
 
 GROUPED_HEADER_RULES = {
-    "territory": ["Территория"],
-    "municipality": ["Муниципалитет", "Территория"],
+    "territory": [],
+    "municipality": ["Муниципалитет", "Территория", "Округ", "Название округа"],
     "nomination": ["Номинация"],
     "age_category": ["Возрастная категория"],
     "league": ["Лига"],
@@ -930,10 +930,15 @@ def apply_mapping_templates_and_presets(user_id, headers):
         for label, aliases in HEADER_ALIASES.items():
             if label not in MAPPING_FIELDS:
                 continue
+            matched = False
             for alias in aliases:
                 if header == normalize_header_text(alias):
-                    matches.append(label)
+                    matched = True
                     break
+            if not matched and parse_grouped_header(label, header):
+                matched = True
+            if matched:
+                matches.append(label)
         uniq = list(dict.fromkeys(matches))
         if len(uniq) == 1:
             label = uniq[0]
@@ -949,11 +954,31 @@ def apply_mapping_templates_and_presets(user_id, headers):
 
 
 def parse_grouped_header(field_name, normalized_header):
-    prefixes = GROUPED_HEADER_RULES.get(field_name) or []
-    for prefix in prefixes:
+    prefixes = set()
+    for prefix in GROUPED_HEADER_RULES.get(field_name) or []:
         prefix_norm = normalize_header_text(prefix)
-        if normalized_header.startswith(prefix_norm + " /"):
-            return normalized_header.split("/", 1)[1].strip()
+        if prefix_norm:
+            prefixes.add(prefix_norm)
+
+    for alias in HEADER_ALIASES.get(field_name) or []:
+        alias_norm = normalize_header_text(alias)
+        if "/" in alias_norm:
+            left = alias_norm.split("/", 1)[0].strip()
+            if left:
+                prefixes.add(left)
+
+    if "/" not in normalized_header:
+        return ""
+
+    left, right = normalized_header.split("/", 1)
+    left = left.strip()
+    right = right.strip()
+    if not right:
+        return ""
+
+    for prefix_norm in prefixes:
+        if left == prefix_norm or left.startswith(prefix_norm + " "):
+            return right
     return ""
 
 
@@ -1415,6 +1440,7 @@ def process_table_download(table_id, user_id):
             )
             return
 
+        headers = ["" if x is None else str(x).strip() for x in (rows[0] or [])]
         data_rows = rows[1:]
         total = len(data_rows)
         existing_processed = int(t["processed_count"] or 0)
