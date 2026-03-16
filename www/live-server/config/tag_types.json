@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "types": {
+    "municipality": "grouped_choice",
+    "nomination": "grouped_choice",
+    "age_category": "grouped_choice",
+    "league": "grouped_choice",
+    "craft_technique": "grouped_choice",
+    "video_url": "links",
+    "audio_url": "files",
+    "consent_url": "files_or_links",
+    "presentation_url": "files_or_links",
+    "work_photo": "files",
+    "work_sketch": "files"
+  }
+}
