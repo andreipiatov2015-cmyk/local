@@ -241,15 +241,16 @@
 }
 
 .program-mode { margin-top: 12px; width: 100%; }
-.program-mode .table-scroll { max-height: 72vh; }
-#programTable { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.program-mode .table-scroll { max-height: 72vh; width: 100%; }
+#programTable { width: 100%; border-collapse: collapse; table-layout: auto; }
 #programTable th, #programTable td { border: 1px solid #e2e8f0; padding: 8px; white-space: normal; overflow-wrap: anywhere; word-break: break-word; vertical-align: top; }
 #programTable th { background: #f8fafc; position: sticky; top: 0; }
-#programTable th:nth-child(1), #programTable td:nth-child(1) { width: 54px; text-align: center; }
-#programTable th:nth-child(2), #programTable td:nth-child(2) { width: 52px; text-align: center; }
-#programTable th:nth-child(6), #programTable td:nth-child(6),
-#programTable th:nth-child(7), #programTable td:nth-child(7),
-#programTable th:nth-child(8), #programTable td:nth-child(8) { width: 132px; }
+#programTable th:nth-child(1), #programTable td:nth-child(1) { width: 64px; text-align: center; }
+#programTable th:nth-child(2), #programTable td:nth-child(2) { width: 48px; text-align: center; }
+#programTable th:nth-child(3), #programTable td:nth-child(3) { width: 22%; min-width: 220px; }
+#programTable th:nth-child(4), #programTable td:nth-child(4) { width: 24%; min-width: 240px; }
+#programTable th:nth-child(5), #programTable td:nth-child(5) { width: 18%; min-width: 180px; }
+#programTable th:nth-child(n+6), #programTable td:nth-child(n+6) { min-width: 130px; }
 .program-problem-row { background: #fee2e2; }
 .program-break-row { background: #e5e7eb; }
 .program-insert-row td { text-align: center; background: #f8fafc; }
