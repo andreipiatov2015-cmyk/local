@@ -149,12 +149,32 @@ def get_cell(row, idx):
     return "" if v is None else str(v).strip()
 
 
+
+
+def _response_looks_like_html(response: requests.Response):
+    ctype = (response.headers.get("Content-Type") or "").lower()
+    cdisp = (response.headers.get("Content-Disposition") or "").lower()
+    final_url = str(response.url or "").lower()
+    body_prefix = (response.content or b"")[:512].lstrip().lower()
+
+    if "text/html" in ctype:
+        return True
+    if ctype.startswith("text/") and "attachment" not in cdisp:
+        return True
+    if "forms.yandex.ru/u/files" in final_url and "attachment" not in cdisp and "audio" not in ctype:
+        return True
+    if body_prefix.startswith(b"<!doctype html") or body_prefix.startswith(b"<html"):
+        return True
+    return False
+
 def download_with_retries(session: requests.Session, url: str, out_path: Path):
     last_error = None
     for _ in range(DOWNLOAD_RETRIES):
         try:
-            r = session.get(url, timeout=30)
+            r = session.get(url, timeout=30, allow_redirects=True)
             r.raise_for_status()
+            if _response_looks_like_html(r):
+                raise RuntimeError(f"received html/text instead of binary file; status={r.status_code}; final_url={r.url}")
             out_path.write_bytes(r.content)
             return
         except Exception as e:  # pragma: no cover

@@ -1245,7 +1245,7 @@ def build_tag_cell(table_id, user_id, entry, mapping, field_name, resolved_field
     local_value = entry.get(local_key) if local_key else ""
     files = []
     if local_key and local_value:
-        local_parts = split_multi_value(local_value)
+        local_parts = parse_local_file_values(local_value)
         for part in local_parts:
             exists = has_local_entry_file(table_id, user_id, entry.get("id"), local_key, part, placeholder_for_audio=(field_name == "audio_url"))
             if not exists:
@@ -1608,6 +1608,10 @@ class YandexAuthRequiredError(RuntimeError):
     pass
 
 
+class DownloadValidationError(RuntimeError):
+    pass
+
+
 def extension_from_url(url, fallback="bin"):
     name = url.split("?")[0].rstrip("/").split("/")[-1]
     if "." in name:
@@ -1616,15 +1620,40 @@ def extension_from_url(url, fallback="bin"):
     return fallback
 
 
+def _response_looks_like_html(response):
+    ctype = (response.headers.get("Content-Type") or "").lower()
+    cdisp = (response.headers.get("Content-Disposition") or "").lower()
+    final_url = str(response.url or "")
+    final_url_l = final_url.lower()
+    body_prefix = (response.content or b"")[:512].lstrip().lower()
+
+    if response.status_code in (401, 403) or "passport.yandex" in final_url_l:
+        raise YandexAuthRequiredError("Нужен вход администратора в Яндекс")
+
+    if "text/html" in ctype:
+        return True, "ответ имеет Content-Type text/html"
+    if ctype.startswith("text/") and "attachment" not in cdisp:
+        return True, f"ответ имеет текстовый Content-Type: {ctype}"
+    if "forms.yandex.ru/u/files" in final_url_l and "attachment" not in cdisp and "audio" not in ctype:
+        return True, "URL файла Yandex Forms вернул страницу вместо бинарного файла"
+    if body_prefix.startswith(b"<!doctype html") or body_prefix.startswith(b"<html"):
+        return True, "первые байты ответа похожи на HTML"
+    return False, ""
+
+
 def download_with_retries(req_session, url, out_path):
     last_error = None
     for _ in range(DOWNLOAD_RETRIES):
         try:
             r = req_session.get(url, timeout=30, allow_redirects=True)
-            final_url = (r.url or "").lower()
-            if r.status_code in (401, 403) or "passport.yandex" in final_url:
-                raise YandexAuthRequiredError("Нужен вход администратора в Яндекс")
             r.raise_for_status()
+            is_html, reason = _response_looks_like_html(r)
+            if is_html:
+                raise DownloadValidationError(
+                    f"вместо файла получен HTML/текст ({reason}); status={r.status_code}; "
+                    f"content_type={r.headers.get('Content-Type')}; "
+                    f"content_disposition={r.headers.get('Content-Disposition')}; final_url={r.url}"
+                )
             with open(out_path, "wb") as f:
                 f.write(r.content)
             return
@@ -1634,6 +1663,20 @@ def download_with_retries(req_session, url, out_path):
             last_error = str(e)
             time.sleep(1)
     raise RuntimeError(last_error or "download failed")
+
+
+def parse_local_file_values(local_value):
+    text = str(local_value or "").strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if str(x or "").strip()]
+        except Exception:
+            pass
+    return [text]
 
 
 def short_error_message(exc, fallback="Ошибка обработки"):
@@ -1937,8 +1980,14 @@ def process_table_download(table_id, user_id):
                     except YandexAuthRequiredError:
                         persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
                         return
-                except Exception:
-                    pass
+                except Exception as exc:
+                    app.logger.warning(
+                        "[tables_download_audio_invalid] table_id=%s row_id=%s url=%s reason=%s",
+                        table_id,
+                        row_id,
+                        audio_url,
+                        short_error_message(exc, fallback="Ошибка скачивания фонограммы"),
+                    )
 
             if receipt_url and not receipt_done:
                 payer = get_cell(row_values, mapping.get("receipt_payer"))
@@ -3135,7 +3184,7 @@ def send_program_file(table_id, item_id, kind, user_id):
     column = f"{kind}_local"
     local_value = entry.get(column) or ""
     part = str(request.args.get("part") or "").strip()
-    local_parts = split_multi_value(local_value)
+    local_parts = parse_local_file_values(local_value)
     selected_local = ""
     if part and part in local_parts:
         selected_local = part
