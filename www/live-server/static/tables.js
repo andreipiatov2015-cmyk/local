@@ -7,7 +7,10 @@ let currentYandexStatus = 'disconnected';
 let currentProgramItems = [];
 let isProgramMode = false;
 let currentVisibleTags = [];
+let currentRenderedTagMeta = [];
 let draggedProgramItemId = null;
+
+const FORCED_HIDDEN_TAG_PATTERNS = [/номер\s*телефон/i, /телефон/i, /e-?mail/i, /емаил/i, /email/i, /райдер/i, /rider/i];
 
 const tableList = document.getElementById('tableList');
 const workspaceEl = document.getElementById('workspace');
@@ -470,11 +473,43 @@ function filteredProgramItems() {
 function renderProgramHead() {
   if (!programHeadRow) return;
   programHeadRow.innerHTML = '<th>№</th><th>↕</th><th>Название</th><th>ФИО</th><th>Коллектив</th>';
-  (currentVisibleTags || []).forEach((tag) => {
+  (currentRenderedTagMeta || []).forEach(({ tag }) => {
     const th = document.createElement('th');
     th.textContent = tag.label || tag.key;
     programHeadRow.appendChild(th);
   });
+}
+
+function isTagForceHidden(tag) {
+  const hay = `${tag?.label || ''} ${tag?.key || ''}`.toLowerCase();
+  return FORCED_HIDDEN_TAG_PATTERNS.some((rx) => rx.test(hay));
+}
+
+function isCellFilled(cell) {
+  if (!cell) return false;
+  if ((cell.value || '').toString().trim()) return true;
+  if ((cell.values || []).some((v) => String(v || '').trim())) return true;
+  if ((cell.files || []).length) return true;
+  if ((cell.links || []).length) return true;
+  if (cell.conflict?.selected) return true;
+  return false;
+}
+
+function rebuildVisibleProgramTags(items = currentProgramItems, tags = currentVisibleTags) {
+  currentRenderedTagMeta = (tags || [])
+    .map((tag, index) => ({ tag, index }))
+    .filter(({ tag, index }) => {
+      if (isTagForceHidden(tag)) return false;
+      return (items || []).some((item) => item.kind === 'entry' && isCellFilled((item.cells || [])[index]));
+    });
+}
+
+function fillTextCell(td, text) {
+  const span = document.createElement('span');
+  span.className = 'clamp-content';
+  span.textContent = text || '';
+  td.classList.add('clamp-cell');
+  td.appendChild(span);
 }
 
 async function resolveGroupedConflict(entryId, field, value) {
@@ -501,7 +536,7 @@ function renderTagCell(td, item, cell) {
       };
       td.appendChild(select);
     } else {
-      td.textContent = cell.value || '';
+      fillTextCell(td, cell.value || '');
     }
     return;
   }
@@ -547,7 +582,7 @@ function renderTagCell(td, item, cell) {
     return;
   }
 
-  td.textContent = cell.value || (cell.values || []).join(', ');
+  fillTextCell(td, cell.value || (cell.values || []).join(', '));
 }
 
 function renderProgram() {
@@ -559,10 +594,10 @@ function renderProgram() {
 
     if (item.kind === 'break') {
       tr.className = 'program-break-row';
-      tr.innerHTML = `<td></td><td>≡</td><td colspan="${5 + (currentVisibleTags || []).length}"><div class="program-break-cell"><span>${item.label}</span><button class="btn btn-secondary btn-inline">Удалить</button></div></td>`;
+      tr.innerHTML = `<td></td><td>≡</td><td colspan="${5 + (currentRenderedTagMeta || []).length}"><div class="program-break-cell"><span>${item.label}</span><button class="btn btn-secondary btn-inline">Удалить</button></div></td>`;
       tr.querySelector('button').onclick = () => deleteBreak(item.program_item_id);
     } else {
-      tr.className = item.is_problematic ? 'program-problem-row' : '';
+      tr.className = `program-entry-row ${item.is_problematic ? 'program-problem-row' : ''}`.trim();
       tr.draggable = true;
       tr.ondragstart = () => { draggedProgramItemId = item.program_item_id; };
       tr.ondragover = (e) => e.preventDefault();
@@ -590,19 +625,35 @@ function renderProgram() {
       };
 
       tr.appendChild(no);
-      tr.innerHTML += `<td class="drag-handle">≡</td><td>${item.number_title || ''}</td><td>${item.fio || ''}</td><td>${item.team || ''}</td>`;
-      (item.cells || []).forEach((cell) => {
+      tr.innerHTML += '<td class="drag-handle">≡</td>';
+      const titleTd = document.createElement('td');
+      const fioTd = document.createElement('td');
+      const teamTd = document.createElement('td');
+      fillTextCell(titleTd, item.number_title || '');
+      fillTextCell(fioTd, item.fio || '');
+      fillTextCell(teamTd, item.team || '');
+      tr.appendChild(titleTd);
+      tr.appendChild(fioTd);
+      tr.appendChild(teamTd);
+
+      (currentRenderedTagMeta || []).forEach(({ index }) => {
+        const cell = (item.cells || [])[index];
         const td = document.createElement('td');
         renderTagCell(td, item, cell);
         tr.appendChild(td);
       });
+
+      tr.onclick = (event) => {
+        if (event.target.closest('a, button, select, input, label')) return;
+        tr.classList.toggle('is-expanded');
+      };
     }
 
     programBody.appendChild(tr);
     if (item.kind === 'entry' && idx < items.length - 1) {
       const plusRow = document.createElement('tr');
       plusRow.className = 'program-insert-row';
-      plusRow.innerHTML = `<td colspan="${5 + (currentVisibleTags || []).length}"><button class="insert-break-btn">+ добавить перерыв здесь</button></td>`;
+      plusRow.innerHTML = `<td colspan="${5 + (currentRenderedTagMeta || []).length}"><button class="insert-break-btn">+ добавить перерыв здесь</button></td>`;
       const nextItem = items.slice(idx + 1).find((x) => x.kind === 'entry');
       plusRow.querySelector('button').onclick = () => addBreakAfter(item.program_item_id, nextItem ? nextItem.program_item_id : null);
       programBody.appendChild(plusRow);
@@ -672,6 +723,7 @@ async function loadProgram() {
   setProgramMode(true);
   currentProgramItems = data.items || [];
   currentVisibleTags = data.visible_tags || [];
+  rebuildVisibleProgramTags(currentProgramItems, currentVisibleTags);
   renderProgramHead();
   renderProgram();
 }

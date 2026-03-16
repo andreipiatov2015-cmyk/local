@@ -1,11 +1,13 @@
 .tables-content {
   align-items: stretch;
-  width: calc(100% - 24px);
+  width: min(100%, calc(100vw - 284px));
   max-width: 1800px;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .tables-content.program-only {
-  width: calc(100% - 24px);
+  width: min(100%, calc(100vw - 284px));
   max-width: none;
 }
 
@@ -235,8 +237,12 @@
 
 @media (max-width: 720px) {
   .tables-content {
-    width: calc(100% - 24px);
+    width: 100%;
     padding: 12px;
+  }
+
+  .tables-content.program-only {
+    width: 100%;
   }
 }
 
@@ -251,6 +257,24 @@
 #programTable th:nth-child(4), #programTable td:nth-child(4) { width: 24%; min-width: 240px; }
 #programTable th:nth-child(5), #programTable td:nth-child(5) { width: 18%; min-width: 180px; }
 #programTable th:nth-child(n+6), #programTable td:nth-child(n+6) { min-width: 130px; }
+.program-entry-row { cursor: pointer; }
+.program-entry-row .drag-handle,
+.program-entry-row .clickable-number { cursor: grab; }
+.program-entry-row .clamp-cell .clamp-content {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  white-space: normal;
+}
+.program-entry-row.is-expanded .clamp-cell .clamp-content {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+}
+.program-entry-row.is-expanded { background: #f8fafc; }
 .program-problem-row { background: #fee2e2; }
 .program-break-row { background: #e5e7eb; }
 .program-insert-row td { text-align: center; background: #f8fafc; }
