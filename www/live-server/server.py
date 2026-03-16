@@ -910,6 +910,36 @@ def get_cell(row, idx):
     return "" if v is None else str(v).strip()
 
 
+def _cell_values(row, idx_or_list):
+    indexes = []
+    if isinstance(idx_or_list, int):
+        indexes = [idx_or_list]
+    elif isinstance(idx_or_list, list):
+        indexes = [idx for idx in idx_or_list if isinstance(idx, int)]
+
+    values = []
+    for idx in indexes:
+        if idx < 0:
+            continue
+        value = get_cell(row, idx)
+        if value:
+            values.append(value)
+    return values
+
+
+def get_joined_cell(row, idx_or_list, separator=", "):
+    values = _cell_values(row, idx_or_list)
+    if not values:
+        return ""
+    unique_values = list(dict.fromkeys(values))
+    return separator.join(unique_values)
+
+
+def get_first_cell(row, idx_or_list):
+    values = _cell_values(row, idx_or_list)
+    return values[0] if values else ""
+
+
 def parse_excel_preview(xlsx_path, preview_limit=EXCEL_PREVIEW_LIMIT):
     if openpyxl is None:
         raise RuntimeError("openpyxl недоступен")
@@ -1549,9 +1579,9 @@ def rebuild_entries_from_excel(table_id, user_id, mapping, *, preserve_files=Tru
             if value:
                 resolved_fields[grouped_field] = value
 
-        number_title = get_cell(row_values, mapping.get("number_title"))
-        fio = get_cell(row_values, mapping.get("participant_fio"))
-        team = get_cell(row_values, mapping.get("studio_name"))
+        number_title = get_joined_cell(row_values, mapping.get("number_title"))
+        fio = get_joined_cell(row_values, mapping.get("participant_fio"))
+        team = get_joined_cell(row_values, mapping.get("studio_name"))
         unique_key = f"{row_id}|{number_title}|{fio}"
 
         prev = existing_by_row_id.get(row_id) or {}
@@ -1571,13 +1601,13 @@ def rebuild_entries_from_excel(table_id, user_id, mapping, *, preserve_files=Tru
                 fio,
                 team,
                 unique_key,
-                get_cell(row_values, mapping.get("audio_url")),
-                get_cell(row_values, mapping.get("receipt_url")),
-                get_cell(row_values, mapping.get("consent_url")),
-                get_cell(row_values, mapping.get("application_file")),
-                get_cell(row_values, mapping.get("generic_file")),
-                get_cell(row_values, mapping.get("video_url")),
-                get_cell(row_values, mapping.get("presentation_url")),
+                get_first_cell(row_values, mapping.get("audio_url")),
+                get_first_cell(row_values, mapping.get("receipt_url")),
+                get_joined_cell(row_values, mapping.get("consent_url"), separator="; "),
+                get_joined_cell(row_values, mapping.get("application_file"), separator="; "),
+                get_joined_cell(row_values, mapping.get("generic_file"), separator="; "),
+                get_joined_cell(row_values, mapping.get("video_url"), separator="; "),
+                get_first_cell(row_values, mapping.get("presentation_url")),
                 audio_local,
                 receipt_local,
                 "",
@@ -2027,9 +2057,9 @@ def process_table_download(table_id, user_id):
                 if value:
                     resolved_fields[grouped_field] = value
 
-            number_title = get_cell(row_values, mapping.get("number_title"))
-            fio = get_cell(row_values, mapping.get("participant_fio"))
-            team = get_cell(row_values, mapping.get("studio_name"))
+            number_title = get_joined_cell(row_values, mapping.get("number_title"))
+            fio = get_joined_cell(row_values, mapping.get("participant_fio"))
+            team = get_joined_cell(row_values, mapping.get("studio_name"))
             unique_key = f"{row_id}|{number_title}|{fio}"
 
             prev = existing_by_row_id.get(row_id) or {}
@@ -2038,9 +2068,13 @@ def process_table_download(table_id, user_id):
             prev_presentation_local = (prev.get("presentation_local") or "").strip()
             entry_id = prev.get("id")
 
-            audio_url = get_cell(row_values, mapping.get("audio_url"))
-            receipt_url = get_cell(row_values, mapping.get("receipt_url"))
-            presentation_url = get_cell(row_values, mapping.get("presentation_url"))
+            audio_url = get_first_cell(row_values, mapping.get("audio_url"))
+            receipt_url = get_first_cell(row_values, mapping.get("receipt_url"))
+            presentation_url = get_first_cell(row_values, mapping.get("presentation_url"))
+            consent_url = get_joined_cell(row_values, mapping.get("consent_url"), separator="; ")
+            application_file = get_joined_cell(row_values, mapping.get("application_file"), separator="; ")
+            generic_file = get_joined_cell(row_values, mapping.get("generic_file"), separator="; ")
+            video_url = get_joined_cell(row_values, mapping.get("video_url"), separator="; ")
 
             audio_done = bool(prev_audio_local and os.path.exists(os.path.join(base, prev_audio_local))) if audio_url else True
             receipt_done = bool(prev_receipt_local and os.path.exists(os.path.join(base, prev_receipt_local))) if receipt_url else True
@@ -2071,10 +2105,10 @@ def process_table_download(table_id, user_id):
                         unique_key,
                         audio_url,
                         receipt_url,
-                        get_cell(row_values, mapping.get("consent_url")),
-                        get_cell(row_values, mapping.get("application_file")),
-                        get_cell(row_values, mapping.get("generic_file")),
-                        get_cell(row_values, mapping.get("video_url")),
+                        consent_url,
+                        application_file,
+                        generic_file,
+                        video_url,
                         presentation_url,
                         json.dumps(row_data, ensure_ascii=False),
                         json.dumps(resolved_fields, ensure_ascii=False),
@@ -2097,10 +2131,10 @@ def process_table_download(table_id, user_id):
                         unique_key,
                         audio_url,
                         receipt_url,
-                        get_cell(row_values, mapping.get("consent_url")),
-                        get_cell(row_values, mapping.get("application_file")),
-                        get_cell(row_values, mapping.get("generic_file")),
-                        get_cell(row_values, mapping.get("video_url")),
+                        consent_url,
+                        application_file,
+                        generic_file,
+                        video_url,
                         presentation_url,
                         prev_audio_local,
                         prev_receipt_local,
@@ -2158,7 +2192,7 @@ def process_table_download(table_id, user_id):
                     )
 
             if receipt_url and not receipt_done:
-                payer = get_cell(row_values, mapping.get("receipt_payer"))
+                payer = get_joined_cell(row_values, mapping.get("receipt_payer"))
                 receipt_base = add_row_suffix_if_needed(
                     make_safe_basename(payer, fallback=f"receipt-{row_id}"),
                     row_id,
