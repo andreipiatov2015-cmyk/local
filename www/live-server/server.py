@@ -111,6 +111,7 @@ YANDEX_REFRESH_URL = (os.environ.get("YANDEX_REFRESH_URL") or "https://disk.yand
 YANDEX_CHROMIUM_RESTART_CMD = (os.environ.get("YANDEX_CHROMIUM_RESTART_CMD") or "").strip()
 YANDEX_CHROMIUM_OPEN_CMD = (os.environ.get("YANDEX_CHROMIUM_OPEN_CMD") or "").strip()
 TABLE_HEADER_TAGS_FILE = os.environ.get("TABLE_HEADER_TAGS_FILE", os.path.join(BASE_DIR, "config", "table_header_tags.json"))
+TAG_TYPES_FILE = os.environ.get("TAG_TYPES_FILE", os.path.join(BASE_DIR, "config", "tag_types.json"))
 
 MAPPING_FIELDS = {}
 HEADER_ALIASES = {}
@@ -124,6 +125,43 @@ DOCUMENT_COLUMN_META = {
     "video_url": {"title": "Видео", "kind": "link"},
 }
 FILE_MAPPING_FIELDS = {"audio_url", "presentation_url", "consent_url"}
+
+
+
+def load_tag_types_config():
+    defaults = {
+        "municipality": "grouped_choice",
+        "nomination": "grouped_choice",
+        "age_category": "grouped_choice",
+        "league": "grouped_choice",
+        "craft_technique": "grouped_choice",
+        "video_url": "links",
+        "audio_url": "files",
+        "consent_url": "files_or_links",
+        "presentation_url": "files_or_links",
+        "work_photo": "files",
+        "work_sketch": "files",
+    }
+    try:
+        with open(TAG_TYPES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        types = data.get("types") if isinstance(data, dict) else None
+        if isinstance(types, dict):
+            cleaned = {str(k).strip(): str(v).strip() for k, v in types.items() if str(k).strip() and str(v).strip()}
+            if cleaned:
+                return cleaned
+    except Exception:
+        app.logger.warning("[table_tag_types] failed to load %s, fallback defaults", TAG_TYPES_FILE)
+    return defaults
+
+
+TAG_TYPE_OVERRIDES = load_tag_types_config()
+
+PROGRAM_DOWNLOAD_ROUTE_BY_TAG = {
+    "audio_url": "audio",
+    "receipt_url": "receipt",
+    "presentation_url": "presentation",
+}
 
 GROUPED_HEADER_RULES = {
     "territory": [],
@@ -1046,12 +1084,19 @@ def detect_grouped_headers(headers, mapping=None):
     return result
 
 
+def tag_type_for_key(tag_key):
+    if tag_key in TAG_TYPE_OVERRIDES:
+        return TAG_TYPE_OVERRIDES[tag_key]
+    if tag_key in GROUPED_HEADER_RULES:
+        return "grouped_choice"
+    return "text"
+
+
 def build_visible_columns(table_id, mapping):
-    base = [field for field in BASE_PROGRAM_FIELDS if field in mapping]
-    documents = []
-    for field in DOCUMENT_COLUMN_META.keys():
+    visible = []
+    for field in MAPPING_FIELDS.keys():
         if field in mapping:
-            documents.append(field)
+            visible.append(field)
             continue
         row = query_db(
             f"SELECT 1 FROM table_entries WHERE table_id=? AND COALESCE({field}, '') <> '' LIMIT 1",
@@ -1059,8 +1104,115 @@ def build_visible_columns(table_id, mapping):
             one=True,
         )
         if row:
-            documents.append(field)
-    return {"base": base, "documents": documents}
+            visible.append(field)
+    return visible
+
+
+def split_multi_value(raw_value):
+    if raw_value is None:
+        return []
+    text = str(raw_value).strip()
+    if not text:
+        return []
+    return [part.strip() for part in re.split(r"[;,\n]", text) if part and part.strip()]
+
+
+def looks_like_url(value):
+    text = str(value or "").strip().lower()
+    return text.startswith("http://") or text.startswith("https://")
+
+
+def entry_field_local_key(field_name):
+    if field_name == "audio_url":
+        return "audio_local"
+    if field_name == "receipt_url":
+        return "receipt_local"
+    if field_name == "consent_url":
+        return "consent_local"
+    if field_name == "application_file":
+        return "application_local"
+    if field_name == "generic_file":
+        return "generic_local"
+    if field_name == "presentation_url":
+        return "presentation_local"
+    if field_name in {"work_photo", "work_sketch"}:
+        return "generic_local"
+    return ""
+
+
+def build_tag_cell(table_id, user_id, entry, field_name, resolved_fields, conflicts):
+    tag_type = tag_type_for_key(field_name)
+    label = MAPPING_FIELDS.get(field_name, field_name)
+    raw_value = entry.get(field_name) or ""
+    values = split_multi_value(raw_value)
+
+    cell = {
+        "key": field_name,
+        "label": label,
+        "type": tag_type,
+        "value": "",
+        "values": [],
+        "links": [],
+        "files": [],
+        "conflict": None,
+    }
+
+    if tag_type == "grouped_choice":
+        selected = str((resolved_fields or {}).get(field_name) or "").strip()
+        options = [str(x).strip() for x in ((conflicts or {}).get(field_name) or []) if str(x).strip()]
+        if not selected and values:
+            selected = values[0]
+        if selected and selected not in options:
+            options.insert(0, selected)
+        if options:
+            cell["values"] = options
+        if selected:
+            cell["value"] = selected
+        if len(options) > 1:
+            cell["conflict"] = {"options": options, "selected": selected}
+        return cell
+
+    if tag_type == "links":
+        links = [v for v in values if looks_like_url(v)]
+        cell["links"] = [{"url": url, "title": url} for url in links]
+        cell["value"] = ", ".join(links)
+        return cell
+
+    local_key = entry_field_local_key(field_name)
+    local_value = entry.get(local_key) if local_key else ""
+    files = []
+    if local_key and local_value:
+        local_parts = split_multi_value(local_value)
+        for part in local_parts:
+            exists = has_local_entry_file(table_id, user_id, entry.get("id"), local_key, part, placeholder_for_audio=(field_name == "audio_url"))
+            if not exists:
+                continue
+            route_kind = PROGRAM_DOWNLOAD_ROUTE_BY_TAG.get(field_name)
+            if route_kind:
+                download_url = f"/api/tables/{table_id}/program/download/{route_kind}/{entry.get('program_item_id')}?part={part}"
+            else:
+                download_url = ""
+            files.append({"name": os.path.basename(part), "path": part, "download_url": download_url})
+
+    if tag_type == "files":
+        cell["files"] = files
+        cell["values"] = [f["name"] for f in files]
+        return cell
+
+    if tag_type == "files_or_links":
+        links = [v for v in values if looks_like_url(v)]
+        non_links = [v for v in values if not looks_like_url(v)]
+        cell["links"] = [{"url": url, "title": url} for url in links]
+        if files:
+            cell["files"] = files
+        else:
+            cell["files"] = [{"name": n, "path": "", "download_url": ""} for n in non_links]
+        return cell
+
+    if values:
+        cell["value"] = values[0]
+        cell["values"] = values
+    return cell
 
 
 def save_mapping_template(user_id, signature, mapping):
@@ -2539,7 +2691,12 @@ def apply_program_order(table_id, ordered_ids):
     query_db("UPDATE table_workspaces SET program_updated_at=?, updated_at=? WHERE id=?", (ts, ts, table_id))
 
 
-def get_program_items_payload(table_id, user_id):
+def get_program_items_payload(table_id, user_id, mapping=None):
+    if mapping is None:
+        table = query_db("SELECT mapping_json FROM table_workspaces WHERE id=?", (table_id,), one=True)
+        mapping = normalize_mapping(json.loads((dict(table).get("mapping_json") if table else "") or "{}"))
+
+    visible_columns = build_visible_columns(table_id, mapping)
     rows = query_db(
         """
         SELECT
@@ -2548,19 +2705,7 @@ def get_program_items_payload(table_id, user_id):
             tpi.entry_id,
             tpi.break_minutes,
             tpi.sort_index,
-            te.row_id,
-            te.number_title,
-            te.fio,
-            te.team,
-            te.audio_local,
-            te.receipt_local,
-            te.consent_url,
-            te.application_file,
-            te.generic_file,
-            te.video_url,
-            te.presentation_local,
-            te.resolved_fields_json,
-            te.conflicts_json
+            te.*
         FROM table_program_items tpi
         LEFT JOIN table_entries te ON te.id = tpi.entry_id AND te.table_id = tpi.table_id
         WHERE tpi.table_id=?
@@ -2584,28 +2729,18 @@ def get_program_items_payload(table_id, user_id):
             continue
 
         display_number += 1
-        has_audio = has_local_entry_file(
-            table_id,
-            user_id,
-            item.get("entry_id"),
-            "audio_local",
-            item.get("audio_local"),
-            placeholder_for_audio=True,
-        )
-        has_receipt = has_local_entry_file(
-            table_id,
-            user_id,
-            item.get("entry_id"),
-            "receipt_local",
-            item.get("receipt_local"),
-        )
-        has_presentation = has_local_entry_file(
-            table_id,
-            user_id,
-            item.get("entry_id"),
-            "presentation_local",
-            item.get("presentation_local"),
-        )
+        resolved_fields = json.loads(item.get("resolved_fields_json") or "{}")
+        conflicts = json.loads(item.get("conflicts_json") or "{}")
+
+        cells = []
+        has_any_conflict = False
+        for field_name in visible_columns:
+            cell = build_tag_cell(table_id, user_id, item, field_name, resolved_fields, conflicts)
+            if cell.get("conflict"):
+                has_any_conflict = True
+            cells.append(cell)
+
+        has_audio = any(c["key"] == "audio_url" and c.get("files") for c in cells)
         payload.append(
             {
                 "program_item_id": item["program_item_id"],
@@ -2616,23 +2751,10 @@ def get_program_items_payload(table_id, user_id):
                 "number_title": item.get("number_title") or "",
                 "fio": item.get("fio") or "",
                 "team": item.get("team") or "",
-                "audio_local": item.get("audio_local") or "",
-                "receipt_local": item.get("receipt_local") or "",
-                "consent_url": item.get("consent_url") or "",
-                "application_file": item.get("application_file") or "",
-                "generic_file": item.get("generic_file") or "",
-                "video_url": item.get("video_url") or "",
-                "presentation_local": item.get("presentation_local") or "",
-                "has_audio": has_audio,
-                "has_receipt": has_receipt,
-                "has_presentation": has_presentation,
-                "audio_download_url": f"/api/tables/{table_id}/program/download/audio/{item['program_item_id']}",
-                "receipt_open_url": f"/api/tables/{table_id}/program/download/receipt/{item['program_item_id']}",
-                "receipt_download_url": f"/api/tables/{table_id}/program/download/receipt/{item['program_item_id']}?download=1",
-                "presentation_download_url": f"/api/tables/{table_id}/program/download/presentation/{item['program_item_id']}",
-                "resolved_fields": json.loads(item.get("resolved_fields_json") or "{}"),
-                "conflicts": json.loads(item.get("conflicts_json") or "{}"),
-                "is_problematic": (not has_audio) or bool(json.loads(item.get("conflicts_json") or "{}")),
+                "cells": cells,
+                "resolved_fields": resolved_fields,
+                "conflicts": conflicts,
+                "is_problematic": (not has_audio) or has_any_conflict,
             }
         )
     return payload
@@ -2788,12 +2910,21 @@ def get_program(table_id):
         return jsonify({"detail": "Таблица не найдена"}), 404
     table_dict = dict(table)
     mapping = normalize_mapping(json.loads(table_dict.get("mapping_json") or "{}"))
+    visible_columns = build_visible_columns(table_id, mapping)
+    visible_tags = [
+        {
+            "key": key,
+            "label": MAPPING_FIELDS.get(key, key),
+            "type": tag_type_for_key(key),
+        }
+        for key in visible_columns
+    ]
     return jsonify({
         "table_id": table_id,
         "is_finalized": int(table["is_finalized"] or 0) == 1,
-        "items": get_program_items_payload(table_id, user["id"]),
-        "visible_columns": build_visible_columns(table_id, mapping),
-        "document_column_meta": DOCUMENT_COLUMN_META,
+        "items": get_program_items_payload(table_id, user["id"], mapping=mapping),
+        "visible_tags": visible_tags,
+        "tag_type_config": TAG_TYPE_OVERRIDES,
     })
 
 
@@ -2940,21 +3071,28 @@ def send_program_file(table_id, item_id, kind, user_id):
 
     column = f"{kind}_local"
     local_value = entry.get(column) or ""
-    ext = "txt" if (kind == "audio" and (not local_value or local_value.lower() == "audio.txt")) else os.path.splitext(local_value)[1].lstrip(".").lower()
-    if not ext:
-        ext = "bin"
-    filename = build_program_filename(entry["display_number"], entry, ext)
+    part = str(request.args.get("part") or "").strip()
+    local_parts = split_multi_value(local_value)
+    selected_local = ""
+    if part and part in local_parts:
+        selected_local = part
+    elif local_parts:
+        selected_local = local_parts[0]
+    elif local_value:
+        selected_local = local_value
 
     owner_user_id = get_table_owner_id(table_id) or user_id
-    base_path = os.path.join(storage_for_table(owner_user_id, table_id), local_value)
-    if kind == "audio" and (not local_value or local_value.lower() == "audio.txt" or not os.path.exists(base_path)):
+    base_path = os.path.join(storage_for_table(owner_user_id, table_id), selected_local) if selected_local else ""
+    if kind == "audio" and (not selected_local or selected_local.lower() == "audio.txt" or not os.path.exists(base_path)):
         msg = "Фонограмма не предоставлена"
         buf = io.BytesIO(msg.encode("utf-8"))
         return send_file(buf, as_attachment=True, download_name=build_program_filename(entry["display_number"], entry, "txt"), mimetype="text/plain; charset=utf-8")
 
-    if not local_value or not os.path.exists(base_path):
+    if not selected_local or not os.path.exists(base_path):
         return jsonify({"detail": "Файл не найден"}), 404
 
+    ext = os.path.splitext(selected_local)[1].lstrip(".").lower() or "bin"
+    filename = build_program_filename(entry["display_number"], entry, ext)
     if kind == "receipt" and request.args.get("download") != "1" and ext == "pdf":
         return send_file(base_path, as_attachment=False, download_name=filename, mimetype="application/pdf")
     return send_file(base_path, as_attachment=True, download_name=filename)

@@ -6,8 +6,7 @@ let currentHeaders = [];
 let currentYandexStatus = 'disconnected';
 let currentProgramItems = [];
 let isProgramMode = false;
-let currentVisibleColumns = { base: [], documents: [] };
-let documentColumnMeta = {};
+let currentVisibleTags = [];
 let draggedProgramItemId = null;
 
 const tableList = document.getElementById('tableList');
@@ -446,38 +445,27 @@ function filteredProgramItems() {
   const q = (programSearch.value || '').toLowerCase().trim();
   return currentProgramItems.filter((item) => {
     if (item.kind === 'break') return true;
-    if (filterNoAudio.checked && item.has_audio) return false;
-    if (filterNoReceipt.checked && item.has_receipt) return false;
-    if (filterNoPresentation.checked && item.has_presentation) return false;
+    const audioCell = (item.cells || []).find((c) => c.key === 'audio_url');
+    const consentCell = (item.cells || []).find((c) => c.key === 'consent_url');
+    const presentationCell = (item.cells || []).find((c) => c.key === 'presentation_url');
+    const hasAudio = !!(audioCell && (audioCell.files || []).length);
+    const hasConsent = !!(consentCell && ((consentCell.files || []).length || (consentCell.links || []).length));
+    const hasPresentation = !!(presentationCell && ((presentationCell.files || []).length || (presentationCell.links || []).length));
+    if (filterNoAudio.checked && hasAudio) return false;
+    if (filterNoReceipt.checked && hasConsent) return false;
+    if (filterNoPresentation.checked && hasPresentation) return false;
     if (!q) return true;
     const hay = `${item.display_number || ''} ${item.number_title || ''} ${item.fio || ''} ${item.team || ''}`.toLowerCase();
     return hay.includes(q);
   });
 }
 
-function openReceipt(item) {
-  const openUrl = item.receipt_open_url || '';
-  if (!openUrl) return;
-  const isPdf = openUrl.toLowerCase().includes('.pdf') || openUrl.includes('/receipt/');
-  if (isPdf) {
-    window.open(openUrl, '_blank');
-    return;
-  }
-  receiptViewerImage.src = openUrl;
-  receiptViewerDownload.href = item.receipt_download_url || openUrl;
-  receiptViewerDialog.showModal();
-}
-
 function renderProgramHead() {
   if (!programHeadRow) return;
-  const docs = currentVisibleColumns.documents || [];
   programHeadRow.innerHTML = '<th>№</th><th>↕</th><th>Название</th><th>ФИО</th><th>Коллектив</th>';
-  const thConflict = document.createElement('th');
-  thConflict.textContent = 'Конфликт';
-  programHeadRow.appendChild(thConflict);
-  docs.forEach((field) => {
+  (currentVisibleTags || []).forEach((tag) => {
     const th = document.createElement('th');
-    th.textContent = (documentColumnMeta[field] && documentColumnMeta[field].title) || field;
+    th.textContent = tag.label || tag.key;
     programHeadRow.appendChild(th);
   });
 }
@@ -494,6 +482,67 @@ async function resolveGroupedConflict(entryId, field, value) {
   if (target) target.resolved_fields = data.resolved_fields || {};
 }
 
+function renderTagCell(td, item, cell) {
+  if (!cell) return;
+  if (cell.type === 'grouped_choice') {
+    if (cell.conflict && (cell.conflict.options || []).length) {
+      const select = document.createElement('select');
+      select.innerHTML = '<option value="">Выбрать</option>' + (cell.conflict.options || []).map((v) => `<option value="${v}">${v}</option>`).join('');
+      if (cell.conflict.selected) select.value = cell.conflict.selected;
+      select.onchange = async () => {
+        await resolveGroupedConflict(item.entry_id, cell.key, select.value);
+      };
+      td.appendChild(select);
+    } else {
+      td.textContent = cell.value || '';
+    }
+    return;
+  }
+
+  if (cell.type === 'links') {
+    (cell.links || []).forEach((link, i) => {
+      const a = document.createElement('a');
+      a.href = link.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = link.title || `Ссылка ${i + 1}`;
+      if (i > 0) td.appendChild(document.createElement('br'));
+      td.appendChild(a);
+    });
+    return;
+  }
+
+  if (cell.type === 'files' || cell.type === 'files_or_links') {
+    const files = cell.files || [];
+    files.forEach((f, i) => {
+      if (i > 0) td.appendChild(document.createElement('br'));
+      if (f.download_url) {
+        const a = document.createElement('a');
+        a.className = 'btn btn-secondary';
+        a.href = f.download_url;
+        a.textContent = cell.key === 'audio_url' ? 'Скачать' : 'Открыть';
+        td.appendChild(a);
+      } else {
+        td.appendChild(document.createTextNode(f.name || 'Файл'));
+      }
+    });
+    if (cell.type === 'files_or_links') {
+      (cell.links || []).forEach((link, i) => {
+        if (files.length || i > 0) td.appendChild(document.createElement('br'));
+        const a = document.createElement('a');
+        a.href = link.url;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = link.title || `Ссылка ${i + 1}`;
+        td.appendChild(a);
+      });
+    }
+    return;
+  }
+
+  td.textContent = cell.value || (cell.values || []).join(', ');
+}
+
 function renderProgram() {
   programBody.innerHTML = '';
   const items = filteredProgramItems();
@@ -503,7 +552,7 @@ function renderProgram() {
 
     if (item.kind === 'break') {
       tr.className = 'program-break-row';
-      tr.innerHTML = `<td></td><td>≡</td><td colspan="6"><div class="program-break-cell"><span>${item.label}</span><button class="btn btn-secondary btn-inline">Удалить</button></div></td>`;
+      tr.innerHTML = `<td></td><td>≡</td><td colspan="${5 + (currentVisibleTags || []).length}"><div class="program-break-cell"><span>${item.label}</span><button class="btn btn-secondary btn-inline">Удалить</button></div></td>`;
       tr.querySelector('button').onclick = () => deleteBreak(item.program_item_id);
     } else {
       tr.className = item.is_problematic ? 'program-problem-row' : '';
@@ -535,76 +584,25 @@ function renderProgram() {
 
       tr.appendChild(no);
       tr.innerHTML += `<td class="drag-handle">≡</td><td>${item.number_title || ''}</td><td>${item.fio || ''}</td><td>${item.team || ''}</td>`;
-      (currentVisibleColumns.documents || []).forEach((field) => {
+      (item.cells || []).forEach((cell) => {
         const td = document.createElement('td');
-        if (field === 'audio_url' && item.has_audio) {
-          const aAudio = document.createElement('a');
-          aAudio.className = 'btn btn-secondary';
-          aAudio.href = item.audio_download_url;
-          aAudio.textContent = 'Скачать';
-          td.appendChild(aAudio);
-        } else if (field === 'receipt_url' && item.has_receipt) {
-          const b = document.createElement('button');
-          b.className = 'btn btn-secondary';
-          b.textContent = 'Открыть';
-          b.onclick = () => openReceipt(item);
-          td.appendChild(b);
-        } else if (field === 'presentation_url' && item.has_presentation) {
-          const aPres = document.createElement('a');
-          aPres.className = 'btn btn-secondary';
-          aPres.href = item.presentation_download_url;
-          aPres.textContent = 'Скачать';
-          td.appendChild(aPres);
-        } else if (field === 'video_url' && item.video_url) {
-          const aVideo = document.createElement('a');
-          aVideo.href = item.video_url;
-          aVideo.target = '_blank';
-          aVideo.rel = 'noopener';
-          aVideo.textContent = 'Ссылка';
-          td.appendChild(aVideo);
-        } else if (field === 'consent_url' && item.consent_url) {
-          const docs = String(item.consent_url).split(/[;,]/).map((x) => x.trim()).filter(Boolean);
-          docs.forEach((doc, i) => {
-            const a = document.createElement('a');
-            a.className = 'btn btn-secondary';
-            a.href = doc;
-            a.target = '_blank';
-            a.textContent = docs.length > 1 ? `Файл ${i + 1}` : 'Открыть';
-            td.appendChild(a);
-          });
-        }
+        renderTagCell(td, item, cell);
         tr.appendChild(td);
       });
-
-      const conflicts = item.conflicts || {};
-      const conflictFields = Object.keys(conflicts);
-      if (conflictFields.length) {
-        tr.classList.add('program-problem-row');
-        const conflictField = conflictFields[0];
-        const tdConflict = document.createElement('td');
-        const select = document.createElement('select');
-        select.innerHTML = '<option value="">Конфликт: выбрать</option>' + (conflicts[conflictField] || []).map((v) => `<option value="${v}">${v}</option>`).join('');
-        const resolved = (item.resolved_fields || {})[conflictField] || '';
-        if (resolved) select.value = resolved;
-        select.onchange = async () => {
-          await resolveGroupedConflict(item.entry_id, conflictField, select.value);
-        };
-        tdConflict.appendChild(select);
-        tr.appendChild(tdConflict);
-      }
     }
 
     programBody.appendChild(tr);
     if (item.kind === 'entry' && idx < items.length - 1) {
       const plusRow = document.createElement('tr');
       plusRow.className = 'program-insert-row';
-      plusRow.innerHTML = `<td colspan="${5 + (currentVisibleColumns.documents || []).length + 1}"><button class="insert-break-btn">+ добавить перерыв здесь</button></td>`;
+      plusRow.innerHTML = `<td colspan="${5 + (currentVisibleTags || []).length}"><button class="insert-break-btn">+ добавить перерыв здесь</button></td>`;
       const nextItem = items.slice(idx + 1).find((x) => x.kind === 'entry');
       plusRow.querySelector('button').onclick = () => addBreakAfter(item.program_item_id, nextItem ? nextItem.program_item_id : null);
       programBody.appendChild(plusRow);
     }
   });
 }
+
 
 async function reorderByDrop(fromId, toId) {
   setAutosave('Сохраняю…');
@@ -666,8 +664,7 @@ async function loadProgram() {
   }
   setProgramMode(true);
   currentProgramItems = data.items || [];
-  currentVisibleColumns = data.visible_columns || { base: [], documents: [] };
-  documentColumnMeta = data.document_column_meta || {};
+  currentVisibleTags = data.visible_tags || [];
   renderProgramHead();
   renderProgram();
 }
