@@ -10,6 +10,7 @@ let currentVisibleTags = [];
 let draggedProgramItemId = null;
 
 const tableList = document.getElementById('tableList');
+const workspaceEl = document.getElementById('workspace');
 const progressEl = document.getElementById('progress');
 const tableTitle = document.getElementById('tableTitle');
 const yandexStatusEl = document.getElementById('yandexStatus');
@@ -44,6 +45,7 @@ const receiptViewerDialog = document.getElementById('receiptViewerDialog');
 const receiptViewerImage = document.getElementById('receiptViewerImage');
 const receiptViewerDownload = document.getElementById('receiptViewerDownload');
 const programHeadRow = document.getElementById('programHeadRow');
+const backToTablesBtn = document.getElementById('backToTables');
 
 const REQUIRED_FIELDS = ['number_title', 'audio_url', 'consent_url', 'presentation_url'];
 
@@ -67,6 +69,10 @@ async function postForm(url, data) {
 
 function setAutosave(text) {
   autosaveStatus.textContent = text;
+}
+
+function setWorkspaceVisible(visible) {
+  workspaceEl?.classList.toggle('hidden', !visible);
 }
 
 function setProgramMode(enabled) {
@@ -412,6 +418,7 @@ async function deleteTableById(tableId) {
     currentTableId = null;
     tableView.classList.add('hidden');
     setProgramMode(false);
+    setWorkspaceVisible(true);
   }
 
   await refreshTables();
@@ -673,6 +680,7 @@ async function openTable(id, title) {
   currentTableId = id;
   tableTitle.textContent = `Таблица: ${title} (#${id})`;
   tableView.classList.remove('hidden');
+  setWorkspaceVisible(false);
   showAutofillInfo('');
   await refreshTables();
   await loadProgram();
@@ -685,6 +693,15 @@ async function openTable(id, title) {
 function initTablesSection() {
   document.getElementById('closeMappingDialog').onclick = () => mappingDialog.close();
   document.getElementById('closeReceiptViewer').onclick = () => receiptViewerDialog.close();
+  if (backToTablesBtn) {
+    backToTablesBtn.onclick = () => {
+      currentTableId = null;
+      tableView.classList.add('hidden');
+      setProgramMode(false);
+      setWorkspaceVisible(true);
+      refreshTables();
+    };
+  }
 
   [programSearch, filterNoAudio, filterNoReceipt, filterNoPresentation].forEach((el) => {
     el.addEventListener('input', renderProgram);
@@ -790,6 +807,7 @@ function initTablesSection() {
   };
 
   renderMappingPanel();
+  setWorkspaceVisible(true);
   refreshTables();
   setYandexState('disconnected');
   setInterval(async () => {

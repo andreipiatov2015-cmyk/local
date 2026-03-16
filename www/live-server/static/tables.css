@@ -14,6 +14,31 @@
   box-sizing: border-box;
 }
 
+.workspace-card,
+.table-view {
+  border-radius: 16px;
+  border: 1px solid #dbe4f1;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+}
+
+.workspace-subtitle {
+  margin: 6px 0 14px;
+  color: #475569;
+}
+
+.table-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+#tableTitle {
+  margin: 0;
+  color: #0f172a;
+}
+
 .hidden { display: none; }
 .row { display: flex; gap: 10px; margin: 10px 0; }
 .row.wrap { flex-wrap: wrap; }
@@ -27,14 +52,18 @@
 #tableList li {
   cursor: pointer;
   margin: 6px 0;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border: 1px solid #dbe4f1;
-  border-radius: 10px;
-  background: #f8fafc;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
 #tableList li:hover {
   background: #eff6ff;
+  border-color: #bfdbfe;
+  box-shadow: 0 8px 22px rgba(29, 78, 216, 0.1);
+  transform: translateY(-1px);
 }
 
 .table-list-item {
@@ -53,6 +82,7 @@
   cursor: pointer;
   color: #0f172a;
   font: inherit;
+  font-weight: 600;
 }
 
 .table-delete-btn {
@@ -118,6 +148,7 @@
   max-height: 65vh;
   border: 1px solid #dbe4f1;
   border-radius: 10px;
+  background: #fff;
 }
 
 #excelTable {

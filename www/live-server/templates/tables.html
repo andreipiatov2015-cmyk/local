@@ -46,8 +46,9 @@
   </aside>
 
   <main id="tablesContent" class="content container tables-content">
-    <section id="workspace" class="card">
+    <section id="workspace" class="card workspace-card">
       <h1 class="page-title">Таблицы заявок конкурса</h1>
+      <p class="workspace-subtitle">Создайте новую таблицу или откройте существующую для подготовки программы.</p>
       <div class="row">
         <input id="newTitle" placeholder="Название таблицы" />
         <button id="createTable" class="btn btn-primary">Создать</button>
@@ -55,8 +56,11 @@
       <ul id="tableList"></ul>
     </section>
 
-    <section id="tableView" class="card hidden">
-      <h2 id="tableTitle">Таблица</h2>
+    <section id="tableView" class="card table-view hidden">
+      <div class="table-view-header">
+        <button id="backToTables" class="btn btn-secondary">← К списку таблиц</button>
+        <h2 id="tableTitle">Таблица</h2>
+      </div>
       <div id="prepareControls" class="row wrap">
         <input type="file" id="excelFile" accept=".xlsx,.xls" />
         <button id="uploadExcel" class="btn btn-secondary">Загрузить Excel</button>
