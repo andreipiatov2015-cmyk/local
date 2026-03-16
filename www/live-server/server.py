@@ -1092,18 +1092,81 @@ def tag_type_for_key(tag_key):
     return "text"
 
 
+def parse_entry_row_data(entry):
+    raw = entry.get("row_data_json")
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v or "").strip() for k, v in data.items()}
+
+
+def get_entry_tag_values(entry, mapping, field_name, row_data=None):
+    values = []
+    seen = set()
+
+    def add(raw):
+        for part in split_multi_value(raw):
+            if part in seen:
+                continue
+            seen.add(part)
+            values.append(part)
+
+    # Для тегов, которые имеют отдельные актуальные колонки в table_entries.
+    add(entry.get(field_name))
+
+    # Данные из новой схемы читаем из row_data_json по mapping.
+    row_data = row_data if isinstance(row_data, dict) else parse_entry_row_data(entry)
+    for idx in mapped_field_indexes(mapping, field_name):
+        add(row_data.get(str(idx), ""))
+
+    # Базовые поля программы: поддержка через актуальные поля table_entries.
+    if field_name == "participant_fio":
+        add(entry.get("fio"))
+    elif field_name == "studio_name":
+        add(entry.get("team"))
+    elif field_name == "number_title":
+        add(entry.get("number_title"))
+
+    return values
+
+
 def build_visible_columns(table_id, mapping):
     visible = []
+    rows = query_db(
+        """
+        SELECT te.*
+        FROM table_program_items tpi
+        JOIN table_entries te ON te.id = tpi.entry_id AND te.table_id = tpi.table_id
+        WHERE tpi.table_id=? AND tpi.kind='entry'
+        ORDER BY tpi.sort_index, tpi.id
+        """,
+        (table_id,),
+    )
+
     for field in MAPPING_FIELDS.keys():
         if field in mapping:
             visible.append(field)
             continue
-        row = query_db(
-            f"SELECT 1 FROM table_entries WHERE table_id=? AND COALESCE({field}, '') <> '' LIMIT 1",
-            (table_id,),
-            one=True,
-        )
-        if row:
+
+        has_value = False
+        for row in rows:
+            entry = dict(row)
+            row_data = parse_entry_row_data(entry)
+            if get_entry_tag_values(entry, mapping, field, row_data=row_data):
+                has_value = True
+                break
+            resolved = json.loads(entry.get("resolved_fields_json") or "{}")
+            conflicts = json.loads(entry.get("conflicts_json") or "{}")
+            if str(resolved.get(field) or "").strip() or any(str(x or "").strip() for x in (conflicts.get(field) or [])):
+                has_value = True
+                break
+
+        if has_value:
             visible.append(field)
     return visible
 
@@ -1140,11 +1203,11 @@ def entry_field_local_key(field_name):
     return ""
 
 
-def build_tag_cell(table_id, user_id, entry, field_name, resolved_fields, conflicts):
+def build_tag_cell(table_id, user_id, entry, mapping, field_name, resolved_fields, conflicts):
     tag_type = tag_type_for_key(field_name)
     label = MAPPING_FIELDS.get(field_name, field_name)
-    raw_value = entry.get(field_name) or ""
-    values = split_multi_value(raw_value)
+    row_data = parse_entry_row_data(entry)
+    values = get_entry_tag_values(entry, mapping, field_name, row_data=row_data)
 
     cell = {
         "key": field_name,
@@ -2735,7 +2798,7 @@ def get_program_items_payload(table_id, user_id, mapping=None):
         cells = []
         has_any_conflict = False
         for field_name in visible_columns:
-            cell = build_tag_cell(table_id, user_id, item, field_name, resolved_fields, conflicts)
+            cell = build_tag_cell(table_id, user_id, item, mapping, field_name, resolved_fields, conflicts)
             if cell.get("conflict"):
                 has_any_conflict = True
             cells.append(cell)
