@@ -21,6 +21,7 @@ import logging
 import zipfile
 from functools import wraps
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
@@ -29,6 +30,13 @@ try:
     import openpyxl
 except Exception:
     openpyxl = None
+
+try:
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    from playwright.sync_api import sync_playwright
+except Exception:
+    sync_playwright = None
+    PlaywrightTimeoutError = Exception
 
 # Папка, где лежит server.py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -102,6 +110,8 @@ APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", os.path.join(BASE_DIR, "app
 RETENTION_DAYS = 60
 MAX_TABLES_PER_USER = 10
 DOWNLOAD_RETRIES = 3
+YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS = int(os.environ.get("YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS", "90000"))
+YANDEX_BROWSER_MIN_FILE_SIZE = int(os.environ.get("YANDEX_BROWSER_MIN_FILE_SIZE", "32"))
 MAX_FILENAME_LEN = 150
 EXCEL_PREVIEW_LIMIT = 200
 YANDEX_VNC_URL = os.environ.get("YANDEX_VNC_URL", "/tables/yandex/vnc/vnc.html?autoconnect=1&resize=scale&show_dot=0")
@@ -284,6 +294,17 @@ def query_db(query, args=(), one=False):
     con.commit()
     con.close()
     return (rv[0] if rv else None) if one else rv
+
+
+def row_get(row, key, default=None):
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except Exception:
+        return default
 
 def init_db():
     os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
@@ -1421,17 +1442,17 @@ def repair_table_local_paths(table_id, user_id):
         row = dict(row)
         updates = {}
         for field_name, (folder, fallback_prefix) in field_config.items():
-            current_value = (row.get(field_name) or "").strip()
+            current_value = (row_get(row, field_name, "") or "").strip()
             _, current_full_path = resolve_table_local_path(table_id, user_id, current_value)
             if current_value and os.path.exists(current_full_path):
                 used_paths.add(Path(current_full_path).resolve(strict=False))
                 continue
 
-            row_id = int(row.get("row_id") or 0)
-            expected_base = make_safe_basename(row.get("number_title"), row.get("fio"), fallback=f"{fallback_prefix}-{row_id}")
+            row_id = int(row_get(row, "row_id", 0) or 0)
+            expected_base = make_safe_basename(row_get(row, "number_title"), row_get(row, "fio"), fallback=f"{fallback_prefix}-{row_id}")
             expected_token = _name_token(expected_base)
-            fio_token = _name_token(row.get("fio"))
-            title_token = _name_token(row.get("number_title"))
+            fio_token = _name_token(row_get(row, "fio"))
+            title_token = _name_token(row_get(row, "number_title"))
             best_score = -1
             best_file = None
             for file_path in files_by_field[field_name]:
@@ -1620,6 +1641,132 @@ def extension_from_url(url, fallback="bin"):
     return fallback
 
 
+def _is_yandex_forms_file_url(url):
+    parsed = urlparse(str(url or ""))
+    host = (parsed.netloc or "").lower()
+    path = (parsed.path or "").lower()
+    return host.endswith("forms.yandex.ru") and path.startswith("/u/files")
+
+
+def _browser_download_tmp_dir(table_id, entry_id):
+    suffix = f"table_{table_id}/entry_{entry_id or 'unknown'}"
+    target = Path(STORAGE_ROOT) / "tmp" / "browser_downloads" / suffix
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _read_text_prefix(path_obj, limit=2048):
+    try:
+        with open(path_obj, "rb") as f:
+            prefix = f.read(limit)
+        return prefix.decode("utf-8", errors="ignore").lower()
+    except Exception:
+        return ""
+
+
+def _validate_downloaded_binary(path_obj, final_url=""):
+    if not path_obj.exists():
+        raise DownloadValidationError("файл не был сохранён браузером")
+
+    size = int(path_obj.stat().st_size or 0)
+    if size < YANDEX_BROWSER_MIN_FILE_SIZE:
+        raise DownloadValidationError(f"файл слишком маленький: {size} байт")
+
+    with open(path_obj, "rb") as f:
+        prefix = f.read(2048).lstrip().lower()
+
+    html_like = (
+        prefix.startswith(b"<!doctype html")
+        or prefix.startswith(b"<html")
+        or b"<title>" in prefix
+    )
+    if html_like:
+        text_prefix = _read_text_prefix(path_obj)
+        if "showcaptcha" in str(final_url or "").lower() or "вы не робот" in text_prefix:
+            raise DownloadValidationError("browser_captcha_required")
+        if "passport.yandex" in str(final_url or "").lower() or "войдите" in text_prefix:
+            raise YandexAuthRequiredError("browser_auth_required")
+        raise DownloadValidationError("браузер сохранил HTML вместо бинарного файла")
+
+
+def download_yandex_file_via_browser(url, out_path, *, table_id=None, entry_id=None):
+    if sync_playwright is None:
+        raise RuntimeError("Playwright не установлен: browser downloader недоступен")
+
+    download_dir = _browser_download_tmp_dir(table_id, entry_id)
+    app.logger.info(
+        "[yandex_browser_download_start] table_id=%s entry_id=%s source_url=%s target_path=%s",
+        table_id,
+        entry_id,
+        url,
+        out_path,
+    )
+
+    context = None
+    browser_name = None
+    with sync_playwright() as p:
+        for candidate in ("chromium", "chrome"):
+            try:
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir=YANDEX_PROFILE_DIR,
+                    headless=True,
+                    accept_downloads=True,
+                    downloads_path=str(download_dir),
+                    args=["--disable-dev-shm-usage", "--no-sandbox"],
+                    channel="chrome" if candidate == "chrome" else None,
+                )
+                browser_name = candidate
+                break
+            except Exception:
+                context = None
+        if context is None:
+            raise RuntimeError("Не удалось запустить Chromium/Chrome persistent context")
+
+        try:
+            page = context.new_page()
+            page.set_default_timeout(YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS)
+            download = None
+            final_url = ""
+            try:
+                with page.expect_download(timeout=YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS) as dl_info:
+                    page.goto(url, wait_until="domcontentloaded")
+                download = dl_info.value
+            except PlaywrightTimeoutError:
+                final_url = page.url
+                html = (page.content() or "").lower()
+                if "showcaptcha" in final_url.lower() or "вы не робот" in html:
+                    raise DownloadValidationError("browser_captcha_required")
+                if "passport.yandex" in final_url.lower() or "войти" in html:
+                    raise YandexAuthRequiredError("browser_auth_required")
+                raise RuntimeError("браузер не инициировал событие download")
+
+            final_url = page.url
+            suggested_name = download.suggested_filename or Path(out_path).name
+            tmp_path = download.path()
+            if not tmp_path:
+                raise RuntimeError("Playwright не вернул путь скачанного файла")
+            tmp_path_obj = Path(tmp_path)
+            _validate_downloaded_binary(tmp_path_obj, final_url=final_url)
+
+            out_path_obj = Path(out_path)
+            out_path_obj.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(tmp_path_obj), str(out_path_obj))
+            size = out_path_obj.stat().st_size if out_path_obj.exists() else 0
+            app.logger.info(
+                "[yandex_browser_download_ok] table_id=%s entry_id=%s browser=%s source_url=%s final_url=%s filename=%s size=%s",
+                table_id,
+                entry_id,
+                browser_name,
+                url,
+                final_url,
+                suggested_name,
+                size,
+            )
+            return
+        finally:
+            context.close()
+
+
 def _response_looks_like_html(response):
     ctype = (response.headers.get("Content-Type") or "").lower()
     cdisp = (response.headers.get("Content-Disposition") or "").lower()
@@ -1641,7 +1788,28 @@ def _response_looks_like_html(response):
     return False, ""
 
 
-def download_with_retries(req_session, url, out_path):
+def download_with_retries(req_session, url, out_path, *, table_id=None, entry_id=None):
+    if _is_yandex_forms_file_url(url):
+        try:
+            return download_yandex_file_via_browser(url, out_path, table_id=table_id, entry_id=entry_id)
+        except Exception as exc:
+            app.logger.warning(
+                "[yandex_browser_download_failed] table_id=%s entry_id=%s source_url=%s reason=%s",
+                table_id,
+                entry_id,
+                url,
+                short_error_message(exc, fallback="browser download failed"),
+            )
+            if "captcha" in str(exc).lower():
+                app.logger.warning(
+                    "[yandex_browser_captcha_required] table_id=%s entry_id=%s source_url=%s reason=%s",
+                    table_id,
+                    entry_id,
+                    url,
+                    short_error_message(exc, fallback="browser captcha required"),
+                )
+            raise
+
     last_error = None
     for _ in range(DOWNLOAD_RETRIES):
         try:
@@ -1967,14 +2135,14 @@ def process_table_download(table_id, user_id):
                 audio_name = f"{phonogram_base}.{ext}"
                 audio_path = os.path.join(base, "phonograms", audio_name)
                 try:
-                    download_with_retries(req_session, audio_url, audio_path)
+                    download_with_retries(req_session, audio_url, audio_path, table_id=table_id, entry_id=entry_id)
                     audio_local = os.path.join("phonograms", audio_name)
                     downloaded_files += 1
                 except YandexAuthRequiredError:
                     if not handle_auth_required_with_refresh(row_id):
                         return
                     try:
-                        download_with_retries(req_session, audio_url, audio_path)
+                        download_with_retries(req_session, audio_url, audio_path, table_id=table_id, entry_id=entry_id)
                         audio_local = os.path.join("phonograms", audio_name)
                         downloaded_files += 1
                     except YandexAuthRequiredError:
@@ -2000,14 +2168,14 @@ def process_table_download(table_id, user_id):
                 receipt_name = f"{receipt_base}.{ext}"
                 receipt_path = os.path.join(base, "receipts", receipt_name)
                 try:
-                    download_with_retries(req_session, receipt_url, receipt_path)
+                    download_with_retries(req_session, receipt_url, receipt_path, table_id=table_id, entry_id=entry_id)
                     receipt_local = os.path.join("receipts", receipt_name)
                     downloaded_files += 1
                 except YandexAuthRequiredError:
                     if not handle_auth_required_with_refresh(row_id):
                         return
                     try:
-                        download_with_retries(req_session, receipt_url, receipt_path)
+                        download_with_retries(req_session, receipt_url, receipt_path, table_id=table_id, entry_id=entry_id)
                         receipt_local = os.path.join("receipts", receipt_name)
                         downloaded_files += 1
                     except YandexAuthRequiredError:
@@ -2026,14 +2194,14 @@ def process_table_download(table_id, user_id):
                 presentation_name = f"{presentation_base}.{ext}"
                 presentation_path = os.path.join(base, "presentations", presentation_name)
                 try:
-                    download_with_retries(req_session, presentation_url, presentation_path)
+                    download_with_retries(req_session, presentation_url, presentation_path, table_id=table_id, entry_id=entry_id)
                     presentation_local = os.path.join("presentations", presentation_name)
                     downloaded_files += 1
                 except YandexAuthRequiredError:
                     if not handle_auth_required_with_refresh(row_id):
                         return
                     try:
-                        download_with_retries(req_session, presentation_url, presentation_path)
+                        download_with_retries(req_session, presentation_url, presentation_path, table_id=table_id, entry_id=entry_id)
                         presentation_local = os.path.join("presentations", presentation_name)
                         downloaded_files += 1
                     except YandexAuthRequiredError:
@@ -2927,7 +3095,7 @@ def finalize_table(table_id):
     if table is not None and not isinstance(table, dict):
         table = dict(table)
 
-    mapping = normalize_mapping(json.loads(table.get("mapping_json") or "{}"))
+    mapping = normalize_mapping(json.loads(row_get(table, "mapping_json", "") or "{}"))
 
     entries_stats = query_db(
         """
