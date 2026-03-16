@@ -891,10 +891,33 @@ def normalize_mapping(mapping):
     used_cols = set()
     for field in MAPPING_FIELDS.keys():
         val = mapping.get(field)
-        if isinstance(val, int) and val >= 0 and val not in used_cols:
-            normalized[field] = val
-            used_cols.add(val)
+        indexes = []
+        if isinstance(val, int):
+            indexes = [val]
+        elif isinstance(val, list):
+            indexes = [idx for idx in val if isinstance(idx, int)]
+
+        for idx in indexes:
+            if idx < 0 or idx in used_cols:
+                continue
+            normalized.setdefault(field, []).append(idx)
+            used_cols.add(idx)
+
+    for field, indexes in list(normalized.items()):
+        if len(indexes) == 1 and field not in GROUPED_HEADER_RULES:
+            normalized[field] = indexes[0]
+        elif not indexes:
+            normalized.pop(field, None)
     return normalized
+
+
+def mapped_field_indexes(mapping, field):
+    value = (mapping or {}).get(field)
+    if isinstance(value, int):
+        return [value]
+    if isinstance(value, list):
+        return [idx for idx in value if isinstance(idx, int) and idx >= 0]
+    return []
 
 
 def normalize_header_text(value):
@@ -937,8 +960,7 @@ def apply_mapping_templates_and_presets(user_id, headers):
         uniq = list(dict.fromkeys(matches))
         if len(uniq) == 1:
             label = uniq[0]
-            if label not in mapping:
-                mapping[label] = idx
+            mapping.setdefault(label, []).append(idx)
         elif len(uniq) > 1:
             conflicts.append({"idx": idx, "header": headers[idx], "labels": uniq})
 
@@ -974,14 +996,28 @@ def resolve_grouped_value(row_values, grouped_mappings):
     return "", [], False
 
 
-def detect_grouped_headers(headers):
+def detect_grouped_headers(headers, mapping=None):
     result = {k: [] for k in GROUPED_HEADER_RULES.keys()}
+    seen = {k: set() for k in GROUPED_HEADER_RULES.keys()}
+
+    for field_name in GROUPED_HEADER_RULES.keys():
+        for idx in mapped_field_indexes(mapping, field_name):
+            if idx >= len(headers or []):
+                continue
+            normalized = normalize_header_text(headers[idx])
+            choice = parse_grouped_header(field_name, normalized) or normalized
+            result[field_name].append({"idx": idx, "choice": choice, "header": headers[idx]})
+            seen[field_name].add(idx)
+
     for idx, header in enumerate(headers or []):
         normalized = normalize_header_text(header)
         for field_name in GROUPED_HEADER_RULES.keys():
+            if idx in seen[field_name]:
+                continue
             choice = parse_grouped_header(field_name, normalized)
             if choice:
                 result[field_name].append({"idx": idx, "choice": choice, "header": header})
+                seen[field_name].add(idx)
     return result
 
 
@@ -1236,7 +1272,7 @@ def rebuild_entries_from_excel(table_id, user_id, mapping, *, preserve_files=Tru
         "with_presentation_local": 0,
     }
 
-    grouped_headers = detect_grouped_headers(rows[0] if rows else [])
+    grouped_headers = detect_grouped_headers(rows[0] if rows else [], mapping)
 
     for i, row in enumerate(data_rows, start=1):
         row_id = i + 1
@@ -1522,7 +1558,7 @@ def process_table_download(table_id, user_id):
             total,
         )
 
-        grouped_headers = detect_grouped_headers(headers)
+        grouped_headers = detect_grouped_headers(headers, mapping)
         for i, row in enumerate(data_rows, start=1):
             row_id = i + 1
             if row_id < start_row_id:
@@ -2344,11 +2380,12 @@ def remember_table_mapping(table_id):
     signature = mapping_signature(headers)
     save_mapping_template(user["id"], signature, mapping)
 
-    for label, idx in mapping.items():
-        if idx is None or idx < 0 or idx >= len(headers):
-            continue
-        header_norm = normalize_header_text(headers[idx])
-        upsert_mapping_preset(user["id"], label, header_norm, "exact", priority=10)
+    for label in mapping.keys():
+        for idx in mapped_field_indexes(mapping, label):
+            if idx >= len(headers):
+                continue
+            header_norm = normalize_header_text(headers[idx])
+            upsert_mapping_preset(user["id"], label, header_norm, "exact", priority=10)
 
     return jsonify({"status": "ok", "signature": signature, "saved_fields": len(mapping)})
 

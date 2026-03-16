@@ -118,9 +118,18 @@ function showAutofillInfo(text) {
   mappingAutofillInfoEl.classList.remove('hidden');
 }
 
+function mappingIndexes(field) {
+  const raw = (currentMapping || {})[field];
+  if (Array.isArray(raw)) return raw.filter((v) => Number.isInteger(v) && v >= 0);
+  if (Number.isInteger(raw) && raw >= 0) return [raw];
+  return [];
+}
+
 function mappingReverse() {
   const rev = {};
-  Object.entries(currentMapping || {}).forEach(([field, col]) => { rev[col] = field; });
+  Object.entries(currentMapping || {}).forEach(([field]) => {
+    mappingIndexes(field).forEach((col) => { rev[col] = field; });
+  });
   return rev;
 }
 
@@ -143,19 +152,27 @@ function renderColgroup() {
 }
 
 function renderMappingPanel() {
-  const requiredItems = REQUIRED_FIELDS.map((field) => ({
-    field,
-    title: mappingFields[field] || field,
-    assigned: currentMapping[field] !== undefined,
-    col: currentMapping[field]
-  }));
-  const assignedCount = Object.keys(currentMapping).length;
+  const requiredItems = REQUIRED_FIELDS.map((field) => {
+    const cols = mappingIndexes(field);
+    return {
+      field,
+      title: mappingFields[field] || field,
+      assigned: cols.length > 0,
+      cols
+    };
+  });
+  const assignedCount = Object.values(currentMapping || {}).reduce((acc, value) => {
+    if (Array.isArray(value)) return acc + value.length;
+    return Number.isInteger(value) ? acc + 1 : acc;
+  }, 0);
   const totalCount = Object.keys(mappingFields).length;
 
-  mappingSummary.textContent = `Схема: ${assignedCount}/${totalCount} заполнено`;
+  mappingSummary.textContent = `Схема: ${assignedCount} колонок / ${totalCount} тегов`;
 
   mappingInfo.innerHTML = requiredItems.map((item) => {
-    const colName = item.assigned ? (currentHeaders[item.col] || `Колонка ${item.col + 1}`) : 'не назначено';
+    const colName = item.assigned
+      ? item.cols.map((col) => currentHeaders[col] || `Колонка ${col + 1}`).join(', ')
+      : 'не назначено';
     return `<div class="mapping-row ${item.assigned ? 'ok' : 'missing'}"><span>${item.assigned ? '✅' : '⭕'} ${item.title}</span><span>${colName}</span></div>`;
   }).join('');
 }
@@ -274,22 +291,26 @@ async function saveMapping() {
 }
 
 function openMappingDialog(colIndex) {
-  const currentFieldForCol = Object.entries(currentMapping).find(([, c]) => c === colIndex)?.[0];
+  const currentFieldForCol = Object.entries(currentMapping).find(([field]) => mappingIndexes(field).includes(colIndex))?.[0];
   mappingDialogActions.innerHTML = '';
 
   Object.entries(mappingFields).forEach(([field, title]) => {
-    const assignedCol = currentMapping[field];
-    const assignedToAnother = assignedCol !== undefined && assignedCol !== colIndex;
+    const assignedCols = mappingIndexes(field);
+    const assignedToAnother = assignedCols.length > 0 && !assignedCols.includes(colIndex);
     const btn = document.createElement('button');
     btn.className = `btn btn-secondary mapping-choice ${assignedToAnother ? 'is-occupied' : ''}`;
     btn.innerHTML = assignedToAnother
-      ? `<span>${title}</span><small>уже назначено: ${currentHeaders[assignedCol] || `Колонка ${assignedCol + 1}`}</small>`
-      : `<span>${title}</span><small>${assignedCol === colIndex ? 'уже на этой колонке' : 'свободно'}</small>`;
+      ? `<span>${title}</span><small>уже назначено: ${assignedCols.map((c) => currentHeaders[c] || `Колонка ${c + 1}`).join(', ')}</small>`
+      : `<span>${title}</span><small>${assignedCols.includes(colIndex) ? 'уже на этой колонке' : 'свободно'}</small>`;
 
     btn.onclick = async () => {
-      if (currentFieldForCol) delete currentMapping[currentFieldForCol];
-      if (assignedToAnother) delete currentMapping[field];
-      currentMapping[field] = colIndex;
+      if (currentFieldForCol && currentFieldForCol !== field) {
+        const prev = mappingIndexes(currentFieldForCol).filter((c) => c !== colIndex);
+        if (prev.length) currentMapping[currentFieldForCol] = prev;
+        else delete currentMapping[currentFieldForCol];
+      }
+      const updated = [...assignedCols.filter((c) => c !== colIndex), colIndex].sort((a, b) => a - b);
+      currentMapping[field] = updated.length === 1 ? updated[0] : updated;
       await saveMapping();
       showAutofillInfo('Схема обновлена вручную. Можно нажать «Запомнить схему».');
       mappingDialog.close();
@@ -302,7 +323,10 @@ function openMappingDialog(colIndex) {
   clearBtn.textContent = 'Снять назначение';
   clearBtn.onclick = async () => {
     Object.keys(currentMapping).forEach((k) => {
-      if (currentMapping[k] === colIndex) delete currentMapping[k];
+      const updated = mappingIndexes(k).filter((c) => c !== colIndex);
+      if (updated.length === mappingIndexes(k).length) return;
+      if (!updated.length) delete currentMapping[k];
+      else currentMapping[k] = updated.length === 1 ? updated[0] : updated;
     });
     await saveMapping();
     showAutofillInfo('Схема обновлена вручную. Можно нажать «Запомнить схему».');
