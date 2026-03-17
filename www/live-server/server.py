@@ -1719,7 +1719,7 @@ def _validate_downloaded_binary(path_obj, final_url=""):
         raise DownloadValidationError("браузер сохранил HTML вместо бинарного файла")
 
 
-def download_yandex_file_via_browser(url, out_path, *, table_id=None, entry_id=None):
+def download_file_via_browser(url, out_path, *, table_id=None, entry_id=None):
     if sync_playwright is None:
         raise RuntimeError("Playwright не установлен: browser downloader недоступен")
 
@@ -1797,6 +1797,11 @@ def download_yandex_file_via_browser(url, out_path, *, table_id=None, entry_id=N
             context.close()
 
 
+def download_yandex_file_via_browser(url, out_path, *, table_id=None, entry_id=None):
+    """Backward-compatible alias for browser-first Yandex file download."""
+    return download_file_via_browser(url, out_path, table_id=table_id, entry_id=entry_id)
+
+
 def _response_looks_like_html(response):
     ctype = (response.headers.get("Content-Type") or "").lower()
     cdisp = (response.headers.get("Content-Disposition") or "").lower()
@@ -1821,7 +1826,7 @@ def _response_looks_like_html(response):
 def download_with_retries(req_session, url, out_path, *, table_id=None, entry_id=None):
     if _is_yandex_forms_file_url(url):
         try:
-            return download_yandex_file_via_browser(url, out_path, table_id=table_id, entry_id=entry_id)
+            return download_file_via_browser(url, out_path, table_id=table_id, entry_id=entry_id)
         except Exception as exc:
             app.logger.warning(
                 "[yandex_browser_download_failed] table_id=%s entry_id=%s source_url=%s reason=%s",
@@ -1981,6 +1986,12 @@ def process_table_download(table_id, user_id):
                 (row_id, reason, now_iso(), table_id),
             )
             app.logger.warning(
+                "[tables_download_stop_auth_required] table_id=%s row_id=%s reason=%s",
+                table_id,
+                row_id,
+                reason,
+            )
+            app.logger.warning(
                 "[tables_download] table_id=%s stopped_auth_required row_id=%s processed=%s/%s reason=%s",
                 table_id,
                 row_id,
@@ -2039,6 +2050,14 @@ def process_table_download(table_id, user_id):
             processed_count,
             total,
         )
+        if is_resume:
+            app.logger.info(
+                "[tables_download_resume] table_id=%s cursor_row_id=%s processed=%s total=%s",
+                table_id,
+                start_row_id,
+                processed_count,
+                total,
+            )
 
         grouped_headers = detect_grouped_headers(headers, mapping)
         for i, row in enumerate(data_rows, start=1):
@@ -2305,7 +2324,7 @@ def repair_empty_entries_for_finalized_tables():
     for t in rows:
         table_id = t["id"]
         user_id = int(t["user_id"])
-        mapping = normalize_mapping(json.loads(t.get("mapping_json") or "{}"))
+        mapping = normalize_mapping(json.loads(row_get(t, "mapping_json", "{}") or "{}"))
         before_stats = collect_table_entries_stats(table_id)
         total = before_stats["total"]
         with_number_title = before_stats["with_number_title"]
