@@ -72,6 +72,14 @@
       <p id="progress" class="prepare-only"></p>
       <p id="yandexStatus" class="status-badge status-badge--muted prepare-only">Яндекс: не подключен</p>
       <p id="yandexHint" class="prepare-only"></p>
+      <section id="captchaAlert" class="captcha-alert hidden prepare-only">
+        <p class="captcha-alert__title">Скачивание остановлено: Яндекс требует подтверждение, что вы не робот.</p>
+        <p id="captchaAlertHint" class="captcha-alert__hint">Нажмите «Открыть проверку», решите CAPTCHA в авторизованном браузере, затем нажмите «Продолжить скачивание».</p>
+        <div class="row wrap captcha-alert__actions">
+          <button id="openCaptcha" class="btn btn-secondary" type="button">Открыть проверку</button>
+          <button id="resumeAfterCaptcha" class="btn btn-primary" type="button">Продолжить скачивание</button>
+        </div>
+      </section>
       <p id="mappingAutofillInfo" class="mapping-autofill-info hidden prepare-only"></p>
       <p id="previewError" class="preview-error hidden prepare-only"></p>
       <section id="mappingPanel" class="mapping-panel prepare-only">
