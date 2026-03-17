@@ -21,6 +21,8 @@ import logging
 import zipfile
 from functools import wraps
 from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict
 from urllib.parse import urlparse
 
 import requests
@@ -1663,6 +1665,32 @@ class DownloadValidationError(RuntimeError):
     pass
 
 
+@dataclass
+class DownloadAttemptResult:
+    success: bool
+    strategy: str
+    final_url: str = ""
+    tmp_path: str = ""
+    failure_reason: str = ""
+    requires_auth: bool = False
+    requires_captcha: bool = False
+    metadata: Dict[str, object] = field(default_factory=dict)
+    html_text: str = ""
+
+
+@dataclass
+class DownloadResult:
+    success: bool
+    strategy: str = ""
+    final_url: str = ""
+    local_temp_path: str = ""
+    failure_reason: str = ""
+    requires_auth: bool = False
+    requires_captcha: bool = False
+    file_metadata: Dict[str, object] = field(default_factory=dict)
+    attempts: List[DownloadAttemptResult] = field(default_factory=list)
+
+
 def extension_from_url(url, fallback="bin"):
     name = url.split("?")[0].rstrip("/").split("/")[-1]
     if "." in name:
@@ -1685,7 +1713,13 @@ def _browser_download_tmp_dir(table_id, entry_id):
     return target
 
 
-def _read_text_prefix(path_obj, limit=2048):
+def _download_tmp_file(table_id, entry_id, kind):
+    target = Path(STORAGE_ROOT) / "tmp" / "download_strategies" / f"table_{table_id}" / f"entry_{entry_id or 'unknown'}"
+    target.mkdir(parents=True, exist_ok=True)
+    return target / f"{kind or 'file'}-{uuid.uuid4().hex}.bin"
+
+
+def _read_text_prefix(path_obj, limit=4096):
     try:
         with open(path_obj, "rb") as f:
             prefix = f.read(limit)
@@ -1694,46 +1728,91 @@ def _read_text_prefix(path_obj, limit=2048):
         return ""
 
 
+def _detect_auth_or_captcha(url, text):
+    url_l = str(url or "").lower()
+    text_l = str(text or "").lower()
+    if "showcaptcha" in url_l or "вы не робот" in text_l or "captcha" in text_l:
+        return "captcha_required"
+    if "passport.yandex" in url_l or "войдите" in text_l or "войти" in text_l:
+        return "auth_required"
+    return ""
+
+
 def _validate_downloaded_binary(path_obj, final_url=""):
     if not path_obj.exists():
-        raise DownloadValidationError("файл не был сохранён браузером")
+        raise DownloadValidationError("missing_local_file")
 
     size = int(path_obj.stat().st_size or 0)
     if size < YANDEX_BROWSER_MIN_FILE_SIZE:
-        raise DownloadValidationError(f"файл слишком маленький: {size} байт")
+        raise DownloadValidationError(f"invalid_binary_too_small:{size}")
 
     with open(path_obj, "rb") as f:
-        prefix = f.read(2048).lstrip().lower()
+        prefix = f.read(2048)
+    stripped = prefix.lstrip().lower()
+    text_prefix = prefix.decode("utf-8", errors="ignore").lower()
 
-    html_like = (
-        prefix.startswith(b"<!doctype html")
-        or prefix.startswith(b"<html")
-        or b"<title>" in prefix
-    )
-    if html_like:
-        text_prefix = _read_text_prefix(path_obj)
-        if "showcaptcha" in str(final_url or "").lower() or "вы не робот" in text_prefix:
-            raise DownloadValidationError("browser_captcha_required")
-        if "passport.yandex" in str(final_url or "").lower() or "войдите" in text_prefix:
-            raise YandexAuthRequiredError("browser_auth_required")
-        raise DownloadValidationError("браузер сохранил HTML вместо бинарного файла")
+    html_like = stripped.startswith(b"<!doctype html") or stripped.startswith(b"<html") or b"<title" in stripped
+    detection = _detect_auth_or_captcha(final_url, text_prefix)
+    if html_like or detection:
+        if detection == "captcha_required":
+            raise DownloadValidationError("captcha_required")
+        if detection == "auth_required":
+            raise YandexAuthRequiredError("auth_required")
+        raise DownloadValidationError("html_instead_of_file")
+
+    sig = ""
+    if prefix.startswith(b"%PDF"):
+        sig = "pdf"
+    elif prefix.startswith(b"ID3"):
+        sig = "mp3"
+    elif len(prefix) > 2 and prefix[:2] == b"PK":
+        sig = "zip_like"
+    return {"size": size, "signature": sig}
 
 
-def download_file_via_browser(url, out_path, *, table_id=None, entry_id=None):
+def _strategy_direct_request(req_session, url, out_tmp, *, table_id=None, entry_id=None):
+    app.logger.info("[download_strategy_start] table_id=%s entry_id=%s strategy=direct source_url=%s", table_id, entry_id, url)
+    last_error = ""
+    for _ in range(DOWNLOAD_RETRIES):
+        try:
+            r = req_session.get(url, timeout=30, allow_redirects=True)
+            r.raise_for_status()
+            final_url = str(r.url or url)
+            body = r.content or b""
+            text = body[:4096].decode("utf-8", errors="ignore")
+            detect = _detect_auth_or_captcha(final_url, text)
+            if detect == "captcha_required":
+                return DownloadAttemptResult(False, "direct", final_url=final_url, failure_reason="captcha_required", requires_captcha=True, html_text=text)
+            if detect == "auth_required" or r.status_code in (401, 403):
+                return DownloadAttemptResult(False, "direct", final_url=final_url, failure_reason="auth_required", requires_auth=True, html_text=text)
+            with open(out_tmp, "wb") as f:
+                f.write(body)
+            meta = _validate_downloaded_binary(Path(out_tmp), final_url=final_url)
+            return DownloadAttemptResult(True, "direct", final_url=final_url, tmp_path=str(out_tmp), metadata=meta, html_text=text)
+        except YandexAuthRequiredError:
+            return DownloadAttemptResult(False, "direct", failure_reason="auth_required", requires_auth=True)
+        except DownloadValidationError as exc:
+            reason = str(exc)
+            if reason == "captcha_required":
+                return DownloadAttemptResult(False, "direct", failure_reason=reason, requires_captcha=True)
+            if reason == "auth_required":
+                return DownloadAttemptResult(False, "direct", failure_reason=reason, requires_auth=True)
+            last_error = reason
+        except Exception as exc:
+            last_error = short_error_message(exc, fallback="direct_failed")
+            time.sleep(1)
+    return DownloadAttemptResult(False, "direct", failure_reason=last_error or "direct_failed")
+
+
+def _strategy_browser_download(url, out_tmp, *, table_id=None, entry_id=None):
+    app.logger.info("[download_strategy_start] table_id=%s entry_id=%s strategy=browser source_url=%s", table_id, entry_id, url)
     if sync_playwright is None:
-        raise RuntimeError("Playwright не установлен: browser downloader недоступен")
+        return DownloadAttemptResult(False, "browser", failure_reason="playwright_not_installed")
 
     download_dir = _browser_download_tmp_dir(table_id, entry_id)
-    app.logger.info(
-        "[yandex_browser_download_start] table_id=%s entry_id=%s source_url=%s target_path=%s",
-        table_id,
-        entry_id,
-        url,
-        out_path,
-    )
+    app.logger.info("[yandex_browser_download_start] table_id=%s entry_id=%s source_url=%s", table_id, entry_id, url)
 
     context = None
-    browser_name = None
     with sync_playwright() as p:
         for candidate in ("chromium", "chrome"):
             try:
@@ -1745,127 +1824,123 @@ def download_file_via_browser(url, out_path, *, table_id=None, entry_id=None):
                     args=["--disable-dev-shm-usage", "--no-sandbox"],
                     channel="chrome" if candidate == "chrome" else None,
                 )
-                browser_name = candidate
                 break
             except Exception:
                 context = None
         if context is None:
-            raise RuntimeError("Не удалось запустить Chromium/Chrome persistent context")
+            return DownloadAttemptResult(False, "browser", failure_reason="browser_context_failed")
 
         try:
             page = context.new_page()
             page.set_default_timeout(YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS)
-            download = None
-            final_url = ""
             try:
                 with page.expect_download(timeout=YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS) as dl_info:
                     page.goto(url, wait_until="domcontentloaded")
                 download = dl_info.value
             except PlaywrightTimeoutError:
-                final_url = page.url
-                html = (page.content() or "").lower()
-                if "showcaptcha" in final_url.lower() or "вы не робот" in html:
-                    raise DownloadValidationError("browser_captcha_required")
-                if "passport.yandex" in final_url.lower() or "войти" in html:
-                    raise YandexAuthRequiredError("browser_auth_required")
-                raise RuntimeError("браузер не инициировал событие download")
+                html = (page.content() or "")
+                detect = _detect_auth_or_captcha(page.url, html)
+                if detect == "captcha_required":
+                    app.logger.warning("[yandex_browser_captcha_required] table_id=%s entry_id=%s source_url=%s", table_id, entry_id, url)
+                    return DownloadAttemptResult(False, "browser", final_url=page.url, failure_reason=detect, requires_captcha=True, html_text=html)
+                if detect == "auth_required":
+                    return DownloadAttemptResult(False, "browser", final_url=page.url, failure_reason=detect, requires_auth=True, html_text=html)
+                return DownloadAttemptResult(False, "browser", final_url=page.url, failure_reason="browser_no_download", html_text=html)
 
-            final_url = page.url
-            suggested_name = download.suggested_filename or Path(out_path).name
             tmp_path = download.path()
             if not tmp_path:
-                raise RuntimeError("Playwright не вернул путь скачанного файла")
+                return DownloadAttemptResult(False, "browser", failure_reason="browser_empty_download")
             tmp_path_obj = Path(tmp_path)
-            _validate_downloaded_binary(tmp_path_obj, final_url=final_url)
-
-            out_path_obj = Path(out_path)
-            out_path_obj.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(tmp_path_obj), str(out_path_obj))
-            size = out_path_obj.stat().st_size if out_path_obj.exists() else 0
-            app.logger.info(
-                "[yandex_browser_download_ok] table_id=%s entry_id=%s browser=%s source_url=%s final_url=%s filename=%s size=%s",
-                table_id,
-                entry_id,
-                browser_name,
-                url,
-                final_url,
-                suggested_name,
-                size,
-            )
-            return
+            meta = _validate_downloaded_binary(tmp_path_obj, final_url=page.url)
+            shutil.move(str(tmp_path_obj), str(out_tmp))
+            app.logger.info("[yandex_browser_download_ok] table_id=%s entry_id=%s source_url=%s final_url=%s size=%s", table_id, entry_id, url, page.url, meta.get("size", 0))
+            return DownloadAttemptResult(True, "browser", final_url=page.url, tmp_path=str(out_tmp), metadata=meta)
+        except YandexAuthRequiredError:
+            return DownloadAttemptResult(False, "browser", failure_reason="auth_required", requires_auth=True)
+        except DownloadValidationError as exc:
+            reason = str(exc)
+            if reason == "captcha_required":
+                app.logger.warning("[yandex_browser_captcha_required] table_id=%s entry_id=%s source_url=%s", table_id, entry_id, url)
+                return DownloadAttemptResult(False, "browser", failure_reason=reason, requires_captcha=True)
+            if reason == "auth_required":
+                return DownloadAttemptResult(False, "browser", failure_reason=reason, requires_auth=True)
+            return DownloadAttemptResult(False, "browser", failure_reason=reason)
+        except Exception as exc:
+            app.logger.warning("[yandex_browser_download_failed] table_id=%s entry_id=%s source_url=%s reason=%s", table_id, entry_id, url, short_error_message(exc, fallback="browser_failed"))
+            return DownloadAttemptResult(False, "browser", failure_reason=short_error_message(exc, fallback="browser_failed"))
         finally:
             context.close()
 
 
-def download_yandex_file_via_browser(url, out_path, *, table_id=None, entry_id=None):
-    """Backward-compatible alias for browser-first Yandex file download."""
-    return download_file_via_browser(url, out_path, table_id=table_id, entry_id=entry_id)
+def _strategy_html_parse_fallback(req_session, html_text, base_url, out_tmp, *, table_id=None, entry_id=None):
+    app.logger.info("[download_strategy_start] table_id=%s entry_id=%s strategy=parse_html source_url=%s", table_id, entry_id, base_url)
+    html = str(html_text or "")
+    if not html:
+        return DownloadAttemptResult(False, "parse_html", failure_reason="empty_html")
+    detect = _detect_auth_or_captcha(base_url, html)
+    if detect == "captcha_required":
+        return DownloadAttemptResult(False, "parse_html", failure_reason=detect, requires_captcha=True)
+    if detect == "auth_required":
+        return DownloadAttemptResult(False, "parse_html", failure_reason=detect, requires_auth=True)
+
+    for match in re.findall(r"https?://[^\"'\s>]+", html):
+        if any(token in match.lower() for token in ["download", "attachment", "storage", "cdn", "cloud"]):
+            return _strategy_direct_request(req_session, match, out_tmp, table_id=table_id, entry_id=entry_id)
+    return DownloadAttemptResult(False, "parse_html", failure_reason="no_binary_endpoint_found")
 
 
-def _response_looks_like_html(response):
-    ctype = (response.headers.get("Content-Type") or "").lower()
-    cdisp = (response.headers.get("Content-Disposition") or "").lower()
-    final_url = str(response.url or "")
-    final_url_l = final_url.lower()
-    body_prefix = (response.content or b"")[:512].lstrip().lower()
+def download_file_with_strategies(req_session, url, *, table_id=None, entry_id=None, row_id=None, kind="generic", refresh_callback=None):
+    tmp_file = _download_tmp_file(table_id or 0, entry_id, kind)
+    attempts = []
 
-    if response.status_code in (401, 403) or "passport.yandex" in final_url_l:
-        raise YandexAuthRequiredError("Нужен вход администратора в Яндекс")
+    strategy_chain = ["direct", "browser", "parse_html"] if _is_yandex_forms_file_url(url) else ["direct", "browser"]
+    html_cache = ""
 
-    if "text/html" in ctype:
-        return True, "ответ имеет Content-Type text/html"
-    if ctype.startswith("text/") and "attachment" not in cdisp:
-        return True, f"ответ имеет текстовый Content-Type: {ctype}"
-    if "forms.yandex.ru/u/files" in final_url_l and "attachment" not in cdisp and "audio" not in ctype:
-        return True, "URL файла Yandex Forms вернул страницу вместо бинарного файла"
-    if body_prefix.startswith(b"<!doctype html") or body_prefix.startswith(b"<html"):
-        return True, "первые байты ответа похожи на HTML"
-    return False, ""
+    for strategy in strategy_chain:
+        if strategy == "direct":
+            attempt = _strategy_direct_request(req_session, url, tmp_file, table_id=table_id, entry_id=entry_id)
+            html_cache = attempt.html_text or html_cache
+        elif strategy == "browser":
+            attempt = _strategy_browser_download(url, tmp_file, table_id=table_id, entry_id=entry_id)
+            html_cache = attempt.html_text or html_cache
+        else:
+            attempt = _strategy_html_parse_fallback(req_session, html_cache, url, tmp_file, table_id=table_id, entry_id=entry_id)
+
+        attempts.append(attempt)
+        app.logger.info("[download_strategy_result] table_id=%s entry_id=%s row_id=%s strategy=%s success=%s reason=%s final_url=%s kind=%s size=%s", table_id, entry_id, row_id, attempt.strategy, attempt.success, attempt.failure_reason or "", attempt.final_url or url, kind, attempt.metadata.get("size", ""))
+        if attempt.success:
+            return DownloadResult(True, strategy=attempt.strategy, final_url=attempt.final_url or url, local_temp_path=attempt.tmp_path, file_metadata=attempt.metadata, attempts=attempts)
+
+        if attempt.requires_auth and callable(refresh_callback):
+            if refresh_callback():
+                retry_attempt = _strategy_direct_request(req_session, url, tmp_file, table_id=table_id, entry_id=entry_id)
+                attempts.append(retry_attempt)
+                app.logger.info("[download_strategy_result] table_id=%s entry_id=%s row_id=%s strategy=direct_after_refresh success=%s reason=%s final_url=%s kind=%s size=%s", table_id, entry_id, row_id, retry_attempt.success, retry_attempt.failure_reason or "", retry_attempt.final_url or url, kind, retry_attempt.metadata.get("size", ""))
+                if retry_attempt.success:
+                    return DownloadResult(True, strategy="direct_after_refresh", final_url=retry_attempt.final_url or url, local_temp_path=retry_attempt.tmp_path, file_metadata=retry_attempt.metadata, attempts=attempts)
+                if retry_attempt.requires_auth:
+                    break
+            else:
+                break
+
+        if attempt.requires_auth or attempt.requires_captcha:
+            break
+
+    final_reason = attempts[-1].failure_reason if attempts else "download_failed"
+    return DownloadResult(False, failure_reason=final_reason, requires_auth=any(a.requires_auth for a in attempts), requires_captcha=any(a.requires_captcha for a in attempts), attempts=attempts)
 
 
 def download_with_retries(req_session, url, out_path, *, table_id=None, entry_id=None):
-    if _is_yandex_forms_file_url(url):
-        try:
-            return download_file_via_browser(url, out_path, table_id=table_id, entry_id=entry_id)
-        except Exception as exc:
-            app.logger.warning(
-                "[yandex_browser_download_failed] table_id=%s entry_id=%s source_url=%s reason=%s",
-                table_id,
-                entry_id,
-                url,
-                short_error_message(exc, fallback="browser download failed"),
-            )
-            if "captcha" in str(exc).lower():
-                app.logger.warning(
-                    "[yandex_browser_captcha_required] table_id=%s entry_id=%s source_url=%s reason=%s",
-                    table_id,
-                    entry_id,
-                    url,
-                    short_error_message(exc, fallback="browser captcha required"),
-                )
-            raise
-
-    last_error = None
-    for _ in range(DOWNLOAD_RETRIES):
-        try:
-            r = req_session.get(url, timeout=30, allow_redirects=True)
-            r.raise_for_status()
-            is_html, reason = _response_looks_like_html(r)
-            if is_html:
-                raise DownloadValidationError(
-                    f"вместо файла получен HTML/текст ({reason}); status={r.status_code}; "
-                    f"content_type={r.headers.get('Content-Type')}; "
-                    f"content_disposition={r.headers.get('Content-Disposition')}; final_url={r.url}"
-                )
-            with open(out_path, "wb") as f:
-                f.write(r.content)
-            return
-        except YandexAuthRequiredError:
-            raise
-        except Exception as e:
-            last_error = str(e)
-            time.sleep(1)
-    raise RuntimeError(last_error or "download failed")
+    result = download_file_with_strategies(req_session, url, table_id=table_id, entry_id=entry_id)
+    if result.success and result.local_temp_path:
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(result.local_temp_path, out_path)
+        return
+    if result.requires_auth:
+        raise YandexAuthRequiredError(result.failure_reason or "auth_required")
+    if result.requires_captcha:
+        raise DownloadValidationError("captcha_required")
+    raise RuntimeError(result.failure_reason or "download failed")
 
 
 def parse_local_file_values(local_value):
@@ -1942,7 +2017,7 @@ def process_table_download(table_id, user_id):
         total = len(data_rows)
         existing_processed = int(t["processed_count"] or 0)
         existing_cursor = t["download_cursor_row_id"]
-        is_resume = str(t["status"] or "").lower() in {"auth_required", "paused", "downloading_partial"}
+        is_resume = str(t["status"] or "").lower() in {"auth_required", "captcha_required", "paused", "downloading_partial"}
 
         query_db(
             "UPDATE table_workspaces SET status='downloading', total_count=?, processed_count=?, progress=?, last_error=NULL, updated_at=? WHERE id=?",
@@ -1991,12 +2066,17 @@ def process_table_download(table_id, user_id):
                 row_id,
                 reason,
             )
+
+        def persist_captcha_required_stop(row_id, reason):
+            query_db(
+                "UPDATE table_workspaces SET status='captcha_required', download_cursor_row_id=?, last_error=?, updated_at=? WHERE id=?",
+                (row_id, reason, now_iso(), table_id),
+            )
+            update_table_yandex_status(table_id, "captcha_required", reason)
             app.logger.warning(
-                "[tables_download] table_id=%s stopped_auth_required row_id=%s processed=%s/%s reason=%s",
+                "[tables_download_stop_captcha_required] table_id=%s row_id=%s reason=%s",
                 table_id,
                 row_id,
-                int(query_db("SELECT processed_count FROM table_workspaces WHERE id=?", (table_id,), one=True)["processed_count"] or 0),
-                total,
                 reason,
             )
 
@@ -2187,27 +2267,34 @@ def process_table_download(table_id, user_id):
                 ext = extension_from_url(audio_url, "mp3")
                 audio_name = f"{phonogram_base}.{ext}"
                 audio_path = os.path.join(base, "phonograms", audio_name)
-                try:
-                    download_with_retries(req_session, audio_url, audio_path, table_id=table_id, entry_id=entry_id)
+                result = download_file_with_strategies(
+                    req_session,
+                    audio_url,
+                    table_id=table_id,
+                    entry_id=entry_id,
+                    row_id=row_id,
+                    kind="audio",
+                    refresh_callback=lambda: handle_auth_required_with_refresh(row_id),
+                )
+                if result.success and result.local_temp_path:
+                    shutil.move(result.local_temp_path, audio_path)
                     audio_local = os.path.join("phonograms", audio_name)
                     downloaded_files += 1
-                except YandexAuthRequiredError:
-                    if not handle_auth_required_with_refresh(row_id):
-                        return
-                    try:
-                        download_with_retries(req_session, audio_url, audio_path, table_id=table_id, entry_id=entry_id)
-                        audio_local = os.path.join("phonograms", audio_name)
-                        downloaded_files += 1
-                    except YandexAuthRequiredError:
-                        persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
-                        return
-                except Exception as exc:
+                elif result.requires_captcha:
+                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.")
+                    return
+                elif result.requires_auth:
+                    persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
+                    return
+                else:
                     app.logger.warning(
-                        "[tables_download_audio_invalid] table_id=%s row_id=%s url=%s reason=%s",
+                        "[tables_download_file_invalid] table_id=%s entry_id=%s row_id=%s strategy=%s source_url=%s kind=audio reason=%s",
                         table_id,
+                        entry_id,
                         row_id,
+                        result.strategy,
                         audio_url,
-                        short_error_message(exc, fallback="Ошибка скачивания фонограммы"),
+                        result.failure_reason,
                     )
 
             if receipt_url and not receipt_done:
@@ -2220,22 +2307,35 @@ def process_table_download(table_id, user_id):
                 ext = extension_from_url(receipt_url, "pdf")
                 receipt_name = f"{receipt_base}.{ext}"
                 receipt_path = os.path.join(base, "receipts", receipt_name)
-                try:
-                    download_with_retries(req_session, receipt_url, receipt_path, table_id=table_id, entry_id=entry_id)
+                result = download_file_with_strategies(
+                    req_session,
+                    receipt_url,
+                    table_id=table_id,
+                    entry_id=entry_id,
+                    row_id=row_id,
+                    kind="receipt",
+                    refresh_callback=lambda: handle_auth_required_with_refresh(row_id),
+                )
+                if result.success and result.local_temp_path:
+                    shutil.move(result.local_temp_path, receipt_path)
                     receipt_local = os.path.join("receipts", receipt_name)
                     downloaded_files += 1
-                except YandexAuthRequiredError:
-                    if not handle_auth_required_with_refresh(row_id):
-                        return
-                    try:
-                        download_with_retries(req_session, receipt_url, receipt_path, table_id=table_id, entry_id=entry_id)
-                        receipt_local = os.path.join("receipts", receipt_name)
-                        downloaded_files += 1
-                    except YandexAuthRequiredError:
-                        persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
-                        return
-                except Exception:
-                    pass
+                elif result.requires_captcha:
+                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.")
+                    return
+                elif result.requires_auth:
+                    persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
+                    return
+                else:
+                    app.logger.warning(
+                        "[tables_download_file_invalid] table_id=%s entry_id=%s row_id=%s strategy=%s source_url=%s kind=receipt reason=%s",
+                        table_id,
+                        entry_id,
+                        row_id,
+                        result.strategy,
+                        receipt_url,
+                        result.failure_reason,
+                    )
 
             if presentation_url and not presentation_done:
                 presentation_base = add_row_suffix_if_needed(
@@ -2246,22 +2346,35 @@ def process_table_download(table_id, user_id):
                 ext = extension_from_url(presentation_url, "bin")
                 presentation_name = f"{presentation_base}.{ext}"
                 presentation_path = os.path.join(base, "presentations", presentation_name)
-                try:
-                    download_with_retries(req_session, presentation_url, presentation_path, table_id=table_id, entry_id=entry_id)
+                result = download_file_with_strategies(
+                    req_session,
+                    presentation_url,
+                    table_id=table_id,
+                    entry_id=entry_id,
+                    row_id=row_id,
+                    kind="presentation",
+                    refresh_callback=lambda: handle_auth_required_with_refresh(row_id),
+                )
+                if result.success and result.local_temp_path:
+                    shutil.move(result.local_temp_path, presentation_path)
                     presentation_local = os.path.join("presentations", presentation_name)
                     downloaded_files += 1
-                except YandexAuthRequiredError:
-                    if not handle_auth_required_with_refresh(row_id):
-                        return
-                    try:
-                        download_with_retries(req_session, presentation_url, presentation_path, table_id=table_id, entry_id=entry_id)
-                        presentation_local = os.path.join("presentations", presentation_name)
-                        downloaded_files += 1
-                    except YandexAuthRequiredError:
-                        persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
-                        return
-                except Exception:
-                    pass
+                elif result.requires_captcha:
+                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.")
+                    return
+                elif result.requires_auth:
+                    persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
+                    return
+                else:
+                    app.logger.warning(
+                        "[tables_download_file_invalid] table_id=%s entry_id=%s row_id=%s strategy=%s source_url=%s kind=presentation reason=%s",
+                        table_id,
+                        entry_id,
+                        row_id,
+                        result.strategy,
+                        presentation_url,
+                        result.failure_reason,
+                    )
 
             query_db(
                 "UPDATE table_entries SET audio_local=?, receipt_local=?, presentation_local=? WHERE id=?",
@@ -2919,7 +3032,7 @@ def start_download(table_id):
     if not can_start:
         return jsonify({"detail": reason}), 400
 
-    resume_statuses = {"auth_required", "paused", "downloading_partial"}
+    resume_statuses = {"auth_required", "captcha_required", "paused", "downloading_partial"}
     current_status = str(t["status"] or "new").lower()
     is_resume = current_status in resume_statuses and int(t["processed_count"] or 0) > 0
 
