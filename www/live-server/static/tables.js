@@ -21,6 +21,10 @@ const startDownloadBtn = document.getElementById('startDownload');
 const finalizeTableBtn = document.getElementById('finalizeTable');
 const openAdminLoginBtn = document.getElementById('openAdminLogin');
 const yandexHintEl = document.getElementById('yandexHint');
+const captchaAlertEl = document.getElementById('captchaAlert');
+const captchaAlertHintEl = document.getElementById('captchaAlertHint');
+const openCaptchaBtn = document.getElementById('openCaptcha');
+const resumeAfterCaptchaBtn = document.getElementById('resumeAfterCaptcha');
 const mappingAutofillInfoEl = document.getElementById('mappingAutofillInfo');
 const tableView = document.getElementById('tableView');
 const excelHead = document.getElementById('excelHead');
@@ -117,6 +121,23 @@ function setYandexState(status, errText = '', vncUrl = null) {
   yandexStatusEl.textContent = 'Яндекс: не подключен';
   yandexHintEl.textContent = errText || '';
   openAdminLoginBtn.classList.add('hidden');
+}
+
+async function fetchCaptchaContext(tableId) {
+  const resp = await fetch(`/api/tables/${tableId}/captcha/context`);
+  if (requireAuth(resp)) return null;
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return null;
+  return data;
+}
+
+function renderCaptchaAlert(table) {
+  if (!captchaAlertEl) return;
+  const isCaptcha = (table?.status || '') === 'captcha_required';
+  captchaAlertEl.classList.toggle('hidden', !isCaptcha);
+  if (!isCaptcha) return;
+  const rowId = table?.download_last_problem_row_id || table?.download_cursor_row_id || '?';
+  captchaAlertHintEl.textContent = `Скачивание остановлено на строке ${rowId}. Нажмите «Открыть проверку», пройдите CAPTCHA в Яндексе, затем нажмите «Продолжить скачивание».`;
 }
 
 function showAutofillInfo(text) {
@@ -394,11 +415,14 @@ async function refreshTables() {
     tableList.appendChild(li);
   });
 
+  if (!currentTableId && captchaAlertEl) captchaAlertEl.classList.add('hidden');
+
   if (currentTableId) {
     const cur = tables.find((x) => x.id === currentTableId);
     if (cur) {
       progressEl.textContent = formatProgressText(cur);
       setYandexState(cur.yandex_status || 'disconnected', cur.yandex_last_error || '', lastVncUrl);
+      renderCaptchaAlert(cur);
       const resumeStatuses = new Set(['auth_required', 'captcha_required', 'paused', 'downloading_partial']);
       const isResumeReady = resumeStatuses.has(cur.status || '');
       startDownloadBtn.textContent = isResumeReady ? 'Продолжить скачивание' : 'Старт скачивания';
@@ -447,7 +471,8 @@ async function refreshYandexSession(tableId, openVncOnFail = false) {
     return { ok: true, needLogin: false };
   }
 
-  setYandexState('auth_required', 'Требуется вход администратора', data.vnc_url || null);
+  const nextStatus = data.yandex_status || 'auth_required';
+  setYandexState(nextStatus, data.detail || 'Требуется вход администратора', data.vnc_url || null);
   await refreshTables();
   if (openVncOnFail && (data.vnc_url || lastVncUrl)) {
     const vncUrl = data.vnc_url || lastVncUrl;
@@ -836,6 +861,27 @@ function initTablesSection() {
     await refreshYandexSession(currentTableId, true);
   };
 
+  openCaptchaBtn.onclick = async () => {
+    if (!currentTableId) return alert('Сначала выберите таблицу');
+    const ctx = await fetchCaptchaContext(currentTableId);
+    const resp = await fetch(`/api/tables/${currentTableId}/captcha/open`, { method: 'POST' });
+    if (requireAuth(resp)) return;
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) return alert(data.detail || 'Не удалось открыть CAPTCHA flow');
+    const vncUrl = data.vnc_url || lastVncUrl;
+    if (!vncUrl) return alert('VNC URL недоступен');
+    lastVncUrl = vncUrl;
+    window.open(vncUrl, 'yandex_vnc', 'width=520,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no');
+    const captchaUrl = data.captcha_url || ctx?.captcha_url;
+    if (captchaUrl) {
+      window.open(captchaUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  resumeAfterCaptchaBtn.onclick = async () => {
+    startDownloadBtn.click();
+  };
+
   openAdminLoginBtn.onclick = async () => {
     if (!currentTableId) return alert('Сначала выберите таблицу');
     let vncUrl = lastVncUrl;
@@ -855,7 +901,8 @@ function initTablesSection() {
     const resp = await fetch(`/api/tables/${currentTableId}/start-download`, { method: 'POST' });
     const data = await resp.json().catch(() => ({}));
     if (resp.status === 400 && data.status === 'need_login') {
-      setYandexState('auth_required', data.detail || '', data.vnc_url || null);
+      setYandexState(data.yandex_status || 'auth_required', data.detail || '', data.vnc_url || null);
+      await refreshTables();
       return;
     }
     if (requireAuth(resp)) return;
@@ -868,6 +915,7 @@ function initTablesSection() {
   setWorkspaceVisible(true);
   refreshTables();
   setYandexState('disconnected');
+  if (captchaAlertEl) captchaAlertEl.classList.add('hidden');
   setInterval(async () => {
     await refreshTables();
     await refreshMapping();

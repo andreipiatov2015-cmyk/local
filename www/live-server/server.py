@@ -367,7 +367,13 @@ def init_db():
             yandex_session_json TEXT,
             yandex_status TEXT NOT NULL DEFAULT 'disconnected',
             yandex_last_error TEXT,
-            yandex_last_checked_at TEXT
+            yandex_last_checked_at TEXT,
+            download_last_problem_kind TEXT,
+            download_last_problem_url TEXT,
+            download_last_problem_final_url TEXT,
+            download_last_problem_row_id INTEGER,
+            download_last_problem_entry_id INTEGER,
+            download_last_problem_at TEXT
         )
     """)
 
@@ -461,6 +467,12 @@ def init_db():
         "ALTER TABLE table_workspaces ADD COLUMN yandex_status TEXT NOT NULL DEFAULT 'disconnected'",
         "ALTER TABLE table_workspaces ADD COLUMN yandex_last_error TEXT",
         "ALTER TABLE table_workspaces ADD COLUMN yandex_last_checked_at TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN download_last_problem_kind TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN download_last_problem_url TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN download_last_problem_final_url TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN download_last_problem_row_id INTEGER",
+        "ALTER TABLE table_workspaces ADD COLUMN download_last_problem_entry_id INTEGER",
+        "ALTER TABLE table_workspaces ADD COLUMN download_last_problem_at TEXT",
         "ALTER TABLE table_workspaces ADD COLUMN is_finalized INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE table_workspaces ADD COLUMN finalized_at TEXT",
         "ALTER TABLE table_workspaces ADD COLUMN program_updated_at TEXT",
@@ -1366,6 +1378,49 @@ def update_table_yandex_status(table_id, status, error_text=None):
     )
 
 
+def persist_download_problem_context(table_id, *, kind, source_url="", final_url="", row_id=None, entry_id=None):
+    query_db(
+        """
+        UPDATE table_workspaces
+        SET download_last_problem_kind=?,
+            download_last_problem_url=?,
+            download_last_problem_final_url=?,
+            download_last_problem_row_id=?,
+            download_last_problem_entry_id=?,
+            download_last_problem_at=?,
+            updated_at=?
+        WHERE id=?
+        """,
+        (
+            (kind or "")[:64] or None,
+            (source_url or "")[:1000] or None,
+            (final_url or "")[:1000] or None,
+            int(row_id) if row_id else None,
+            int(entry_id) if entry_id else None,
+            now_iso(),
+            now_iso(),
+            table_id,
+        ),
+    )
+
+
+def clear_download_problem_context(table_id):
+    query_db(
+        """
+        UPDATE table_workspaces
+        SET download_last_problem_kind=NULL,
+            download_last_problem_url=NULL,
+            download_last_problem_final_url=NULL,
+            download_last_problem_row_id=NULL,
+            download_last_problem_entry_id=NULL,
+            download_last_problem_at=NULL,
+            updated_at=?
+        WHERE id=?
+        """,
+        (now_iso(), table_id),
+    )
+
+
 def table_required_mapping_status(mapping):
     assigned_files = [f for f in FILE_MAPPING_FIELDS if f in mapping]
     if not assigned_files:
@@ -2030,6 +2085,8 @@ def process_table_download(table_id, user_id):
             ),
         )
 
+        clear_download_problem_context(table_id)
+
         try:
             cookies = read_yandex_cookies_from_chromium_profile()
         except Exception as exc:
@@ -2067,16 +2124,27 @@ def process_table_download(table_id, user_id):
                 reason,
             )
 
-        def persist_captcha_required_stop(row_id, reason):
+        def persist_captcha_required_stop(row_id, reason, source_url="", final_url="", entry_id=None):
             query_db(
                 "UPDATE table_workspaces SET status='captcha_required', download_cursor_row_id=?, last_error=?, updated_at=? WHERE id=?",
                 (row_id, reason, now_iso(), table_id),
             )
+            persist_download_problem_context(
+                table_id,
+                kind="captcha_required",
+                source_url=source_url,
+                final_url=final_url,
+                row_id=row_id,
+                entry_id=entry_id,
+            )
             update_table_yandex_status(table_id, "captcha_required", reason)
             app.logger.warning(
-                "[tables_download_stop_captcha_required] table_id=%s row_id=%s reason=%s",
+                "[tables_download_stop_captcha_required] table_id=%s entry_id=%s row_id=%s source_url=%s captcha_url=%s reason=%s",
                 table_id,
+                entry_id,
                 row_id,
+                source_url,
+                final_url,
                 reason,
             )
 
@@ -2281,7 +2349,7 @@ def process_table_download(table_id, user_id):
                     audio_local = os.path.join("phonograms", audio_name)
                     downloaded_files += 1
                 elif result.requires_captcha:
-                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.")
+                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.", source_url=audio_url, final_url=result.final_url, entry_id=entry_id)
                     return
                 elif result.requires_auth:
                     persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
@@ -2321,7 +2389,7 @@ def process_table_download(table_id, user_id):
                     receipt_local = os.path.join("receipts", receipt_name)
                     downloaded_files += 1
                 elif result.requires_captcha:
-                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.")
+                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.", source_url=receipt_url, final_url=result.final_url, entry_id=entry_id)
                     return
                 elif result.requires_auth:
                     persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
@@ -2360,7 +2428,7 @@ def process_table_download(table_id, user_id):
                     presentation_local = os.path.join("presentations", presentation_name)
                     downloaded_files += 1
                 elif result.requires_captcha:
-                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.")
+                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.", source_url=presentation_url, final_url=result.final_url, entry_id=entry_id)
                     return
                 elif result.requires_auth:
                     persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
@@ -2399,6 +2467,7 @@ def process_table_download(table_id, user_id):
             skipped_completed_rows,
             downloaded_files,
         )
+        clear_download_problem_context(table_id)
         query_db(
             "UPDATE table_workspaces SET status='done', processed_count=?, download_cursor_row_id=NULL, progress=100, last_error=NULL, updated_at=? WHERE id=?",
             (processed_count, now_iso(), table_id),
@@ -2494,7 +2563,7 @@ def list_tables():
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
     rows = query_db(
-        "SELECT id, title, status, total_count, processed_count, download_cursor_row_id, progress, last_error, created_at, mapping_json, yandex_status, yandex_last_error, yandex_last_checked_at, is_finalized, finalized_at, program_updated_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC",
+        "SELECT id, title, status, total_count, processed_count, download_cursor_row_id, progress, last_error, created_at, mapping_json, yandex_status, yandex_last_error, yandex_last_checked_at, download_last_problem_kind, download_last_problem_url, download_last_problem_final_url, download_last_problem_row_id, download_last_problem_entry_id, download_last_problem_at, is_finalized, finalized_at, program_updated_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC",
         (user["id"],),
     )
     result = []
@@ -2744,9 +2813,70 @@ def yandex_vnc_start(table_id):
         return jsonify({"detail": "Не авторизован"}), 401
     if not table_belongs_to_user(table_id, user["id"]):
         return jsonify({"detail": "Таблица не найдена"}), 404
-    return jsonify({"vnc_url": YANDEX_VNC_URL})
+    payload = request.get_json(silent=True) or {}
+    open_url = (payload.get("open_url") or "").strip()
+    if open_url:
+        app.logger.info("[captcha_open_requested] table_id=%s url=%s", table_id, open_url)
+    return jsonify({"vnc_url": YANDEX_VNC_URL, "open_url": open_url or None})
 
 
+@app.route("/api/tables/<int:table_id>/captcha/context", methods=["GET"])
+def table_captcha_context(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    row = query_db(
+        """
+        SELECT id, status, download_cursor_row_id, download_last_problem_kind,
+               download_last_problem_url, download_last_problem_final_url,
+               download_last_problem_row_id, download_last_problem_entry_id,
+               download_last_problem_at
+        FROM table_workspaces
+        WHERE id=? AND user_id=?
+        """,
+        (table_id, user["id"]),
+        one=True,
+    )
+    if not row:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    problem_kind = row["download_last_problem_kind"] or ""
+    return jsonify({
+        "table_id": table_id,
+        "status": row["status"],
+        "has_captcha": problem_kind == "captcha_required" or str(row["status"] or "") == "captcha_required",
+        "problem_kind": problem_kind or None,
+        "source_url": row["download_last_problem_url"],
+        "captcha_url": row["download_last_problem_final_url"] or row["download_last_problem_url"],
+        "problem_row_id": row["download_last_problem_row_id"] or row["download_cursor_row_id"],
+        "entry_id": row["download_last_problem_entry_id"],
+        "problem_at": row["download_last_problem_at"],
+        "vnc_url": YANDEX_VNC_URL,
+    })
+
+
+@app.route("/api/tables/<int:table_id>/captcha/open", methods=["POST"])
+def table_captcha_open(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    row = query_db(
+        "SELECT status, download_last_problem_kind, download_last_problem_url, download_last_problem_final_url, download_last_problem_row_id, download_last_problem_entry_id FROM table_workspaces WHERE id=? AND user_id=?",
+        (table_id, user["id"]),
+        one=True,
+    )
+    if not row:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    captcha_url = row["download_last_problem_final_url"] or row["download_last_problem_url"] or ""
+    app.logger.info(
+        "[captcha_open_requested] table_id=%s entry_id=%s row_id=%s status=%s source_url=%s captcha_url=%s",
+        table_id,
+        row["download_last_problem_entry_id"],
+        row["download_last_problem_row_id"],
+        row["status"],
+        row["download_last_problem_url"],
+        captcha_url,
+    )
+    return jsonify({"status": "ok", "vnc_url": YANDEX_VNC_URL, "captcha_url": captcha_url or None})
 
 
 @app.route("/api/tables/<int:table_id>/yandex/refresh", methods=["POST"])
@@ -3034,7 +3164,7 @@ def start_download(table_id):
 
     resume_statuses = {"auth_required", "captcha_required", "paused", "downloading_partial"}
     current_status = str(t["status"] or "new").lower()
-    is_resume = current_status in resume_statuses and int(t["processed_count"] or 0) > 0
+    is_resume = current_status in resume_statuses and int(t["download_cursor_row_id"] or 0) >= 2
 
     if not has_global_yandex_session():
         update_table_yandex_status(table_id, "auth_required", "Нужен вход администратора в Яндекс")
@@ -3045,6 +3175,7 @@ def start_download(table_id):
         return jsonify({"status": "need_login", "detail": "Нужен вход администратора в Яндекс", "vnc_url": YANDEX_VNC_URL}), 400
 
     update_table_yandex_status(table_id, "connected", None)
+    clear_download_problem_context(table_id)
     total_rows = int(t["excel_total_rows"] or 0)
     if is_resume:
         query_db(

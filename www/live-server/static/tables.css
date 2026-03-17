@@ -235,6 +235,30 @@
 .status-badge--warn { background: #fff7ed; color: #9a3412; }
 .status-badge--muted { background: #f1f5f9; color: #334155; }
 
+.captcha-alert {
+  margin: 10px 0;
+  border: 1px solid #fdba74;
+  background: #fff7ed;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.captcha-alert__title {
+  margin: 0 0 6px;
+  font-weight: 700;
+  color: #9a3412;
+}
+
+.captcha-alert__hint {
+  margin: 0;
+  color: #7c2d12;
+  font-size: 14px;
+}
+
+.captcha-alert__actions {
+  margin-top: 8px;
+}
+
 @media (max-width: 720px) {
   .tables-content {
     width: 100%;
