@@ -101,10 +101,13 @@ function setYandexState(status, errText = '', vncUrl = null) {
     return;
   }
 
-  if (currentYandexStatus === 'auth_required') {
+  if (currentYandexStatus === 'auth_required' || currentYandexStatus === 'captcha_required') {
     yandexStatusEl.classList.add('status-badge--warn');
-    yandexStatusEl.textContent = 'Яндекс: требуется авторизация';
-    yandexHintEl.textContent = errText || 'Откройте вход администратора (VNC) и выполните вход в Яндекс.';
+    const isCaptcha = currentYandexStatus === 'captcha_required';
+    yandexStatusEl.textContent = isCaptcha ? 'Яндекс: требуется проверка «Вы не робот»' : 'Яндекс: требуется авторизация';
+    yandexHintEl.textContent = errText || (isCaptcha
+      ? 'Откройте браузер администратора (VNC), пройдите проверку, затем нажмите «Продолжить скачивание».'
+      : 'Откройте вход администратора (VNC) и выполните вход в Яндекс.');
     if (vncUrl) lastVncUrl = vncUrl;
     openAdminLoginBtn.classList.remove('hidden');
     return;
@@ -349,8 +352,11 @@ function formatProgressText(t) {
   const progress = t.progress ?? 0;
   const processed = t.processed_count ?? 0;
   const total = t.total_count ?? 0;
-  if ((status === 'auth_required' || status === 'paused' || status === 'downloading_partial') && (t.download_cursor_row_id || 0) > 0) {
-    return `Скачивание остановлено на строке ${t.download_cursor_row_id}. Требуется повторное подключение Яндекса.`;
+  if ((status === 'auth_required' || status === 'captcha_required' || status === 'paused' || status === 'downloading_partial') && (t.download_cursor_row_id || 0) > 0) {
+    const reason = status === 'captcha_required'
+      ? 'Требуется пройти капчу/проверку в Яндексе.'
+      : 'Требуется повторное подключение Яндекса.';
+    return `Скачивание остановлено на строке ${t.download_cursor_row_id}. ${reason}`;
   }
   const error = t.last_error ? `, ошибка: ${t.last_error}` : '';
   return `Статус: ${status}, прогресс: ${progress}% (${processed}/${total})${error}`;
@@ -393,7 +399,7 @@ async function refreshTables() {
     if (cur) {
       progressEl.textContent = formatProgressText(cur);
       setYandexState(cur.yandex_status || 'disconnected', cur.yandex_last_error || '', lastVncUrl);
-      const resumeStatuses = new Set(['auth_required', 'paused', 'downloading_partial']);
+      const resumeStatuses = new Set(['auth_required', 'captcha_required', 'paused', 'downloading_partial']);
       const isResumeReady = resumeStatuses.has(cur.status || '');
       startDownloadBtn.textContent = isResumeReady ? 'Продолжить скачивание' : 'Старт скачивания';
       finalizeTableBtn.classList.toggle('hidden', Number(cur.is_finalized || 0) === 1);
