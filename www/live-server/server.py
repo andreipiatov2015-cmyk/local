@@ -373,7 +373,8 @@ def init_db():
             download_last_problem_final_url TEXT,
             download_last_problem_row_id INTEGER,
             download_last_problem_entry_id INTEGER,
-            download_last_problem_at TEXT
+            download_last_problem_at TEXT,
+            download_problem_json TEXT
         )
     """)
 
@@ -473,6 +474,7 @@ def init_db():
         "ALTER TABLE table_workspaces ADD COLUMN download_last_problem_row_id INTEGER",
         "ALTER TABLE table_workspaces ADD COLUMN download_last_problem_entry_id INTEGER",
         "ALTER TABLE table_workspaces ADD COLUMN download_last_problem_at TEXT",
+        "ALTER TABLE table_workspaces ADD COLUMN download_problem_json TEXT",
         "ALTER TABLE table_workspaces ADD COLUMN is_finalized INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE table_workspaces ADD COLUMN finalized_at TEXT",
         "ALTER TABLE table_workspaces ADD COLUMN program_updated_at TEXT",
@@ -1378,7 +1380,18 @@ def update_table_yandex_status(table_id, status, error_text=None):
     )
 
 
-def persist_download_problem_context(table_id, *, kind, source_url="", final_url="", row_id=None, entry_id=None):
+def persist_download_problem_context(table_id, *, kind, strategy="", source_url="", final_url="", captcha_url="", row_id=None, entry_id=None):
+    created_at = now_iso()
+    payload = {
+        "download_problem_kind": (kind or "")[:64] or None,
+        "download_problem_strategy": (strategy or "")[:64] or None,
+        "download_problem_source_url": (source_url or "")[:1000] or None,
+        "download_problem_final_url": (final_url or "")[:1000] or None,
+        "download_problem_captcha_url": (captcha_url or final_url or "")[:1000] or None,
+        "download_problem_row_id": int(row_id) if row_id else None,
+        "download_problem_entry_id": int(entry_id) if entry_id else None,
+        "download_problem_created_at": created_at,
+    }
     query_db(
         """
         UPDATE table_workspaces
@@ -1388,16 +1401,18 @@ def persist_download_problem_context(table_id, *, kind, source_url="", final_url
             download_last_problem_row_id=?,
             download_last_problem_entry_id=?,
             download_last_problem_at=?,
+            download_problem_json=?,
             updated_at=?
         WHERE id=?
         """,
         (
-            (kind or "")[:64] or None,
-            (source_url or "")[:1000] or None,
-            (final_url or "")[:1000] or None,
-            int(row_id) if row_id else None,
-            int(entry_id) if entry_id else None,
-            now_iso(),
+            payload["download_problem_kind"],
+            payload["download_problem_source_url"],
+            payload["download_problem_final_url"],
+            payload["download_problem_row_id"],
+            payload["download_problem_entry_id"],
+            payload["download_problem_created_at"],
+            json.dumps(payload, ensure_ascii=False),
             now_iso(),
             table_id,
         ),
@@ -1414,6 +1429,7 @@ def clear_download_problem_context(table_id):
             download_last_problem_row_id=NULL,
             download_last_problem_entry_id=NULL,
             download_last_problem_at=NULL,
+            download_problem_json=NULL,
             updated_at=?
         WHERE id=?
         """,
@@ -1729,6 +1745,7 @@ class DownloadAttemptResult:
     failure_reason: str = ""
     requires_auth: bool = False
     requires_captcha: bool = False
+    captcha_url: str = ""
     metadata: Dict[str, object] = field(default_factory=dict)
     html_text: str = ""
 
@@ -1742,6 +1759,8 @@ class DownloadResult:
     failure_reason: str = ""
     requires_auth: bool = False
     requires_captcha: bool = False
+    captcha_url: str = ""
+    problem_strategy: str = ""
     file_metadata: Dict[str, object] = field(default_factory=dict)
     attempts: List[DownloadAttemptResult] = field(default_factory=list)
 
@@ -1793,6 +1812,27 @@ def _detect_auth_or_captcha(url, text):
     return ""
 
 
+def _extract_captcha_url(final_url="", html_text=""):
+    final = str(final_url or "").strip()
+    html = str(html_text or "")
+    lowered = html.lower()
+    patterns = [
+        r"https?://[^\s\"'<>]+showcaptcha[^\s\"'<>]*",
+        r"https?://[^\s\"'<>]+captcha[^\s\"'<>]*",
+        r"https?://[^\s\"'<>]+smartcaptcha[^\s\"'<>]*",
+        r"https?://[^\s\"'<>]+antibot[^\s\"'<>]*",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html, flags=re.IGNORECASE)
+        if match:
+            return match.group(0)[:1000]
+    if "showcaptcha" in final.lower() or "captcha" in final.lower() or "antibot" in final.lower():
+        return final[:1000]
+    if "showcaptcha" in lowered or "captcha" in lowered or "antibot" in lowered:
+        return final[:1000]
+    return ""
+
+
 def _validate_downloaded_binary(path_obj, final_url=""):
     if not path_obj.exists():
         raise DownloadValidationError("missing_local_file")
@@ -1837,7 +1877,7 @@ def _strategy_direct_request(req_session, url, out_tmp, *, table_id=None, entry_
             text = body[:4096].decode("utf-8", errors="ignore")
             detect = _detect_auth_or_captcha(final_url, text)
             if detect == "captcha_required":
-                return DownloadAttemptResult(False, "direct", final_url=final_url, failure_reason="captcha_required", requires_captcha=True, html_text=text)
+                return DownloadAttemptResult(False, "direct", final_url=final_url, failure_reason="captcha_required", requires_captcha=True, captcha_url=_extract_captcha_url(final_url, text), html_text=text)
             if detect == "auth_required" or r.status_code in (401, 403):
                 return DownloadAttemptResult(False, "direct", final_url=final_url, failure_reason="auth_required", requires_auth=True, html_text=text)
             with open(out_tmp, "wb") as f:
@@ -1897,7 +1937,7 @@ def _strategy_browser_download(url, out_tmp, *, table_id=None, entry_id=None):
                 detect = _detect_auth_or_captcha(page.url, html)
                 if detect == "captcha_required":
                     app.logger.warning("[yandex_browser_captcha_required] table_id=%s entry_id=%s source_url=%s", table_id, entry_id, url)
-                    return DownloadAttemptResult(False, "browser", final_url=page.url, failure_reason=detect, requires_captcha=True, html_text=html)
+                    return DownloadAttemptResult(False, "browser", final_url=page.url, failure_reason=detect, requires_captcha=True, captcha_url=_extract_captcha_url(page.url, html), html_text=html)
                 if detect == "auth_required":
                     return DownloadAttemptResult(False, "browser", final_url=page.url, failure_reason=detect, requires_auth=True, html_text=html)
                 return DownloadAttemptResult(False, "browser", final_url=page.url, failure_reason="browser_no_download", html_text=html)
@@ -1916,7 +1956,7 @@ def _strategy_browser_download(url, out_tmp, *, table_id=None, entry_id=None):
             reason = str(exc)
             if reason == "captcha_required":
                 app.logger.warning("[yandex_browser_captcha_required] table_id=%s entry_id=%s source_url=%s", table_id, entry_id, url)
-                return DownloadAttemptResult(False, "browser", failure_reason=reason, requires_captcha=True)
+                return DownloadAttemptResult(False, "browser", final_url=(page.url if 'page' in locals() and page else ""), failure_reason=reason, requires_captcha=True, captcha_url=_extract_captcha_url((page.url if 'page' in locals() and page else ""), ""))
             if reason == "auth_required":
                 return DownloadAttemptResult(False, "browser", failure_reason=reason, requires_auth=True)
             return DownloadAttemptResult(False, "browser", failure_reason=reason)
@@ -1934,7 +1974,7 @@ def _strategy_html_parse_fallback(req_session, html_text, base_url, out_tmp, *, 
         return DownloadAttemptResult(False, "parse_html", failure_reason="empty_html")
     detect = _detect_auth_or_captcha(base_url, html)
     if detect == "captcha_required":
-        return DownloadAttemptResult(False, "parse_html", failure_reason=detect, requires_captcha=True)
+        return DownloadAttemptResult(False, "parse_html", final_url=base_url, failure_reason=detect, requires_captcha=True, captcha_url=_extract_captcha_url(base_url, html))
     if detect == "auth_required":
         return DownloadAttemptResult(False, "parse_html", failure_reason=detect, requires_auth=True)
 
@@ -1982,7 +2022,17 @@ def download_file_with_strategies(req_session, url, *, table_id=None, entry_id=N
             break
 
     final_reason = attempts[-1].failure_reason if attempts else "download_failed"
-    return DownloadResult(False, failure_reason=final_reason, requires_auth=any(a.requires_auth for a in attempts), requires_captcha=any(a.requires_captcha for a in attempts), attempts=attempts)
+    captcha_attempt = next((a for a in attempts if a.requires_captcha), None)
+    return DownloadResult(
+        False,
+        failure_reason=final_reason,
+        requires_auth=any(a.requires_auth for a in attempts),
+        requires_captcha=any(a.requires_captcha for a in attempts),
+        captcha_url=(captcha_attempt.captcha_url if captcha_attempt else ""),
+        final_url=(captcha_attempt.final_url if captcha_attempt else ""),
+        problem_strategy=(captcha_attempt.strategy if captcha_attempt else ""),
+        attempts=attempts,
+    )
 
 
 def download_with_retries(req_session, url, out_path, *, table_id=None, entry_id=None):
@@ -2124,7 +2174,7 @@ def process_table_download(table_id, user_id):
                 reason,
             )
 
-        def persist_captcha_required_stop(row_id, reason, source_url="", final_url="", entry_id=None):
+        def persist_captcha_required_stop(row_id, reason, source_url="", final_url="", captcha_url="", strategy="", entry_id=None):
             query_db(
                 "UPDATE table_workspaces SET status='captcha_required', download_cursor_row_id=?, last_error=?, updated_at=? WHERE id=?",
                 (row_id, reason, now_iso(), table_id),
@@ -2132,8 +2182,10 @@ def process_table_download(table_id, user_id):
             persist_download_problem_context(
                 table_id,
                 kind="captcha_required",
+                strategy=strategy,
                 source_url=source_url,
                 final_url=final_url,
+                captcha_url=captcha_url,
                 row_id=row_id,
                 entry_id=entry_id,
             )
@@ -2144,7 +2196,7 @@ def process_table_download(table_id, user_id):
                 entry_id,
                 row_id,
                 source_url,
-                final_url,
+                captcha_url or final_url,
                 reason,
             )
 
@@ -2349,7 +2401,15 @@ def process_table_download(table_id, user_id):
                     audio_local = os.path.join("phonograms", audio_name)
                     downloaded_files += 1
                 elif result.requires_captcha:
-                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.", source_url=audio_url, final_url=result.final_url, entry_id=entry_id)
+                    persist_captcha_required_stop(
+                        row_id,
+                        "Требуется пройти капчу Яндекса и продолжить скачивание.",
+                        source_url=audio_url,
+                        final_url=result.final_url,
+                        captcha_url=result.captcha_url,
+                        strategy=result.problem_strategy,
+                        entry_id=entry_id,
+                    )
                     return
                 elif result.requires_auth:
                     persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
@@ -2389,7 +2449,15 @@ def process_table_download(table_id, user_id):
                     receipt_local = os.path.join("receipts", receipt_name)
                     downloaded_files += 1
                 elif result.requires_captcha:
-                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.", source_url=receipt_url, final_url=result.final_url, entry_id=entry_id)
+                    persist_captcha_required_stop(
+                        row_id,
+                        "Требуется пройти капчу Яндекса и продолжить скачивание.",
+                        source_url=receipt_url,
+                        final_url=result.final_url,
+                        captcha_url=result.captcha_url,
+                        strategy=result.problem_strategy,
+                        entry_id=entry_id,
+                    )
                     return
                 elif result.requires_auth:
                     persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
@@ -2428,7 +2496,15 @@ def process_table_download(table_id, user_id):
                     presentation_local = os.path.join("presentations", presentation_name)
                     downloaded_files += 1
                 elif result.requires_captcha:
-                    persist_captcha_required_stop(row_id, "Требуется пройти капчу Яндекса и продолжить скачивание.", source_url=presentation_url, final_url=result.final_url, entry_id=entry_id)
+                    persist_captcha_required_stop(
+                        row_id,
+                        "Требуется пройти капчу Яндекса и продолжить скачивание.",
+                        source_url=presentation_url,
+                        final_url=result.final_url,
+                        captcha_url=result.captcha_url,
+                        strategy=result.problem_strategy,
+                        entry_id=entry_id,
+                    )
                     return
                 elif result.requires_auth:
                     persist_auth_required_stop(row_id, "Нужен вход администратора в Яндекс.")
@@ -2563,7 +2639,7 @@ def list_tables():
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
     rows = query_db(
-        "SELECT id, title, status, total_count, processed_count, download_cursor_row_id, progress, last_error, created_at, mapping_json, yandex_status, yandex_last_error, yandex_last_checked_at, download_last_problem_kind, download_last_problem_url, download_last_problem_final_url, download_last_problem_row_id, download_last_problem_entry_id, download_last_problem_at, is_finalized, finalized_at, program_updated_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC",
+        "SELECT id, title, status, total_count, processed_count, download_cursor_row_id, progress, last_error, created_at, mapping_json, yandex_status, yandex_last_error, yandex_last_checked_at, download_last_problem_kind, download_last_problem_url, download_last_problem_final_url, download_last_problem_row_id, download_last_problem_entry_id, download_last_problem_at, download_problem_json, is_finalized, finalized_at, program_updated_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC",
         (user["id"],),
     )
     result = []
@@ -2830,7 +2906,7 @@ def table_captcha_context(table_id):
         SELECT id, status, download_cursor_row_id, download_last_problem_kind,
                download_last_problem_url, download_last_problem_final_url,
                download_last_problem_row_id, download_last_problem_entry_id,
-               download_last_problem_at
+               download_last_problem_at, download_problem_json
         FROM table_workspaces
         WHERE id=? AND user_id=?
         """,
@@ -2839,17 +2915,31 @@ def table_captcha_context(table_id):
     )
     if not row:
         return jsonify({"detail": "Таблица не найдена"}), 404
-    problem_kind = row["download_last_problem_kind"] or ""
+    raw_problem = row["download_problem_json"] or ""
+    problem = {}
+    if raw_problem:
+        try:
+            problem = json.loads(raw_problem)
+        except Exception:
+            problem = {}
+    problem_kind = problem.get("download_problem_kind") or row["download_last_problem_kind"] or ""
+    source_url = problem.get("download_problem_source_url") or row["download_last_problem_url"]
+    final_url = problem.get("download_problem_final_url") or row["download_last_problem_final_url"]
+    captcha_url = problem.get("download_problem_captcha_url") or final_url or source_url
     return jsonify({
         "table_id": table_id,
         "status": row["status"],
         "has_captcha": problem_kind == "captcha_required" or str(row["status"] or "") == "captcha_required",
         "problem_kind": problem_kind or None,
-        "source_url": row["download_last_problem_url"],
-        "captcha_url": row["download_last_problem_final_url"] or row["download_last_problem_url"],
-        "problem_row_id": row["download_last_problem_row_id"] or row["download_cursor_row_id"],
-        "entry_id": row["download_last_problem_entry_id"],
-        "problem_at": row["download_last_problem_at"],
+        "problem_strategy": problem.get("download_problem_strategy"),
+        "source_url": source_url,
+        "final_url": final_url,
+        "captcha_url": captcha_url,
+        "open_url": captcha_url or final_url or source_url,
+        "problem_row_id": problem.get("download_problem_row_id") or row["download_last_problem_row_id"] or row["download_cursor_row_id"],
+        "entry_id": problem.get("download_problem_entry_id") or row["download_last_problem_entry_id"],
+        "problem_at": problem.get("download_problem_created_at") or row["download_last_problem_at"],
+        "download_problem_json": problem or None,
         "vnc_url": YANDEX_VNC_URL,
     })
 
@@ -2860,23 +2950,43 @@ def table_captcha_open(table_id):
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
     row = query_db(
-        "SELECT status, download_last_problem_kind, download_last_problem_url, download_last_problem_final_url, download_last_problem_row_id, download_last_problem_entry_id FROM table_workspaces WHERE id=? AND user_id=?",
+        "SELECT status, download_last_problem_kind, download_last_problem_url, download_last_problem_final_url, download_last_problem_row_id, download_last_problem_entry_id, download_problem_json FROM table_workspaces WHERE id=? AND user_id=?",
         (table_id, user["id"]),
         one=True,
     )
     if not row:
         return jsonify({"detail": "Таблица не найдена"}), 404
-    captcha_url = row["download_last_problem_final_url"] or row["download_last_problem_url"] or ""
+    problem = {}
+    if row["download_problem_json"]:
+        try:
+            problem = json.loads(row["download_problem_json"])
+        except Exception:
+            problem = {}
+    source_url = problem.get("download_problem_source_url") or row["download_last_problem_url"] or ""
+    final_url = problem.get("download_problem_final_url") or row["download_last_problem_final_url"] or ""
+    captcha_url = problem.get("download_problem_captcha_url") or ""
+    open_url = captcha_url or final_url or source_url or ""
     app.logger.info(
-        "[captcha_open_requested] table_id=%s entry_id=%s row_id=%s status=%s source_url=%s captcha_url=%s",
+        "[captcha_open_requested] table_id=%s entry_id=%s row_id=%s status=%s strategy=%s source_url=%s final_url=%s captcha_url=%s open_url=%s",
         table_id,
-        row["download_last_problem_entry_id"],
-        row["download_last_problem_row_id"],
+        problem.get("download_problem_entry_id") or row["download_last_problem_entry_id"],
+        problem.get("download_problem_row_id") or row["download_last_problem_row_id"],
         row["status"],
-        row["download_last_problem_url"],
+        problem.get("download_problem_strategy"),
+        source_url,
+        final_url,
         captcha_url,
+        open_url,
     )
-    return jsonify({"status": "ok", "vnc_url": YANDEX_VNC_URL, "captcha_url": captcha_url or None})
+    return jsonify({
+        "status": "ok",
+        "vnc_url": YANDEX_VNC_URL,
+        "source_url": source_url or None,
+        "final_url": final_url or None,
+        "captcha_url": captcha_url or None,
+        "open_url": open_url or None,
+        "download_problem_json": problem or None,
+    })
 
 
 @app.route("/api/tables/<int:table_id>/yandex/refresh", methods=["POST"])
