@@ -118,6 +118,7 @@ MAX_FILENAME_LEN = 150
 EXCEL_PREVIEW_LIMIT = 200
 YANDEX_VNC_URL = os.environ.get("YANDEX_VNC_URL", "/tables/yandex/vnc/vnc.html?autoconnect=1&resize=scale&show_dot=0")
 YANDEX_PROFILE_DIR = os.environ.get("YANDEX_PROFILE_DIR", "/var/mount_point/nfv/contest_storage/yandex_profile")
+YANDEX_DISPLAY = os.environ.get("YANDEX_DISPLAY", ":99")
 YANDEX_FORMS_TEST_URL = (os.environ.get("YANDEX_FORMS_TEST_URL") or "").strip()
 YANDEX_REFRESH_URL = (os.environ.get("YANDEX_REFRESH_URL") or "https://disk.yandex.ru/client/disk").strip()
 YANDEX_CHROMIUM_RESTART_CMD = (os.environ.get("YANDEX_CHROMIUM_RESTART_CMD") or "").strip()
@@ -2768,10 +2769,13 @@ def table_belongs_to_user(table_id, user_id):
     return query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user_id), one=True)
 
 
-def run_shell_command(cmd, timeout=30):
+def run_shell_command(cmd, timeout=30, extra_env=None):
     if not cmd:
         return False, ""
     try:
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
         proc = subprocess.run(
             cmd,
             shell=True,
@@ -2779,11 +2783,63 @@ def run_shell_command(cmd, timeout=30):
             stderr=subprocess.PIPE,
             timeout=timeout,
             text=True,
+            env=env,
         )
         output = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
         return proc.returncode == 0, output.strip()[:500]
     except Exception as exc:
         return False, str(exc)[:300]
+
+
+def open_url_in_server_chromium(url):
+    if not url:
+        return False, "empty_url"
+    display_value = YANDEX_DISPLAY or ":99"
+    open_env = {"DISPLAY": display_value}
+
+    commands = []
+    if YANDEX_CHROMIUM_OPEN_CMD:
+        cmd = (
+            YANDEX_CHROMIUM_OPEN_CMD
+            .replace("{url}", url)
+            .replace("{display}", display_value)
+            .replace("{profile}", YANDEX_PROFILE_DIR)
+        )
+        commands.append(("custom", cmd))
+
+    for binary in ("chromium", "chromium-browser", "google-chrome", "chrome"):
+        commands.append((
+            binary,
+            [binary, f"--user-data-dir={YANDEX_PROFILE_DIR}", "--profile-directory=Default", "--new-tab", url],
+        ))
+
+    last_error = ""
+    for cmd_kind, cmd in commands:
+        try:
+            if isinstance(cmd, str):
+                ok, out = run_shell_command(cmd, timeout=20, extra_env=open_env)
+                if ok:
+                    return True, f"{cmd_kind}:{out}" if out else cmd_kind
+                last_error = out or f"{cmd_kind}_failed"
+                continue
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=20,
+                text=True,
+                env={**os.environ, **open_env},
+            )
+            if proc.returncode == 0:
+                out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+                return True, f"{cmd_kind}:{out[:300]}" if out else cmd_kind
+            std_out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+            last_error = std_out[:300] or f"{cmd_kind}_exit_{proc.returncode}"
+        except FileNotFoundError:
+            last_error = f"{cmd_kind}_not_found"
+        except Exception as exc:
+            last_error = f"{cmd_kind}:{str(exc)[:300]}"
+    return False, last_error or "open_failed"
 
 
 def trigger_yandex_profile_network_refresh():
@@ -2966,8 +3022,9 @@ def table_captcha_open(table_id):
     final_url = problem.get("download_problem_final_url") or row["download_last_problem_final_url"] or ""
     captcha_url = problem.get("download_problem_captcha_url") or ""
     open_url = captcha_url or final_url or source_url or ""
+    display_value = YANDEX_DISPLAY or ":99"
     app.logger.info(
-        "[captcha_open_requested] table_id=%s entry_id=%s row_id=%s status=%s strategy=%s source_url=%s final_url=%s captcha_url=%s open_url=%s",
+        "[captcha_open_requested] table_id=%s entry_id=%s row_id=%s status=%s strategy=%s source_url=%s final_url=%s captcha_url=%s chosen_url=%s display=%s",
         table_id,
         problem.get("download_problem_entry_id") or row["download_last_problem_entry_id"],
         problem.get("download_problem_row_id") or row["download_last_problem_row_id"],
@@ -2977,9 +3034,41 @@ def table_captcha_open(table_id):
         final_url,
         captcha_url,
         open_url,
+        display_value,
+    )
+    if not open_url:
+        app.logger.warning(
+            "[captcha_open_server_failed] table_id=%s chosen_url=%s display=%s command_succeeded=%s reason=no_url",
+            table_id,
+            "",
+            display_value,
+            False,
+        )
+        return jsonify({"detail": "Не найден URL для открытия CAPTCHA"}), 400
+
+    open_ok, open_output = open_url_in_server_chromium(open_url)
+    if not open_ok:
+        app.logger.warning(
+            "[captcha_open_server_failed] table_id=%s chosen_url=%s display=%s command_succeeded=%s reason=%s",
+            table_id,
+            open_url,
+            display_value,
+            False,
+            open_output,
+        )
+        return jsonify({"detail": "Не удалось открыть CAPTCHA в серверном Chromium. Откройте noVNC и проверьте браузер."}), 500
+
+    app.logger.info(
+        "[captcha_open_server_ok] table_id=%s chosen_url=%s display=%s command_succeeded=%s output=%s",
+        table_id,
+        open_url,
+        display_value,
+        True,
+        open_output,
     )
     return jsonify({
         "status": "ok",
+        "detail": "Капча открыта в браузере на сервере. Откройте окно noVNC и пройдите проверку.",
         "vnc_url": YANDEX_VNC_URL,
         "source_url": source_url or None,
         "final_url": final_url or None,

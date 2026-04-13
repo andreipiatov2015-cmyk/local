@@ -110,7 +110,7 @@ function setYandexState(status, errText = '', vncUrl = null) {
     const isCaptcha = currentYandexStatus === 'captcha_required';
     yandexStatusEl.textContent = isCaptcha ? 'Яндекс: требуется проверка «Вы не робот»' : 'Яндекс: требуется авторизация';
     yandexHintEl.textContent = errText || (isCaptcha
-      ? 'Откройте браузер администратора (VNC), пройдите проверку, затем нажмите «Продолжить скачивание».'
+      ? 'Капча открывается в браузере на сервере. Откройте noVNC/VNC, пройдите проверку и затем нажмите «Продолжить скачивание».'
       : 'Откройте вход администратора (VNC) и выполните вход в Яндекс.');
     if (vncUrl) lastVncUrl = vncUrl;
     openAdminLoginBtn.classList.remove('hidden');
@@ -123,21 +123,13 @@ function setYandexState(status, errText = '', vncUrl = null) {
   openAdminLoginBtn.classList.add('hidden');
 }
 
-async function fetchCaptchaContext(tableId) {
-  const resp = await fetch(`/api/tables/${tableId}/captcha/context`);
-  if (requireAuth(resp)) return null;
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) return null;
-  return data;
-}
-
 function renderCaptchaAlert(table) {
   if (!captchaAlertEl) return;
   const isCaptcha = (table?.status || '') === 'captcha_required';
   captchaAlertEl.classList.toggle('hidden', !isCaptcha);
   if (!isCaptcha) return;
   const rowId = table?.download_last_problem_row_id || table?.download_cursor_row_id || '?';
-  captchaAlertHintEl.textContent = `Скачивание остановлено на строке ${rowId}. Нажмите «Открыть капчу», пройдите CAPTCHA в Яндексе, затем нажмите «Продолжить скачивание».`;
+  captchaAlertHintEl.textContent = `Скачивание остановлено на строке ${rowId}. Нажмите «Открыть капчу» (она откроется в серверном Chromium), пройдите проверку в noVNC/VNC и затем нажмите «Продолжить скачивание».`;
 }
 
 function showAutofillInfo(text) {
@@ -863,19 +855,12 @@ function initTablesSection() {
 
   openCaptchaBtn.onclick = async () => {
     if (!currentTableId) return alert('Сначала выберите таблицу');
-    const ctx = await fetchCaptchaContext(currentTableId);
     const resp = await fetch(`/api/tables/${currentTableId}/captcha/open`, { method: 'POST' });
     if (requireAuth(resp)) return;
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) return alert(data.detail || 'Не удалось открыть CAPTCHA flow');
-    const vncUrl = data.vnc_url || lastVncUrl;
-    if (!vncUrl) return alert('VNC URL недоступен');
-    lastVncUrl = vncUrl;
-    window.open(vncUrl, 'yandex_vnc', 'width=520,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no');
-    const openUrl = data.open_url || data.captcha_url || data.final_url || data.source_url || ctx?.open_url || ctx?.captcha_url || ctx?.final_url || ctx?.source_url;
-    if (openUrl) {
-      window.open(openUrl, '_blank', 'noopener,noreferrer');
-    }
+    if (!resp.ok) return alert(data.detail || 'Не удалось открыть CAPTCHA на сервере');
+    lastVncUrl = data.vnc_url || lastVncUrl;
+    alert(data.detail || 'Капча открыта в браузере на сервере. Откройте окно noVNC и пройдите проверку.');
   };
 
   resumeAfterCaptchaBtn.onclick = async () => {
