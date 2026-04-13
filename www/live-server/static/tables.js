@@ -137,7 +137,7 @@ function renderCaptchaAlert(table) {
   captchaAlertEl.classList.toggle('hidden', !isCaptcha);
   if (!isCaptcha) return;
   const rowId = table?.download_last_problem_row_id || table?.download_cursor_row_id || '?';
-  captchaAlertHintEl.textContent = `Скачивание остановлено на строке ${rowId}. Нажмите «Открыть проверку», пройдите CAPTCHA в Яндексе, затем нажмите «Продолжить скачивание».`;
+  captchaAlertHintEl.textContent = `Скачивание остановлено на строке ${rowId}. Нажмите «Открыть капчу», пройдите CAPTCHA в Яндексе, затем нажмите «Продолжить скачивание».`;
 }
 
 function showAutofillInfo(text) {
@@ -872,9 +872,9 @@ function initTablesSection() {
     if (!vncUrl) return alert('VNC URL недоступен');
     lastVncUrl = vncUrl;
     window.open(vncUrl, 'yandex_vnc', 'width=520,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no');
-    const captchaUrl = data.captcha_url || ctx?.captcha_url;
-    if (captchaUrl) {
-      window.open(captchaUrl, '_blank', 'noopener,noreferrer');
+    const openUrl = data.open_url || data.captcha_url || data.final_url || data.source_url || ctx?.open_url || ctx?.captcha_url || ctx?.final_url || ctx?.source_url;
+    if (openUrl) {
+      window.open(openUrl, '_blank', 'noopener,noreferrer');
     }
   };
 
