@@ -9,6 +9,9 @@ let isProgramMode = false;
 let currentVisibleTags = [];
 let currentRenderedTagMeta = [];
 let draggedProgramItemId = null;
+let currentPreviewRows = [];
+let previewResizeObserver = null;
+let previewRecalcRaf = null;
 
 const FORCED_HIDDEN_TAG_PATTERNS = [/номер\s*телефон/i, /телефон/i, /e-?mail/i, /емаил/i, /email/i, /райдер/i, /rider/i];
 
@@ -166,13 +169,99 @@ function getColumnWidthClass(header) {
   return 'col-default';
 }
 
+function normalizeText(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isLongColumn({ header, mappedField, mappedLabel }) {
+  const haystack = `${normalizeText(header)} ${normalizeText(mappedField)} ${normalizeText(mappedLabel)}`;
+  return /(фио|ф\.и\.о|участник|название\s*номер|номер\s*назван|коллектив|учрежден|педагог|муниципал)/i.test(haystack);
+}
+
+function isShortColumn({ header, mappedField, mappedLabel }) {
+  const haystack = `${normalizeText(header)} ${normalizeText(mappedField)} ${normalizeText(mappedLabel)}`;
+  return /(возраст|колич|номер|статус|есть|нет|yes|no|count|qty|age)/i.test(haystack);
+}
+
+function getMappedFieldByIndex(colIndex) {
+  const pair = Object.entries(currentMapping || {}).find(([field]) => mappingIndexes(field).includes(colIndex));
+  return pair ? pair[0] : '';
+}
+
+function estimateContentChars(header, rows, colIndex) {
+  const samples = [String(header || '')];
+  const sampleRows = (rows || []).slice(0, 60);
+  sampleRows.forEach((row) => {
+    const value = row[colIndex];
+    if (value !== null && value !== undefined && String(value).trim()) {
+      samples.push(String(value).trim());
+    }
+  });
+  if (!samples.length) return 12;
+  const lengths = samples.map((text) => text.replace(/\s+/g, ' ').length).sort((a, b) => a - b);
+  const p90 = lengths[Math.min(lengths.length - 1, Math.floor(lengths.length * 0.9))] || 12;
+  return p90;
+}
+
+function getColumnWidthConfig(header, rows, colIndex) {
+  const mappedField = getMappedFieldByIndex(colIndex);
+  const mappedLabel = mappedField ? mappingFields[mappedField] || '' : '';
+  const longColumn = isLongColumn({ header, mappedField, mappedLabel });
+  const shortColumn = isShortColumn({ header, mappedField, mappedLabel });
+  const chars = estimateContentChars(header, rows, colIndex);
+
+  let minWidth = 120;
+  let maxWidth = 280;
+  let charFactor = 8.5;
+  let base = 26;
+
+  if (longColumn) {
+    minWidth = 220;
+    maxWidth = 460;
+    charFactor = 9.2;
+    base = 64;
+  } else if (shortColumn) {
+    minWidth = 72;
+    maxWidth = 160;
+    charFactor = 7.2;
+    base = 18;
+  }
+
+  const rawWidth = Math.round(base + chars * charFactor);
+  const width = Math.max(minWidth, Math.min(maxWidth, rawWidth));
+  return { width, minWidth, maxWidth };
+}
+
 function renderColgroup() {
   excelColgroup.innerHTML = '';
-  currentHeaders.forEach((header) => {
+  currentHeaders.forEach((header, colIndex) => {
     const col = document.createElement('col');
     col.className = getColumnWidthClass(header);
+    const { width, minWidth, maxWidth } = getColumnWidthConfig(header, currentPreviewRows, colIndex);
+    col.style.setProperty('--col-width', `${width}px`);
+    col.style.setProperty('--col-min-width', `${minWidth}px`);
+    col.style.setProperty('--col-max-width', `${maxWidth}px`);
     excelColgroup.appendChild(col);
   });
+}
+
+function schedulePreviewLayoutRecalc() {
+  if (previewRecalcRaf) cancelAnimationFrame(previewRecalcRaf);
+  previewRecalcRaf = requestAnimationFrame(() => {
+    previewRecalcRaf = null;
+    if (isProgramMode || !tableView || tableView.classList.contains('hidden') || !currentHeaders.length) return;
+    renderColgroup();
+  });
+}
+
+function setupPreviewResizeRecalc() {
+  if (previewResizeObserver) return;
+  const scrollWrap = document.querySelector('#prepareMode .table-scroll');
+  if (!scrollWrap || typeof ResizeObserver === 'undefined') return;
+  previewResizeObserver = new ResizeObserver(() => {
+    schedulePreviewLayoutRecalc();
+  });
+  previewResizeObserver.observe(scrollWrap);
 }
 
 function renderMappingPanel() {
@@ -212,6 +301,7 @@ function clearPreviewError() {
 }
 
 function renderExcelTable(rows) {
+  currentPreviewRows = Array.isArray(rows) ? rows : [];
   const rev = mappingReverse();
   excelHead.innerHTML = '';
   excelBody.innerHTML = '';
@@ -249,7 +339,7 @@ function renderExcelTable(rows) {
   });
   excelHead.appendChild(trh);
 
-  rows.forEach((row) => {
+  currentPreviewRows.forEach((row) => {
     const tr = document.createElement('tr');
     currentHeaders.forEach((_, idx) => {
       const td = document.createElement('td');
@@ -259,13 +349,14 @@ function renderExcelTable(rows) {
     excelBody.appendChild(tr);
   });
 
-  if (!rows.length) {
+  if (!currentPreviewRows.length) {
     showPreviewError('Excel не распознан / пустой файл / не найден лист с данными.');
   } else {
     clearPreviewError();
   }
 
   renderMappingPanel();
+  schedulePreviewLayoutRecalc();
 }
 
 async function loadExcelPreview() {
@@ -898,6 +989,9 @@ function initTablesSection() {
 
   renderMappingPanel();
   setWorkspaceVisible(true);
+  setupPreviewResizeRecalc();
+  window.addEventListener('resize', schedulePreviewLayoutRecalc);
+  document.addEventListener('layout:sidebar-toggled', schedulePreviewLayoutRecalc);
   refreshTables();
   setYandexState('disconnected');
   if (captchaAlertEl) captchaAlertEl.classList.add('hidden');

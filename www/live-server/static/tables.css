@@ -151,12 +151,16 @@
   border: 1px solid #dbe4f1;
   border-radius: 10px;
   background: #fff;
+  display: flex;
+  justify-content: center;
 }
 
 #excelTable {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
+  margin: 0 auto;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 #excelTable th,
@@ -167,6 +171,7 @@
   overflow-wrap: anywhere;
   word-break: break-word;
   vertical-align: top;
+  line-height: 1.35;
 }
 
 #excelTable th {
@@ -178,11 +183,11 @@
 
 #excelTable th.mapped { background: #dbeafe; }
 
-#excelTable col.col-id { width: 72px; }
-#excelTable col.col-date { width: 128px; }
-#excelTable col.col-territory { width: 180px; }
-#excelTable col.col-long { width: 320px; }
-#excelTable col.col-default { width: 160px; }
+#excelTable col {
+  width: var(--col-width, 160px);
+  min-width: var(--col-min-width, 120px);
+  max-width: var(--col-max-width, 280px);
+}
 .header-title { display: block; }
 .header-badge {
   display: inline-block;
