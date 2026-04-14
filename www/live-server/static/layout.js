@@ -4,5 +4,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   collapseButton?.addEventListener('click', () => {
     sidebar?.classList.toggle('collapsed');
+    document.dispatchEvent(new CustomEvent('layout:sidebar-toggled', {
+      detail: { collapsed: !!sidebar?.classList.contains('collapsed') }
+    }));
   });
 });
