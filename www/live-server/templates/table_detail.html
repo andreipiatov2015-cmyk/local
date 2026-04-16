@@ -70,8 +70,43 @@
 
       <section class="card section-card documentation-section-card">
         <h2 class="section-title">Документация</h2>
-        <div class="documentation-placeholder hint">
-          Блок документации будет заполнен на следующем этапе.
+        <div class="documentation-program-card">
+          <h3 class="documentation-subtitle">Программа конкурса</h3>
+          <div class="doc-form-grid">
+            <label class="doc-form-field">
+              <span>Дата мероприятия</span>
+              <input id="docEventDate" type="date" />
+            </label>
+            <label class="doc-form-field">
+              <span>Время начала репетиций</span>
+              <input id="docRehearsalStart" type="time" />
+            </label>
+            <label class="doc-form-field">
+              <span>Время начала конкурсной программы</span>
+              <input id="docCompetitionStart" type="time" />
+            </label>
+            <label class="doc-form-field">
+              <span>Подведение итогов (мин.)</span>
+              <input id="docResultsMinutes" type="number" min="0" step="1" />
+            </label>
+            <label class="doc-form-field">
+              <span>Награждение (мин.)</span>
+              <input id="docAwardMinutes" type="number" min="0" step="1" />
+            </label>
+            <label class="doc-form-field">
+              <span>Технический интервал (мин.)</span>
+              <input id="docTechIntervalMinutes" type="number" min="0" step="1" />
+            </label>
+            <label class="doc-form-field">
+              <span>Длительность номера по умолчанию (мин.)</span>
+              <input id="docDefaultDurationMinutes" type="number" min="1" step="1" />
+            </label>
+          </div>
+          <div class="row wrap">
+            <button id="docBuildProgram" class="btn btn-primary" type="button">Сформировать программу</button>
+            <span id="docProgramStatus" class="status status-muted">Ожидание.</span>
+          </div>
+          <div id="docProgramPreview" class="doc-program-preview"></div>
         </div>
       </section>
     </section>

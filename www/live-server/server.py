@@ -563,6 +563,8 @@ def init_db():
         "ALTER TABLE table_entries ADD COLUMN video_url TEXT",
         "ALTER TABLE table_entries ADD COLUMN generic_file TEXT",
         "ALTER TABLE table_entries ADD COLUMN application_file TEXT",
+        "ALTER TABLE import_tables ADD COLUMN documentation_program_settings_json TEXT",
+        "ALTER TABLE import_tables ADD COLUMN documentation_program_preview_json TEXT",
     ]:
         try:
             cur.execute(stmt)
@@ -3458,6 +3460,49 @@ def table_excel_preview(table_id):
 @app.route("/api/tables/<int:table_id>/excel-data", methods=["GET"])
 def table_excel_data(table_id):
     return table_excel_preview(table_id)
+
+
+@app.route("/api/tables/<int:table_id>/documentation/program", methods=["GET", "POST"])
+def table_documentation_program(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db(
+        "SELECT id, documentation_program_settings_json, documentation_program_preview_json FROM import_tables WHERE id=? AND user_id=?",
+        (table_id, user["id"]),
+        one=True,
+    )
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    if request.method == "GET":
+        settings = {}
+        program = {}
+        try:
+            settings = json.loads(table["documentation_program_settings_json"] or "{}")
+        except Exception:
+            settings = {}
+        try:
+            program = json.loads(table["documentation_program_preview_json"] or "{}")
+        except Exception:
+            program = {}
+        return jsonify({"settings": settings, "program": program})
+
+    payload = request.get_json(silent=True) or {}
+    settings = payload.get("settings") if isinstance(payload, dict) else {}
+    program = payload.get("program") if isinstance(payload, dict) else {}
+    if not isinstance(settings, dict) or not isinstance(program, dict):
+        return jsonify({"detail": "Ожидаются объекты settings и program"}), 400
+    query_db(
+        "UPDATE import_tables SET documentation_program_settings_json=?, documentation_program_preview_json=?, updated_at=? WHERE id=?",
+        (
+            json.dumps(settings, ensure_ascii=False),
+            json.dumps(program, ensure_ascii=False),
+            now_iso(),
+            table_id,
+        ),
+    )
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/tables/<int:table_id>/mapping", methods=["GET"])
