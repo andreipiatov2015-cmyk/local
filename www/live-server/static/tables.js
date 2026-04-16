@@ -48,6 +48,7 @@ async function initListPage() {
   if (!listEl) return;
   const createBtn = document.getElementById('createTable');
   const statusEl = document.getElementById('listStatus');
+  let isCreatingDraft = false;
 
   async function load() {
     const tables = await apiGet('/api/tables');
@@ -85,16 +86,73 @@ async function initListPage() {
     });
   }
 
-  createBtn?.addEventListener('click', async () => {
-    const title = prompt('Введите название таблицы', 'Новая таблица');
-    if (!title) return;
+  function removeDraftCard() {
+    const draft = listEl.querySelector('.table-item.is-creating');
+    if (draft) draft.remove();
+    if (!listEl.children.length) {
+      listEl.innerHTML = '<li class="table-item"><div class="hint">Пока нет таблиц.</div></li>';
+    }
+    isCreatingDraft = false;
+  }
+
+  async function saveDraftTitle(inputEl, saveBtn) {
+    const title = (inputEl?.value || '').trim();
+    if (!title) {
+      setStatus(statusEl, 'Введите название таблицы.', 'warning');
+      inputEl?.focus();
+      return;
+    }
     try {
+      saveBtn.disabled = true;
       await apiPostForm('/api/tables', { title });
       setStatus(statusEl, 'Таблица создана.', 'success');
+      removeDraftCard();
       await load();
     } catch (e) {
       setStatus(statusEl, `Ошибка создания: ${e.message}`, 'error');
+    } finally {
+      saveBtn.disabled = false;
     }
+  }
+
+  function renderCreateDraftCard() {
+    if (isCreatingDraft) return;
+    isCreatingDraft = true;
+    const emptyStub = listEl.querySelector('.table-item .hint');
+    if (emptyStub) listEl.innerHTML = '';
+
+    const li = document.createElement('li');
+    li.className = 'table-item is-creating';
+    li.innerHTML = `
+      <div class="table-main">
+        <label class="hint" for="newTableTitleInput">Название новой таблицы</label>
+        <div class="new-table-controls">
+          <input id="newTableTitleInput" class="new-table-input" type="text" placeholder="Введите название таблицы" maxlength="120" />
+          <button id="saveNewTable" class="btn btn-primary" type="button">Сохранить</button>
+        </div>
+        <div class="hint">Нажмите Enter или кнопку «Сохранить».</div>
+      </div>
+      <div class="row wrap">
+        <button id="cancelNewTable" class="btn btn-secondary" type="button">Отмена</button>
+      </div>
+    `;
+    listEl.prepend(li);
+    const inputEl = li.querySelector('#newTableTitleInput');
+    const saveBtn = li.querySelector('#saveNewTable');
+    const cancelBtn = li.querySelector('#cancelNewTable');
+
+    inputEl?.focus();
+    inputEl?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      saveDraftTitle(inputEl, saveBtn);
+    });
+    saveBtn?.addEventListener('click', () => saveDraftTitle(inputEl, saveBtn));
+    cancelBtn?.addEventListener('click', removeDraftCard);
+  }
+
+  createBtn?.addEventListener('click', () => {
+    renderCreateDraftCard();
   });
 
   try {
@@ -122,7 +180,7 @@ async function initDetailPage() {
   const previewBodyEl = document.getElementById('previewBody');
 
   let headers = [];
-  let mapping = {};
+  let mappingByTag = {};
   let collapsedMappingCards = {};
   let mappingFieldTags = [];
 
@@ -141,48 +199,52 @@ async function initDetailPage() {
     });
   }
 
-  function isAutoDetectedMapping(tag, selectedHeader) {
-    if (!selectedHeader || !headers.length) return false;
-    const tagNorm = normalizeHeaderLikeBackend(tag);
-    const normalizedHeaders = headers.map((h) => normalizeHeaderLikeBackend(h));
-    const firstMatchedIndex = normalizedHeaders.findIndex((headerNorm) => {
-      return tagNorm && (tagNorm.includes(headerNorm) || headerNorm.includes(tagNorm));
-    });
-    return firstMatchedIndex >= 0 && headers[firstMatchedIndex] === selectedHeader;
+  function isAutoDetectedMapping(header, selectedTag) {
+    if (!header || !selectedTag) return false;
+    const tagNorm = normalizeHeaderLikeBackend(selectedTag);
+    const headerNorm = normalizeHeaderLikeBackend(header);
+    return Boolean(tagNorm && headerNorm && (tagNorm.includes(headerNorm) || headerNorm.includes(tagNorm)));
   }
 
   function renderMapping(fieldTags) {
     mappingListEl.innerHTML = '';
     mappingFieldTags = fieldTags;
-    fieldTags.forEach((tag) => {
+    headers.forEach((header) => {
+      const tag = Object.keys(mappingByTag).find((fieldTag) => mappingByTag[fieldTag] === header) || '';
       const card = document.createElement('article');
-      const current = mapping[tag] || '';
-      const isMapped = Boolean(current);
-      const isCollapsed = Boolean(collapsedMappingCards[tag] && isMapped);
-      const isAutoDetected = isAutoDetectedMapping(tag, current);
+      const isMapped = Boolean(tag);
+      const isCollapsed = Boolean(collapsedMappingCards[header] && isMapped);
+      const isAutoDetected = isAutoDetectedMapping(header, tag);
       card.className = `mapping-card${isMapped ? ' is-mapped' : ''}${isAutoDetected ? ' is-auto' : ''}${isCollapsed ? ' is-collapsed' : ''}`;
 
       const body = document.createElement('div');
       body.className = 'mapping-card-body';
 
-      const tagEl = document.createElement('span');
-      tagEl.className = 'mapping-tag';
-      tagEl.textContent = tag;
+      const headerEl = document.createElement('span');
+      headerEl.className = 'mapping-header';
+      headerEl.textContent = header || '(Пустой заголовок)';
 
       const selectedValueEl = document.createElement('span');
       selectedValueEl.className = 'mapping-selected-value';
-      selectedValueEl.textContent = current || 'не выбрано';
+      selectedValueEl.textContent = tag || 'не выбрано';
 
       const select = document.createElement('select');
       select.className = 'mapping-select';
-      select.innerHTML = '<option value="">не выбрано</option>' + headers.map((h, i) => {
-        const selected = current === h ? ' selected' : '';
-        return `<option value="${esc(h)}"${selected}>${esc(h)} (колонка ${i + 1})</option>`;
+      select.innerHTML = '<option value="">не выбрано</option>' + fieldTags.map((fieldTag) => {
+        const selected = tag === fieldTag ? ' selected' : '';
+        return `<option value="${esc(fieldTag)}"${selected}>${esc(fieldTag)}</option>`;
       }).join('');
       select.addEventListener('change', () => {
-        if (!select.value) delete mapping[tag];
-        else mapping[tag] = select.value;
-        if (!select.value) collapsedMappingCards[tag] = false;
+        const nextTag = select.value;
+        if (tag) delete mappingByTag[tag];
+        if (nextTag) {
+          Object.keys(mappingByTag).forEach((key) => {
+            if (key !== nextTag && mappingByTag[key] === header) delete mappingByTag[key];
+          });
+          mappingByTag[nextTag] = header;
+        } else {
+          collapsedMappingCards[header] = false;
+        }
         setStatus(mappingStatusEl, 'Есть несохранённые изменения.', 'warning');
         renderMapping(fieldTags);
       });
@@ -193,16 +255,16 @@ async function initDetailPage() {
       toggleBtn.title = isCollapsed ? 'Развернуть карточку' : 'Свернуть карточку';
       toggleBtn.textContent = isCollapsed ? '▼' : '▲';
       toggleBtn.addEventListener('click', () => {
-        collapsedMappingCards[tag] = !collapsedMappingCards[tag];
+        collapsedMappingCards[header] = !collapsedMappingCards[header];
         renderMapping(fieldTags);
       });
 
       if (isCollapsed) {
-        body.appendChild(tagEl);
+        body.appendChild(headerEl);
         body.appendChild(selectedValueEl);
       } else {
+        body.appendChild(headerEl);
         body.appendChild(select);
-        body.appendChild(tagEl);
       }
 
       card.appendChild(body);
@@ -219,7 +281,7 @@ async function initDetailPage() {
     ]);
     titleEl.textContent = table.title || `Таблица #${tableId}`;
     headers = preview.headers || [];
-    mapping = mapResp.mapping || {};
+    mappingByTag = mapResp.mapping || {};
     renderPreview(preview.rows || []);
     renderMapping(mapResp.field_tags || []);
     previewMetaEl.textContent = `Показано ${preview.rows?.length || 0} из ${preview.total_rows || 0} строк`;
@@ -243,7 +305,7 @@ async function initDetailPage() {
 
   saveMappingBtn.addEventListener('click', async () => {
     try {
-      await apiPostJson(`/api/tables/${tableId}/mapping`, { mapping });
+      await apiPostJson(`/api/tables/${tableId}/mapping`, { mapping: mappingByTag });
       setStatus(mappingStatusEl, 'Mapping сохранён.', 'success');
       await reload();
     } catch (e) {
@@ -252,8 +314,9 @@ async function initDetailPage() {
   });
 
   collapseConfiguredBtn?.addEventListener('click', () => {
-    mappingFieldTags.forEach((tag) => {
-      if (mapping[tag]) collapsedMappingCards[tag] = true;
+    headers.forEach((header) => {
+      const tag = Object.keys(mappingByTag).find((fieldTag) => mappingByTag[fieldTag] === header);
+      if (tag) collapsedMappingCards[header] = true;
     });
     renderMapping(mappingFieldTags);
   });

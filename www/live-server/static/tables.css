@@ -1,9 +1,27 @@
+.tables-page,
+.tables-page body {
+  max-width: 100%;
+}
+
+.tables-page * {
+  box-sizing: border-box;
+}
+
+.tables-page {
+  overflow-x: hidden;
+}
+
 .tables-content {
   max-width: 1200px;
+  width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .page-card {
   padding: 20px;
+  width: 100%;
+  min-width: 0;
 }
 
 .tables-list-header {
@@ -12,6 +30,7 @@
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 16px;
+  min-width: 0;
 }
 
 .page-title {
@@ -44,11 +63,38 @@
   border-radius: 10px;
   padding: 12px;
   background: #1a2230;
+  gap: 10px;
+  min-width: 0;
 }
 
 .table-main {
   display: grid;
   gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.table-main strong,
+.table-main .hint {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.table-item.is-creating {
+  border-color: #4f8cff;
+  box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.2);
+}
+
+.new-table-controls {
+  display: flex;
+  gap: 8px;
+  width: min(720px, 100%);
+  min-width: 0;
+}
+
+.new-table-input {
+  flex: 1;
+  min-width: 0;
 }
 
 .row.wrap {
@@ -61,6 +107,7 @@
 .mapping-list {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .mapping-toolbar {
@@ -83,6 +130,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .mapping-card.is-auto {
@@ -97,13 +146,14 @@
 .mapping-card-body {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) auto;
+  grid-template-columns: minmax(260px, 1fr) minmax(220px, 380px);
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .mapping-card.is-collapsed .mapping-card-body {
-  grid-template-columns: auto 1fr;
+  grid-template-columns: minmax(220px, 1fr) minmax(120px, auto);
 }
 
 .mapping-selected-value {
@@ -115,9 +165,16 @@
   font-weight: 600;
 }
 
+.mapping-header {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .mapping-select {
   width: 100%;
   min-height: 34px;
+  min-width: 0;
 }
 
 .mapping-toggle-btn {
@@ -141,12 +198,20 @@
 }
 
 .preview-wrap {
-  overflow: auto;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  border: 1px solid #dbe2ea;
+  border-radius: 8px;
 }
 
 .preview-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
 }
 
 .preview-table th,
@@ -155,6 +220,34 @@
   padding: 6px 8px;
   text-align: left;
   vertical-align: top;
+  max-width: 420px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+#excelFile {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.row.wrap {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .table-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .tables-list-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .new-table-controls {
+    flex-direction: column;
+  }
 }
 
 .status-warning { color: #ffd166; }
