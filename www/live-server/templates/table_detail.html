@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Таблица заявок</title>
+  <link rel="stylesheet" href="/static/admin.css" />
+  <link rel="stylesheet" href="/static/tables.css" />
+</head>
+<body data-table-id="{{ table_id }}">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="logo">🎥 Live Admin</span>
+      <button id="collapseSidebar" aria-label="Свернуть меню">❮</button>
+    </div>
+    <nav class="sidebar-menu">
+      <a class="menu-item" href="/admin"><span class="icon">✏️</span><span class="text">Редактор</span></a>
+      <a class="menu-item" href="/competition"><span class="icon">🏆</span><span class="text">Конкурс</span></a>
+      <a class="menu-item" href="/broadcast"><span class="icon">📺</span><span class="text">Трансляция</span></a>
+      <a class="menu-item" href="/staff"><span class="icon">👥</span><span class="text">Сотрудники</span></a>
+      <a class="menu-item active" href="/tables"><span class="icon">📋</span><span class="text">Таблицы заявок</span></a>
+    </nav>
+    <div class="sidebar-footer">
+      <a href="/logout" class="menu-item logout"><span class="icon">🚪</span><span class="text">Выход</span></a>
+    </div>
+  </aside>
+
+  <main class="content container tables-content">
+    <section class="card page-card">
+      <div class="tables-list-header">
+        <div>
+          <a class="hint" href="/tables">← К списку таблиц</a>
+          <h1 class="page-title" id="tableTitle">Таблица</h1>
+        </div>
+      </div>
+
+      <section class="card section-card">
+        <h2 class="section-title">1. Загрузка Excel</h2>
+        <div class="row wrap">
+          <input id="excelFile" type="file" accept=".xlsx,.xls" />
+          <button id="uploadExcel" class="btn btn-primary" type="button">Загрузить</button>
+        </div>
+        <p id="uploadStatus" class="status status-muted">Ожидание действия.</p>
+      </section>
+
+      <section class="card section-card">
+        <h2 class="section-title">2. Схема колонок</h2>
+        <div id="mappingList" class="mapping-list"></div>
+        <div class="row wrap">
+          <button id="saveMapping" class="btn btn-primary" type="button">Сохранить mapping</button>
+          <span id="mappingStatus" class="status status-muted">Ожидание.</span>
+        </div>
+      </section>
+
+      <section class="card section-card">
+        <h2 class="section-title">3. Предпросмотр Excel</h2>
+        <p id="previewMeta" class="hint">Нет данных.</p>
+        <div class="preview-wrap">
+          <table class="preview-table">
+            <thead id="previewHead"></thead>
+            <tbody id="previewBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/static/layout.js"></script>
+  <script src="/static/tables.js"></script>
+</body>
+</html>

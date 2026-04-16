@@ -1,315 +1,208 @@
-let currentTableId = null;
-let currentHeaders = [];
-let currentRows = [];
-let mappingFields = {};
-let currentMapping = {};
-
-const tableListEl = document.getElementById('tableList');
-const newTitleEl = document.getElementById('newTitle');
-const createTableBtn = document.getElementById('createTable');
-const refreshTablesBtn = document.getElementById('refreshTables');
-const currentProjectEl = document.getElementById('currentProject');
-
-const excelFileEl = document.getElementById('excelFile');
-const uploadExcelBtn = document.getElementById('uploadExcel');
-const uploadStatusEl = document.getElementById('uploadStatus');
-
-const mappingListEl = document.getElementById('mappingList');
-const saveMappingBtn = document.getElementById('saveMapping');
-const mappingStatusEl = document.getElementById('mappingStatus');
-
-const previewMetaEl = document.getElementById('previewMeta');
-const previewHeadEl = document.getElementById('previewHead');
-const previewBodyEl = document.getElementById('previewBody');
-
-function requireAuth(resp) {
-  if (resp.status === 401) {
-    window.location.href = '/login';
-    return true;
-  }
-  return false;
-}
-
 async function apiGet(url) {
-  const response = await fetch(url);
-  if (requireAuth(response)) throw new Error('unauthorized');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || 'Ошибка запроса');
-  return payload;
+  const r = await fetch(url, { credentials: 'same-origin' });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+  return r.json();
 }
 
 async function apiPostForm(url, data) {
-  const formData = new FormData();
-  Object.entries(data).forEach(([key, value]) => formData.append(key, value));
-  const response = await fetch(url, { method: 'POST', body: formData });
-  if (requireAuth(response)) throw new Error('unauthorized');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.detail || 'Ошибка запроса');
-  return payload;
+  const fd = new FormData();
+  Object.entries(data).forEach(([k, v]) => fd.append(k, v));
+  const r = await fetch(url, { method: 'POST', body: fd, credentials: 'same-origin' });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+  return r.json();
 }
 
-async function apiPostJson(url, payload) {
-  const response = await fetch(url, {
+async function apiPostJson(url, data) {
+  const r = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(data),
+    credentials: 'same-origin',
   });
-  if (requireAuth(response)) throw new Error('unauthorized');
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.detail || 'Ошибка запроса');
-  return body;
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+  return r.json();
 }
 
-function setStatus(element, text, type = 'muted') {
-  element.textContent = text;
-  element.className = `status status-${type}`;
+async function apiDelete(url) {
+  const r = await fetch(url, { method: 'DELETE', credentials: 'same-origin' });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+  return r.json();
 }
 
-function normalizeMappingValue(value) {
-  if (Array.isArray(value)) return Number.isInteger(value[0]) ? value[0] : null;
-  return Number.isInteger(value) ? value : null;
+function setStatus(el, text, kind = 'muted') {
+  if (!el) return;
+  el.textContent = text;
+  el.className = `status status-${kind}`;
 }
 
-function renderTablesList(tables) {
-  tableListEl.innerHTML = '';
-  if (!tables.length) {
-    const li = document.createElement('li');
-    li.className = 'table-list-empty';
-    li.textContent = 'Проектов пока нет. Создайте первый проект импорта.';
-    tableListEl.appendChild(li);
-    return;
-  }
-
-  tables.forEach((table) => {
-    const li = document.createElement('li');
-    li.className = 'table-list-item';
-
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'table-open-btn';
-    button.textContent = `${table.title} · #${table.id}`;
-    button.addEventListener('click', () => openTable(table.id, table.title));
-
-    li.appendChild(button);
-    tableListEl.appendChild(li);
-  });
+function esc(v) {
+  return (v ?? '').toString().replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
-async function loadTables() {
-  const tables = await apiGet('/api/tables');
-  renderTablesList(tables);
-  if (!currentTableId && tables.length > 0) {
-    await openTable(tables[0].id, tables[0].title);
-  }
-}
+async function initListPage() {
+  const listEl = document.getElementById('tableList');
+  if (!listEl) return;
+  const createBtn = document.getElementById('createTable');
+  const statusEl = document.getElementById('listStatus');
 
-function renderPreview(headers, rows, totalRows = 0) {
-  previewHeadEl.innerHTML = '';
-  previewBodyEl.innerHTML = '';
-
-  if (!headers.length) {
-    previewMetaEl.textContent = 'Нет загруженного Excel.';
-    return;
-  }
-
-  previewMetaEl.textContent = `Колонок: ${headers.length}. Строк всего: ${totalRows}. Показано: ${rows.length}.`;
-
-  const headRow = document.createElement('tr');
-  headers.forEach((header, index) => {
-    const th = document.createElement('th');
-    th.textContent = header || `Колонка ${index + 1}`;
-    headRow.appendChild(th);
-  });
-  previewHeadEl.appendChild(headRow);
-
-  rows.forEach((row) => {
-    const tr = document.createElement('tr');
-    headers.forEach((_, index) => {
-      const td = document.createElement('td');
-      td.textContent = row[index] || '';
-      tr.appendChild(td);
-    });
-    previewBodyEl.appendChild(tr);
-  });
-}
-
-function renderMapping() {
-  mappingListEl.innerHTML = '';
-  const fields = Object.entries(mappingFields);
-  if (!fields.length) {
-    mappingListEl.innerHTML = '<p class="hint">Сначала загрузите Excel, чтобы получить схему тегов.</p>';
-    saveMappingBtn.disabled = true;
-    return;
-  }
-
-  fields.forEach(([fieldKey, fieldLabel]) => {
-    const row = document.createElement('div');
-    row.className = 'mapping-row';
-
-    const name = document.createElement('div');
-    name.className = 'mapping-tag';
-    name.textContent = fieldLabel;
-
-    const select = document.createElement('select');
-    select.className = 'mapping-select';
-    select.dataset.field = fieldKey;
-
-    const emptyOption = document.createElement('option');
-    emptyOption.value = '';
-    emptyOption.textContent = 'не выбрано';
-    select.appendChild(emptyOption);
-
-    currentHeaders.forEach((header, index) => {
-      const option = document.createElement('option');
-      option.value = String(index);
-      option.textContent = `${index + 1}. ${header || `Колонка ${index + 1}`}`;
-      select.appendChild(option);
+  async function load() {
+    const tables = await apiGet('/api/tables');
+    if (!tables.length) {
+      listEl.innerHTML = '<li class="table-item"><div class="hint">Пока нет таблиц.</div></li>';
+      return;
+    }
+    listEl.innerHTML = '';
+    tables.forEach((t) => {
+      const li = document.createElement('li');
+      li.className = 'table-item';
+      li.innerHTML = `
+        <div class="table-main">
+          <strong>${esc(t.title)}</strong>
+          <div class="hint">Создано: ${esc(t.created_at || '-')} · Изменено: ${esc(t.updated_at || '-')} · Статус: ${esc(t.status || 'new')}</div>
+        </div>
+        <div class="row wrap">
+          <a class="btn btn-secondary" href="/tables/${t.id}">Открыть</a>
+          <button class="btn btn-danger" data-del="${t.id}">Удалить</button>
+        </div>
+      `;
+      listEl.appendChild(li);
     });
 
-    const mappedIndex = normalizeMappingValue(currentMapping[fieldKey]);
-    select.value = mappedIndex === null ? '' : String(mappedIndex);
-
-    select.addEventListener('change', () => {
-      const value = select.value === '' ? null : Number(select.value);
-      if (value === null) {
-        delete currentMapping[fieldKey];
-      } else {
-        currentMapping[fieldKey] = value;
-      }
-      setStatus(mappingStatusEl, 'Есть несохранённые изменения в mapping.', 'warning');
+    listEl.querySelectorAll('[data-del]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Удалить таблицу?')) return;
+        try {
+          await apiDelete(`/api/tables/${btn.dataset.del}`);
+          await load();
+        } catch (e) {
+          setStatus(statusEl, `Ошибка удаления: ${e.message}`, 'error');
+        }
+      });
     });
+  }
 
-    row.appendChild(name);
-    row.appendChild(select);
-    mappingListEl.appendChild(row);
+  createBtn?.addEventListener('click', async () => {
+    const title = prompt('Введите название таблицы', 'Новая таблица');
+    if (!title) return;
+    try {
+      await apiPostForm('/api/tables', { title });
+      setStatus(statusEl, 'Таблица создана.', 'success');
+      await load();
+    } catch (e) {
+      setStatus(statusEl, `Ошибка создания: ${e.message}`, 'error');
+    }
   });
 
-  saveMappingBtn.disabled = !currentTableId || !currentHeaders.length;
-}
-
-async function loadPreviewAndMapping(tableId) {
   try {
-    const [preview, mappingResp] = await Promise.all([
+    await load();
+    setStatus(statusEl, 'Готово.', 'muted');
+  } catch (e) {
+    setStatus(statusEl, `Ошибка: ${e.message}`, 'error');
+  }
+}
+
+async function initDetailPage() {
+  const tableId = Number(document.body.dataset.tableId || 0);
+  if (!tableId) return;
+
+  const titleEl = document.getElementById('tableTitle');
+  const uploadBtn = document.getElementById('uploadExcel');
+  const fileEl = document.getElementById('excelFile');
+  const uploadStatusEl = document.getElementById('uploadStatus');
+  const mappingListEl = document.getElementById('mappingList');
+  const mappingStatusEl = document.getElementById('mappingStatus');
+  const saveMappingBtn = document.getElementById('saveMapping');
+  const previewMetaEl = document.getElementById('previewMeta');
+  const previewHeadEl = document.getElementById('previewHead');
+  const previewBodyEl = document.getElementById('previewBody');
+
+  let headers = [];
+  let mapping = {};
+
+  function renderPreview(rows) {
+    previewHeadEl.innerHTML = '';
+    previewBodyEl.innerHTML = '';
+    if (!headers.length) {
+      previewMetaEl.textContent = 'Нет данных для предпросмотра.';
+      return;
+    }
+    previewHeadEl.innerHTML = `<tr>${headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr>`;
+    rows.forEach((row) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = headers.map((_, i) => `<td>${esc(row[i])}</td>`).join('');
+      previewBodyEl.appendChild(tr);
+    });
+  }
+
+  function renderMapping(fieldTags) {
+    mappingListEl.innerHTML = '';
+    fieldTags.forEach((tag) => {
+      const row = document.createElement('div');
+      row.className = 'mapping-row';
+      const current = mapping[tag] || '';
+      row.innerHTML = `<label class="mapping-tag">${esc(tag)}</label>`;
+      const select = document.createElement('select');
+      select.className = 'mapping-select';
+      select.innerHTML = '<option value="">не выбрано</option>' + headers.map((h, i) => {
+        const selected = current === h ? ' selected' : '';
+        return `<option value="${esc(h)}"${selected}>${esc(h)} (колонка ${i + 1})</option>`;
+      }).join('');
+      select.addEventListener('change', () => {
+        if (!select.value) delete mapping[tag];
+        else mapping[tag] = select.value;
+        setStatus(mappingStatusEl, 'Есть несохранённые изменения.', 'warning');
+      });
+      row.appendChild(select);
+      mappingListEl.appendChild(row);
+    });
+  }
+
+  async function reload() {
+    const [table, preview, mapResp] = await Promise.all([
+      apiGet(`/api/tables/${tableId}`),
       apiGet(`/api/tables/${tableId}/excel_preview`),
       apiGet(`/api/tables/${tableId}/mapping`),
     ]);
+    titleEl.textContent = table.title || `Таблица #${tableId}`;
+    headers = preview.headers || [];
+    mapping = mapResp.mapping || {};
+    renderPreview(preview.rows || []);
+    renderMapping(mapResp.field_tags || []);
+    previewMetaEl.textContent = `Показано ${preview.rows?.length || 0} из ${preview.total_rows || 0} строк`;
+  }
 
-    currentHeaders = Array.isArray(preview.headers) ? preview.headers : [];
-    currentRows = Array.isArray(preview.rows) ? preview.rows : [];
-    mappingFields = (mappingResp && mappingResp.mapping_fields) || preview.mapping_fields || {};
-    currentMapping = (mappingResp && mappingResp.mapping) || {};
-
-    renderPreview(currentHeaders, currentRows, preview.total_rows || 0);
-    renderMapping();
-
-    if (currentHeaders.length) {
-      setStatus(uploadStatusEl, 'Excel уже загружен. Можно обновить файл.', 'success');
-    } else {
-      setStatus(uploadStatusEl, 'Excel ещё не загружен.', 'muted');
+  uploadBtn.addEventListener('click', async () => {
+    const file = fileEl.files?.[0];
+    if (!file) {
+      setStatus(uploadStatusEl, 'Выберите файл Excel.', 'warning');
+      return;
     }
-    setStatus(mappingStatusEl, 'Mapping загружен.', 'muted');
-  } catch (error) {
-    renderPreview([], []);
-    mappingFields = {};
-    currentMapping = {};
-    renderMapping();
-    setStatus(uploadStatusEl, `Ошибка загрузки данных: ${error.message}`, 'error');
+    try {
+      setStatus(uploadStatusEl, 'Загрузка...', 'muted');
+      await apiPostForm(`/api/tables/${tableId}/excel`, { excel: file });
+      setStatus(uploadStatusEl, 'Excel загружен.', 'success');
+      await reload();
+    } catch (e) {
+      setStatus(uploadStatusEl, `Ошибка: ${e.message}`, 'error');
+    }
+  });
+
+  saveMappingBtn.addEventListener('click', async () => {
+    try {
+      await apiPostJson(`/api/tables/${tableId}/mapping`, { mapping });
+      setStatus(mappingStatusEl, 'Mapping сохранён.', 'success');
+      await reload();
+    } catch (e) {
+      setStatus(mappingStatusEl, `Ошибка: ${e.message}`, 'error');
+    }
+  });
+
+  try {
+    await reload();
+  } catch (e) {
+    setStatus(uploadStatusEl, `Ошибка загрузки данных: ${e.message}`, 'error');
   }
 }
 
-async function openTable(tableId, title) {
-  currentTableId = tableId;
-  currentProjectEl.textContent = `Текущий проект: ${title} (#${tableId})`;
-  uploadExcelBtn.disabled = false;
-  await loadPreviewAndMapping(tableId);
-}
-
-createTableBtn.addEventListener('click', async () => {
-  const title = newTitleEl.value.trim();
-  if (!title) {
-    setStatus(uploadStatusEl, 'Введите название проекта перед созданием.', 'warning');
-    return;
-  }
-
-  try {
-    await apiPostForm('/api/tables', { title });
-    newTitleEl.value = '';
-    await loadTables();
-    setStatus(uploadStatusEl, 'Проект создан.', 'success');
-  } catch (error) {
-    setStatus(uploadStatusEl, `Не удалось создать проект: ${error.message}`, 'error');
-  }
-});
-
-refreshTablesBtn.addEventListener('click', async () => {
-  try {
-    await loadTables();
-  } catch (error) {
-    setStatus(uploadStatusEl, `Не удалось обновить список: ${error.message}`, 'error');
-  }
-});
-
-uploadExcelBtn.addEventListener('click', async () => {
-  if (!currentTableId) {
-    setStatus(uploadStatusEl, 'Сначала выберите проект импорта.', 'warning');
-    return;
-  }
-
-  const file = excelFileEl.files && excelFileEl.files[0];
-  if (!file) {
-    setStatus(uploadStatusEl, 'Выберите Excel-файл (.xlsx или .xls).', 'warning');
-    return;
-  }
-
-  const isExcel = /\.(xlsx|xls)$/i.test(file.name || '');
-  if (!isExcel) {
-    setStatus(uploadStatusEl, 'Поддерживаются только файлы .xlsx или .xls.', 'warning');
-    return;
-  }
-
-  try {
-    setStatus(uploadStatusEl, 'Загрузка и чтение Excel...', 'muted');
-    const payload = await apiPostForm(`/api/tables/${currentTableId}/excel`, { excel: file });
-
-    currentHeaders = Array.isArray(payload.headers) ? payload.headers : [];
-    currentRows = Array.isArray(payload.rows) ? payload.rows : [];
-    currentMapping = payload.mapping || {};
-
-    if (!Object.keys(mappingFields).length && payload.mapping_fields) {
-      mappingFields = payload.mapping_fields;
-    }
-
-    renderPreview(currentHeaders, currentRows, payload.total_rows || 0);
-    renderMapping();
-
-    const autoLabel = payload.mapping_autofilled ? ' Mapping автоопределён, проверьте вручную.' : '';
-    setStatus(uploadStatusEl, `Excel загружен успешно.${autoLabel}`, 'success');
-    setStatus(mappingStatusEl, 'Проверьте и сохраните mapping.', 'warning');
-  } catch (error) {
-    setStatus(uploadStatusEl, `Ошибка загрузки Excel: ${error.message}`, 'error');
-  }
-});
-
-saveMappingBtn.addEventListener('click', async () => {
-  if (!currentTableId) {
-    setStatus(mappingStatusEl, 'Сначала выберите проект.', 'warning');
-    return;
-  }
-
-  try {
-    const response = await apiPostJson(`/api/tables/${currentTableId}/mapping`, { mapping: currentMapping });
-    currentMapping = response.mapping || currentMapping;
-    renderMapping();
-    setStatus(mappingStatusEl, 'Mapping сохранён. Нормализация данных выполнена в backend.', 'success');
-  } catch (error) {
-    setStatus(mappingStatusEl, `Не удалось сохранить mapping: ${error.message}`, 'error');
-  }
-});
-
-(async function init() {
-  try {
-    await loadTables();
-  } catch (error) {
-    setStatus(uploadStatusEl, `Ошибка инициализации: ${error.message}`, 'error');
-  }
-})();
+initListPage();
+initDetailPage();

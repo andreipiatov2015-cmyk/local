@@ -47,49 +47,15 @@
 
   <main class="content container tables-content">
     <section class="card page-card">
-      <h1 class="page-title">Tables: импорт Excel и схема колонок</h1>
-      <p class="page-subtitle">Минимальный интерфейс первого этапа: загрузка Excel, настройка схемы тегов и предпросмотр данных.</p>
-
-      <section class="card section-card">
-        <h2 class="section-title">Проект импорта</h2>
-        <div class="row wrap">
-          <input id="newTitle" type="text" placeholder="Название проекта" />
-          <button id="createTable" class="btn btn-primary" type="button">Создать проект</button>
-          <button id="refreshTables" class="btn btn-secondary" type="button">Обновить список</button>
+      <div class="tables-list-header">
+        <div>
+          <h1 class="page-title">Таблицы заявок</h1>
+          <p class="page-subtitle">Список созданных таблиц пользователя.</p>
         </div>
-        <ul id="tableList" class="table-list"></ul>
-      </section>
-
-      <section class="card section-card" id="uploadBlock">
-        <h2 class="section-title">1. Загрузка Excel</h2>
-        <p id="currentProject" class="hint">Проект не выбран.</p>
-        <div class="row wrap">
-          <input id="excelFile" type="file" accept=".xlsx,.xls" />
-          <button id="uploadExcel" class="btn btn-primary" type="button" disabled>Загрузить</button>
-        </div>
-        <p id="uploadStatus" class="status status-muted">Ожидание действия.</p>
-      </section>
-
-      <section class="card section-card" id="mappingBlock">
-        <h2 class="section-title">2. Схема колонок</h2>
-        <p class="hint">Для каждого тега выберите колонку Excel вручную или проверьте автоопределение.</p>
-        <div id="mappingList" class="mapping-list"></div>
-        <div class="row wrap">
-          <button id="saveMapping" class="btn btn-primary" type="button" disabled>Сохранить mapping</button>
-          <span id="mappingStatus" class="status status-muted">Mapping ещё не сохранён.</span>
-        </div>
-      </section>
-
-      <section class="card section-card" id="previewBlock">
-        <h2 class="section-title">3. Предпросмотр Excel</h2>
-        <p id="previewMeta" class="hint">Нет загруженного Excel.</p>
-        <div class="preview-wrap">
-          <table id="previewTable" class="preview-table">
-            <thead id="previewHead"></thead>
-            <tbody id="previewBody"></tbody>
-          </table>
-        </div>
-      </section>
+        <button id="createTable" class="btn btn-primary" type="button">Создать новую таблицу</button>
+      </div>
+      <p id="listStatus" class="status status-muted">Загрузка...</p>
+      <ul id="tableList" class="table-list"></ul>
     </section>
   </main>
 
