@@ -1,63 +1,26 @@
 let currentTableId = null;
-let lastVncUrl = null;
-let currentMapping = {};
-let mappingFields = {};
 let currentHeaders = [];
-let currentYandexStatus = 'disconnected';
-let currentProgramItems = [];
-let isProgramMode = false;
-let currentVisibleTags = [];
-let currentRenderedTagMeta = [];
-let draggedProgramItemId = null;
-let currentPreviewRows = [];
-let previewResizeObserver = null;
-let previewRecalcRaf = null;
+let currentRows = [];
+let mappingFields = {};
+let currentMapping = {};
 
-const FORCED_HIDDEN_TAG_PATTERNS = [/номер\s*телефон/i, /телефон/i, /e-?mail/i, /емаил/i, /email/i, /райдер/i, /rider/i];
+const tableListEl = document.getElementById('tableList');
+const newTitleEl = document.getElementById('newTitle');
+const createTableBtn = document.getElementById('createTable');
+const refreshTablesBtn = document.getElementById('refreshTables');
+const currentProjectEl = document.getElementById('currentProject');
 
-const tableList = document.getElementById('tableList');
-const workspaceEl = document.getElementById('workspace');
-const progressEl = document.getElementById('progress');
-const tableTitle = document.getElementById('tableTitle');
-const yandexStatusEl = document.getElementById('yandexStatus');
-const startDownloadBtn = document.getElementById('startDownload');
-const finalizeTableBtn = document.getElementById('finalizeTable');
-const openAdminLoginBtn = document.getElementById('openAdminLogin');
-const yandexHintEl = document.getElementById('yandexHint');
-const captchaAlertEl = document.getElementById('captchaAlert');
-const captchaAlertHintEl = document.getElementById('captchaAlertHint');
-const openCaptchaBtn = document.getElementById('openCaptcha');
-const resumeAfterCaptchaBtn = document.getElementById('resumeAfterCaptcha');
-const mappingAutofillInfoEl = document.getElementById('mappingAutofillInfo');
-const tableView = document.getElementById('tableView');
-const excelHead = document.getElementById('excelHead');
-const excelBody = document.getElementById('excelBody');
-const mappingInfo = document.getElementById('mappingInfo');
-const mappingSummary = document.getElementById('mappingSummary');
-const excelColgroup = document.getElementById('excelColgroup');
-const resetMappingBtn = document.getElementById('resetMapping');
-const rememberMappingBtn = document.getElementById('rememberMapping');
-const mappingDialog = document.getElementById('mappingDialog');
-const mappingDialogActions = document.getElementById('mappingDialogActions');
-const previewErrorEl = document.getElementById('previewError');
-const prepareModeEl = document.getElementById('prepareMode');
-const programModeEl = document.getElementById('programMode');
-const prepareControlsEl = document.getElementById('prepareControls');
-const tablesContentEl = document.getElementById('tablesContent');
-const programBody = document.getElementById('programBody');
-const programSearch = document.getElementById('programSearch');
-const filterNoAudio = document.getElementById('filterNoAudio');
-const filterNoReceipt = document.getElementById('filterNoReceipt');
-const filterNoPresentation = document.getElementById('filterNoPresentation');
-const autosaveStatus = document.getElementById('autosaveStatus');
-const downloadAllProgramBtn = document.getElementById('downloadAllProgram');
-const receiptViewerDialog = document.getElementById('receiptViewerDialog');
-const receiptViewerImage = document.getElementById('receiptViewerImage');
-const receiptViewerDownload = document.getElementById('receiptViewerDownload');
-const programHeadRow = document.getElementById('programHeadRow');
-const backToTablesBtn = document.getElementById('backToTables');
+const excelFileEl = document.getElementById('excelFile');
+const uploadExcelBtn = document.getElementById('uploadExcel');
+const uploadStatusEl = document.getElementById('uploadStatus');
 
-const REQUIRED_FIELDS = ['number_title', 'audio_url', 'consent_url', 'presentation_url'];
+const mappingListEl = document.getElementById('mappingList');
+const saveMappingBtn = document.getElementById('saveMapping');
+const mappingStatusEl = document.getElementById('mappingStatus');
+
+const previewMetaEl = document.getElementById('previewMeta');
+const previewHeadEl = document.getElementById('previewHead');
+const previewBodyEl = document.getElementById('previewBody');
 
 function requireAuth(resp) {
   if (resp.status === 401) {
@@ -67,939 +30,286 @@ function requireAuth(resp) {
   return false;
 }
 
-async function postForm(url, data) {
-  const fd = new FormData();
-  Object.entries(data).forEach(([k, v]) => fd.append(k, v));
-  const r = await fetch(url, { method: 'POST', body: fd });
-  if (requireAuth(r)) throw new Error('unauthorized');
-  const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.detail || JSON.stringify(body));
+async function apiGet(url) {
+  const response = await fetch(url);
+  if (requireAuth(response)) throw new Error('unauthorized');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || 'Ошибка запроса');
+  return payload;
+}
+
+async function apiPostForm(url, data) {
+  const formData = new FormData();
+  Object.entries(data).forEach(([key, value]) => formData.append(key, value));
+  const response = await fetch(url, { method: 'POST', body: formData });
+  if (requireAuth(response)) throw new Error('unauthorized');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.detail || 'Ошибка запроса');
+  return payload;
+}
+
+async function apiPostJson(url, payload) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (requireAuth(response)) throw new Error('unauthorized');
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || 'Ошибка запроса');
   return body;
 }
 
-function setAutosave(text) {
-  autosaveStatus.textContent = text;
+function setStatus(element, text, type = 'muted') {
+  element.textContent = text;
+  element.className = `status status-${type}`;
 }
 
-function setWorkspaceVisible(visible) {
-  workspaceEl?.classList.toggle('hidden', !visible);
+function normalizeMappingValue(value) {
+  if (Array.isArray(value)) return Number.isInteger(value[0]) ? value[0] : null;
+  return Number.isInteger(value) ? value : null;
 }
 
-function setProgramMode(enabled) {
-  isProgramMode = !!enabled;
-  programModeEl.classList.toggle('hidden', !isProgramMode);
-  document.querySelectorAll('.prepare-only').forEach((el) => {
-    el.classList.toggle('hidden', isProgramMode);
-  });
-  if (prepareControlsEl) prepareControlsEl.classList.toggle('hidden', isProgramMode);
-  finalizeTableBtn.classList.toggle('hidden', isProgramMode);
-  tablesContentEl?.classList.toggle('program-only', isProgramMode);
-}
-
-function setYandexState(status, errText = '', vncUrl = null) {
-  currentYandexStatus = status || 'disconnected';
-  yandexStatusEl.className = 'status-badge';
-
-  if (currentYandexStatus === 'connected') {
-    yandexStatusEl.classList.add('status-badge--ok');
-    yandexStatusEl.textContent = 'Яндекс подключен ✅';
-    yandexHintEl.textContent = '';
-    openAdminLoginBtn.classList.add('hidden');
+function renderTablesList(tables) {
+  tableListEl.innerHTML = '';
+  if (!tables.length) {
+    const li = document.createElement('li');
+    li.className = 'table-list-empty';
+    li.textContent = 'Проектов пока нет. Создайте первый проект импорта.';
+    tableListEl.appendChild(li);
     return;
   }
 
-  if (currentYandexStatus === 'auth_required' || currentYandexStatus === 'captcha_required') {
-    yandexStatusEl.classList.add('status-badge--warn');
-    const isCaptcha = currentYandexStatus === 'captcha_required';
-    yandexStatusEl.textContent = isCaptcha ? 'Яндекс: требуется проверка «Вы не робот»' : 'Яндекс: требуется авторизация';
-    yandexHintEl.textContent = errText || (isCaptcha
-      ? 'Капча открывается в браузере на сервере. Откройте noVNC/VNC, пройдите проверку и затем нажмите «Продолжить скачивание».'
-      : 'Откройте вход администратора (VNC) и выполните вход в Яндекс.');
-    if (vncUrl) lastVncUrl = vncUrl;
-    openAdminLoginBtn.classList.remove('hidden');
-    return;
-  }
-
-  yandexStatusEl.classList.add('status-badge--muted');
-  yandexStatusEl.textContent = 'Яндекс: не подключен';
-  yandexHintEl.textContent = errText || '';
-  openAdminLoginBtn.classList.add('hidden');
-}
-
-function renderCaptchaAlert(table) {
-  if (!captchaAlertEl) return;
-  const isCaptcha = (table?.status || '') === 'captcha_required';
-  captchaAlertEl.classList.toggle('hidden', !isCaptcha);
-  if (!isCaptcha) return;
-  const rowId = table?.download_last_problem_row_id || table?.download_cursor_row_id || '?';
-  captchaAlertHintEl.textContent = `Скачивание остановлено на строке ${rowId}. Нажмите «Открыть капчу» (она откроется в серверном Chromium), пройдите проверку в noVNC/VNC и затем нажмите «Продолжить скачивание».`;
-}
-
-function showAutofillInfo(text) {
-  if (!text) {
-    mappingAutofillInfoEl.textContent = '';
-    mappingAutofillInfoEl.classList.add('hidden');
-    return;
-  }
-  mappingAutofillInfoEl.textContent = text;
-  mappingAutofillInfoEl.classList.remove('hidden');
-}
-
-function mappingIndexes(field) {
-  const raw = (currentMapping || {})[field];
-  if (Array.isArray(raw)) return raw.filter((v) => Number.isInteger(v) && v >= 0);
-  if (Number.isInteger(raw) && raw >= 0) return [raw];
-  return [];
-}
-
-function mappingReverse() {
-  const rev = {};
-  Object.entries(currentMapping || {}).forEach(([field]) => {
-    mappingIndexes(field).forEach((col) => { rev[col] = field; });
-  });
-  return rev;
-}
-
-function getColumnWidthClass(header) {
-  const normalized = String(header || '').toLowerCase();
-  if (/^id$|№|номер/.test(normalized)) return 'col-id';
-  if (/дата|date/.test(normalized)) return 'col-date';
-  if (/территор|город|регион/.test(normalized)) return 'col-territory';
-  if (/фио|участник|название|коллектив|комментар|описан|примечан/.test(normalized)) return 'col-long';
-  return 'col-default';
-}
-
-function normalizeText(value) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function isLongColumn({ header, mappedField, mappedLabel }) {
-  const haystack = `${normalizeText(header)} ${normalizeText(mappedField)} ${normalizeText(mappedLabel)}`;
-  return /(фио|ф\.и\.о|участник|название\s*номер|номер\s*назван|коллектив|учрежден|педагог|муниципал)/i.test(haystack);
-}
-
-function isShortColumn({ header, mappedField, mappedLabel }) {
-  const haystack = `${normalizeText(header)} ${normalizeText(mappedField)} ${normalizeText(mappedLabel)}`;
-  return /(возраст|колич|номер|статус|есть|нет|yes|no|count|qty|age)/i.test(haystack);
-}
-
-function getMappedFieldByIndex(colIndex) {
-  const pair = Object.entries(currentMapping || {}).find(([field]) => mappingIndexes(field).includes(colIndex));
-  return pair ? pair[0] : '';
-}
-
-function estimateContentChars(header, rows, colIndex) {
-  const samples = [String(header || '')];
-  const sampleRows = (rows || []).slice(0, 60);
-  sampleRows.forEach((row) => {
-    const value = row[colIndex];
-    if (value !== null && value !== undefined && String(value).trim()) {
-      samples.push(String(value).trim());
-    }
-  });
-  if (!samples.length) return 12;
-  const lengths = samples.map((text) => text.replace(/\s+/g, ' ').length).sort((a, b) => a - b);
-  const p90 = lengths[Math.min(lengths.length - 1, Math.floor(lengths.length * 0.9))] || 12;
-  return p90;
-}
-
-function getColumnWidthConfig(header, rows, colIndex) {
-  const mappedField = getMappedFieldByIndex(colIndex);
-  const mappedLabel = mappedField ? mappingFields[mappedField] || '' : '';
-  const longColumn = isLongColumn({ header, mappedField, mappedLabel });
-  const shortColumn = isShortColumn({ header, mappedField, mappedLabel });
-  const chars = estimateContentChars(header, rows, colIndex);
-
-  let minWidth = 120;
-  let maxWidth = 280;
-  let charFactor = 8.5;
-  let base = 26;
-
-  if (longColumn) {
-    minWidth = 220;
-    maxWidth = 460;
-    charFactor = 9.2;
-    base = 64;
-  } else if (shortColumn) {
-    minWidth = 72;
-    maxWidth = 160;
-    charFactor = 7.2;
-    base = 18;
-  }
-
-  const rawWidth = Math.round(base + chars * charFactor);
-  const width = Math.max(minWidth, Math.min(maxWidth, rawWidth));
-  return { width, minWidth, maxWidth };
-}
-
-function renderColgroup() {
-  excelColgroup.innerHTML = '';
-  currentHeaders.forEach((header, colIndex) => {
-    const col = document.createElement('col');
-    col.className = getColumnWidthClass(header);
-    const { width, minWidth, maxWidth } = getColumnWidthConfig(header, currentPreviewRows, colIndex);
-    col.style.setProperty('--col-width', `${width}px`);
-    col.style.setProperty('--col-min-width', `${minWidth}px`);
-    col.style.setProperty('--col-max-width', `${maxWidth}px`);
-    excelColgroup.appendChild(col);
-  });
-}
-
-function schedulePreviewLayoutRecalc() {
-  if (previewRecalcRaf) cancelAnimationFrame(previewRecalcRaf);
-  previewRecalcRaf = requestAnimationFrame(() => {
-    previewRecalcRaf = null;
-    if (isProgramMode || !tableView || tableView.classList.contains('hidden') || !currentHeaders.length) return;
-    renderColgroup();
-  });
-}
-
-function setupPreviewResizeRecalc() {
-  if (previewResizeObserver) return;
-  const scrollWrap = document.querySelector('#prepareMode .table-scroll');
-  if (!scrollWrap || typeof ResizeObserver === 'undefined') return;
-  previewResizeObserver = new ResizeObserver(() => {
-    schedulePreviewLayoutRecalc();
-  });
-  previewResizeObserver.observe(scrollWrap);
-}
-
-function renderMappingPanel() {
-  const requiredItems = REQUIRED_FIELDS.map((field) => {
-    const cols = mappingIndexes(field);
-    return {
-      field,
-      title: mappingFields[field] || field,
-      assigned: cols.length > 0,
-      cols
-    };
-  });
-  const assignedCount = Object.values(currentMapping || {}).reduce((acc, value) => {
-    if (Array.isArray(value)) return acc + value.length;
-    return Number.isInteger(value) ? acc + 1 : acc;
-  }, 0);
-  const totalCount = Object.keys(mappingFields).length;
-
-  mappingSummary.textContent = `Схема: ${assignedCount} колонок / ${totalCount} тегов`;
-
-  mappingInfo.innerHTML = requiredItems.map((item) => {
-    const colName = item.assigned
-      ? item.cols.map((col) => currentHeaders[col] || `Колонка ${col + 1}`).join(', ')
-      : 'не назначено';
-    return `<div class="mapping-row ${item.assigned ? 'ok' : 'missing'}"><span>${item.assigned ? '✅' : '⭕'} ${item.title}</span><span>${colName}</span></div>`;
-  }).join('');
-}
-
-function showPreviewError(msg) {
-  previewErrorEl.textContent = msg;
-  previewErrorEl.classList.remove('hidden');
-}
-
-function clearPreviewError() {
-  previewErrorEl.textContent = '';
-  previewErrorEl.classList.add('hidden');
-}
-
-function renderExcelTable(rows) {
-  currentPreviewRows = Array.isArray(rows) ? rows : [];
-  const rev = mappingReverse();
-  excelHead.innerHTML = '';
-  excelBody.innerHTML = '';
-  renderColgroup();
-
-  if (!currentHeaders.length) {
-    showPreviewError('Excel не распознан: не найдены заголовки или пустой файл.');
-    renderMappingPanel();
-    return;
-  }
-
-  const trh = document.createElement('tr');
-  currentHeaders.forEach((h, idx) => {
-    const th = document.createElement('th');
-    const assignedField = rev[idx];
-    const title = h || `Колонка ${idx + 1}`;
-    th.dataset.col = String(idx);
-    th.className = assignedField ? 'mapped' : '';
-
-    const name = document.createElement('span');
-    name.className = 'header-title';
-    name.textContent = title;
-    th.appendChild(name);
-
-    if (assignedField) {
-      const badge = document.createElement('span');
-      badge.className = 'header-badge';
-      badge.textContent = mappingFields[assignedField] || assignedField;
-      th.appendChild(badge);
-      th.title = `Назначено: ${mappingFields[assignedField] || assignedField}`;
-    }
-
-    th.onclick = () => openMappingDialog(idx);
-    trh.appendChild(th);
-  });
-  excelHead.appendChild(trh);
-
-  currentPreviewRows.forEach((row) => {
-    const tr = document.createElement('tr');
-    currentHeaders.forEach((_, idx) => {
-      const td = document.createElement('td');
-      td.textContent = row[idx] || '';
-      tr.appendChild(td);
-    });
-    excelBody.appendChild(tr);
-  });
-
-  if (!currentPreviewRows.length) {
-    showPreviewError('Excel не распознан / пустой файл / не найден лист с данными.');
-  } else {
-    clearPreviewError();
-  }
-
-  renderMappingPanel();
-  schedulePreviewLayoutRecalc();
-}
-
-async function loadExcelPreview() {
-  if (!currentTableId) return;
-  const tableId = currentTableId;
-  const resp = await fetch(`/api/tables/${tableId}/excel_preview`);
-  if (requireAuth(resp)) return;
-  const data = await resp.json().catch(() => ({}));
-  if (tableId !== currentTableId) return;
-  if (!resp.ok) {
-    showPreviewError(data.detail || 'Не удалось загрузить предпросмотр Excel.');
-    return;
-  }
-
-  currentHeaders = data.headers || [];
-  mappingFields = data.mapping_fields || mappingFields;
-  renderExcelTable(data.rows || []);
-}
-
-async function refreshMapping() {
-  if (!currentTableId || isProgramMode) return;
-  const tableId = currentTableId;
-  const r = await fetch(`/api/tables/${tableId}/mapping`);
-  if (requireAuth(r) || !r.ok) return;
-  const data = await r.json();
-  if (tableId !== currentTableId) return;
-  currentMapping = data.mapping || {};
-  mappingFields = data.mapping_fields || mappingFields;
-  startDownloadBtn.disabled = !data.can_start;
-  startDownloadBtn.title = data.can_start ? '' : data.reason;
-  renderMappingPanel();
-}
-
-async function saveMapping() {
-  const r = await fetch(`/api/tables/${currentTableId}/mapping`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mapping: currentMapping })
-  });
-  if (requireAuth(r)) return;
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) return alert(data.detail || 'Ошибка сохранения mapping');
-  startDownloadBtn.disabled = !data.can_start;
-  startDownloadBtn.title = data.can_start ? '' : data.reason;
-  await loadExcelPreview();
-  renderMappingPanel();
-}
-
-function openMappingDialog(colIndex) {
-  const currentFieldForCol = Object.entries(currentMapping).find(([field]) => mappingIndexes(field).includes(colIndex))?.[0];
-  mappingDialogActions.innerHTML = '';
-
-  Object.entries(mappingFields).forEach(([field, title]) => {
-    const assignedCols = mappingIndexes(field);
-    const assignedToAnother = assignedCols.length > 0 && !assignedCols.includes(colIndex);
-    const btn = document.createElement('button');
-    btn.className = `btn btn-secondary mapping-choice ${assignedToAnother ? 'is-occupied' : ''}`;
-    btn.innerHTML = assignedToAnother
-      ? `<span>${title}</span><small>уже назначено: ${assignedCols.map((c) => currentHeaders[c] || `Колонка ${c + 1}`).join(', ')}</small>`
-      : `<span>${title}</span><small>${assignedCols.includes(colIndex) ? 'уже на этой колонке' : 'свободно'}</small>`;
-
-    btn.onclick = async () => {
-      if (currentFieldForCol && currentFieldForCol !== field) {
-        const prev = mappingIndexes(currentFieldForCol).filter((c) => c !== colIndex);
-        if (prev.length) currentMapping[currentFieldForCol] = prev;
-        else delete currentMapping[currentFieldForCol];
-      }
-      const updated = [...assignedCols.filter((c) => c !== colIndex), colIndex].sort((a, b) => a - b);
-      currentMapping[field] = updated.length === 1 ? updated[0] : updated;
-      await saveMapping();
-      showAutofillInfo('Схема обновлена вручную. Можно нажать «Запомнить схему».');
-      mappingDialog.close();
-    };
-    mappingDialogActions.appendChild(btn);
-  });
-
-  const clearBtn = document.createElement('button');
-  clearBtn.className = 'btn btn-secondary';
-  clearBtn.textContent = 'Снять назначение';
-  clearBtn.onclick = async () => {
-    Object.keys(currentMapping).forEach((k) => {
-      const updated = mappingIndexes(k).filter((c) => c !== colIndex);
-      if (updated.length === mappingIndexes(k).length) return;
-      if (!updated.length) delete currentMapping[k];
-      else currentMapping[k] = updated.length === 1 ? updated[0] : updated;
-    });
-    await saveMapping();
-    showAutofillInfo('Схема обновлена вручную. Можно нажать «Запомнить схему».');
-    mappingDialog.close();
-  };
-  mappingDialogActions.appendChild(clearBtn);
-  mappingDialog.showModal();
-}
-
-function formatProgressText(t) {
-  const status = t.status || 'new';
-  const progress = t.progress ?? 0;
-  const processed = t.processed_count ?? 0;
-  const total = t.total_count ?? 0;
-  if ((status === 'auth_required' || status === 'captcha_required' || status === 'paused' || status === 'downloading_partial') && (t.download_cursor_row_id || 0) > 0) {
-    const reason = status === 'captcha_required'
-      ? 'Требуется пройти капчу/проверку в Яндексе.'
-      : 'Требуется повторное подключение Яндекса.';
-    return `Скачивание остановлено на строке ${t.download_cursor_row_id}. ${reason}`;
-  }
-  const error = t.last_error ? `, ошибка: ${t.last_error}` : '';
-  return `Статус: ${status}, прогресс: ${progress}% (${processed}/${total})${error}`;
-}
-
-async function refreshTables() {
-  const r = await fetch('/api/tables');
-  if (requireAuth(r)) return;
-  const tables = await r.json();
-  tableList.innerHTML = '';
-  tables.forEach((t) => {
+  tables.forEach((table) => {
     const li = document.createElement('li');
     li.className = 'table-list-item';
 
-    const openBtn = document.createElement('button');
-    openBtn.type = 'button';
-    openBtn.className = 'table-open-btn';
-    openBtn.textContent = `#${t.id} ${t.title} [${t.status}] ${t.progress ?? 0}% (${t.processed_count ?? 0}/${t.total_count ?? 0})`;
-    openBtn.onclick = () => openTable(t.id, t.title);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'table-open-btn';
+    button.textContent = `${table.title} · #${table.id}`;
+    button.addEventListener('click', () => openTable(table.id, table.title));
 
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'table-delete-btn';
-    delBtn.title = 'Удалить таблицу';
-    delBtn.setAttribute('aria-label', `Удалить таблицу ${t.title}`);
-    delBtn.textContent = '×';
-    delBtn.onclick = async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      await deleteTableById(t.id);
-    };
-
-    li.appendChild(openBtn);
-    li.appendChild(delBtn);
-    tableList.appendChild(li);
+    li.appendChild(button);
+    tableListEl.appendChild(li);
   });
+}
 
-  if (!currentTableId && captchaAlertEl) captchaAlertEl.classList.add('hidden');
-
-  if (currentTableId) {
-    const cur = tables.find((x) => x.id === currentTableId);
-    if (cur) {
-      progressEl.textContent = formatProgressText(cur);
-      setYandexState(cur.yandex_status || 'disconnected', cur.yandex_last_error || '', lastVncUrl);
-      renderCaptchaAlert(cur);
-      const resumeStatuses = new Set(['auth_required', 'captcha_required', 'paused', 'downloading_partial']);
-      const isResumeReady = resumeStatuses.has(cur.status || '');
-      startDownloadBtn.textContent = isResumeReady ? 'Продолжить скачивание' : 'Старт скачивания';
-      finalizeTableBtn.classList.toggle('hidden', Number(cur.is_finalized || 0) === 1);
-      if (Number(cur.is_finalized || 0) === 1 && !isProgramMode) {
-        await loadProgram();
-      }
-    }
+async function loadTables() {
+  const tables = await apiGet('/api/tables');
+  renderTablesList(tables);
+  if (!currentTableId && tables.length > 0) {
+    await openTable(tables[0].id, tables[0].title);
   }
 }
 
+function renderPreview(headers, rows, totalRows = 0) {
+  previewHeadEl.innerHTML = '';
+  previewBodyEl.innerHTML = '';
 
-async function deleteTableById(tableId) {
-  const ok = confirm('Удалить таблицу? Это действие удалит таблицу, программу выступлений и связанные файлы.');
-  if (!ok) return;
-
-  const resp = await fetch(`/api/tables/${tableId}`, { method: 'DELETE' });
-  if (requireAuth(resp)) return;
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    alert(data.detail || 'Не удалось удалить таблицу');
+  if (!headers.length) {
+    previewMetaEl.textContent = 'Нет загруженного Excel.';
     return;
   }
 
-  if (currentTableId === tableId) {
-    currentTableId = null;
-    tableView.classList.add('hidden');
-    setProgramMode(false);
-    setWorkspaceVisible(true);
-  }
+  previewMetaEl.textContent = `Колонок: ${headers.length}. Строк всего: ${totalRows}. Показано: ${rows.length}.`;
 
-  await refreshTables();
-}
-async function refreshYandexSession(tableId, openVncOnFail = false) {
-  const resp = await fetch(`/api/tables/${tableId}/yandex/refresh`, { method: 'POST' });
-  if (requireAuth(resp)) return { ok: false, needLogin: false };
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    alert(data.detail || 'Не удалось обновить Яндекс-сессию');
-    return { ok: false, needLogin: false };
-  }
-
-  if (data.status === 'ok') {
-    setYandexState('connected', '', data.vnc_url || null);
-    await refreshTables();
-    return { ok: true, needLogin: false };
-  }
-
-  const nextStatus = data.yandex_status || 'auth_required';
-  setYandexState(nextStatus, data.detail || 'Требуется вход администратора', data.vnc_url || null);
-  await refreshTables();
-  if (openVncOnFail && (data.vnc_url || lastVncUrl)) {
-    const vncUrl = data.vnc_url || lastVncUrl;
-    lastVncUrl = vncUrl;
-    window.open(vncUrl, 'yandex_vnc', 'width=520,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no');
-  }
-  return { ok: false, needLogin: true };
-}
-
-function filteredProgramItems() {
-  const q = (programSearch.value || '').toLowerCase().trim();
-  return currentProgramItems.filter((item) => {
-    if (item.kind === 'break') return true;
-    const audioCell = (item.cells || []).find((c) => c.key === 'audio_url');
-    const consentCell = (item.cells || []).find((c) => c.key === 'consent_url');
-    const presentationCell = (item.cells || []).find((c) => c.key === 'presentation_url');
-    const hasAudio = !!(audioCell && (audioCell.files || []).length);
-    const hasConsent = !!(consentCell && ((consentCell.files || []).length || (consentCell.links || []).length));
-    const hasPresentation = !!(presentationCell && ((presentationCell.files || []).length || (presentationCell.links || []).length));
-    if (filterNoAudio.checked && hasAudio) return false;
-    if (filterNoReceipt.checked && hasConsent) return false;
-    if (filterNoPresentation.checked && hasPresentation) return false;
-    if (!q) return true;
-    const hay = `${item.display_number || ''} ${item.number_title || ''} ${item.fio || ''} ${item.team || ''}`.toLowerCase();
-    return hay.includes(q);
-  });
-}
-
-function renderProgramHead() {
-  if (!programHeadRow) return;
-  programHeadRow.innerHTML = '<th>№</th><th>↕</th><th>Название</th><th>ФИО</th><th>Коллектив</th>';
-  (currentRenderedTagMeta || []).forEach(({ tag }) => {
+  const headRow = document.createElement('tr');
+  headers.forEach((header, index) => {
     const th = document.createElement('th');
-    th.textContent = tag.label || tag.key;
-    programHeadRow.appendChild(th);
+    th.textContent = header || `Колонка ${index + 1}`;
+    headRow.appendChild(th);
   });
-}
+  previewHeadEl.appendChild(headRow);
 
-function isTagForceHidden(tag) {
-  const hay = `${tag?.label || ''} ${tag?.key || ''}`.toLowerCase();
-  return FORCED_HIDDEN_TAG_PATTERNS.some((rx) => rx.test(hay));
-}
-
-function isCellFilled(cell) {
-  if (!cell) return false;
-  if ((cell.value || '').toString().trim()) return true;
-  if ((cell.values || []).some((v) => String(v || '').trim())) return true;
-  if ((cell.files || []).length) return true;
-  if ((cell.links || []).length) return true;
-  if (cell.conflict?.selected) return true;
-  return false;
-}
-
-function rebuildVisibleProgramTags(items = currentProgramItems, tags = currentVisibleTags) {
-  currentRenderedTagMeta = (tags || [])
-    .map((tag, index) => ({ tag, index }))
-    .filter(({ tag, index }) => {
-      if (isTagForceHidden(tag)) return false;
-      return (items || []).some((item) => item.kind === 'entry' && isCellFilled((item.cells || [])[index]));
-    });
-}
-
-function fillTextCell(td, text) {
-  const span = document.createElement('span');
-  span.className = 'clamp-content';
-  span.textContent = text || '';
-  td.classList.add('clamp-cell');
-  td.appendChild(span);
-}
-
-async function resolveGroupedConflict(entryId, field, value) {
-  const resp = await fetch(`/api/tables/${currentTableId}/entries/${entryId}/resolve`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ field, value })
-  });
-  if (!resp.ok) return;
-  const data = await resp.json().catch(() => ({}));
-  const target = currentProgramItems.find((x) => x.entry_id === entryId);
-  if (target) target.resolved_fields = data.resolved_fields || {};
-}
-
-function renderTagCell(td, item, cell) {
-  if (!cell) return;
-  if (cell.type === 'grouped_choice') {
-    if (cell.conflict && (cell.conflict.options || []).length) {
-      const select = document.createElement('select');
-      select.innerHTML = '<option value="">Выбрать</option>' + (cell.conflict.options || []).map((v) => `<option value="${v}">${v}</option>`).join('');
-      if (cell.conflict.selected) select.value = cell.conflict.selected;
-      select.onchange = async () => {
-        await resolveGroupedConflict(item.entry_id, cell.key, select.value);
-      };
-      td.appendChild(select);
-    } else {
-      fillTextCell(td, cell.value || '');
-    }
-    return;
-  }
-
-  if (cell.type === 'links') {
-    (cell.links || []).forEach((link, i) => {
-      const a = document.createElement('a');
-      a.href = link.url;
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.textContent = link.title || `Ссылка ${i + 1}`;
-      if (i > 0) td.appendChild(document.createElement('br'));
-      td.appendChild(a);
-    });
-    return;
-  }
-
-  if (cell.type === 'files' || cell.type === 'files_or_links') {
-    const files = cell.files || [];
-    files.forEach((f, i) => {
-      if (i > 0) td.appendChild(document.createElement('br'));
-      if (f.download_url) {
-        const a = document.createElement('a');
-        a.className = 'btn btn-secondary';
-        a.href = f.download_url;
-        a.textContent = cell.key === 'audio_url' ? 'Скачать' : 'Открыть';
-        td.appendChild(a);
-      } else {
-        td.appendChild(document.createTextNode(f.name || 'Файл'));
-      }
-    });
-    if (cell.type === 'files_or_links') {
-      (cell.links || []).forEach((link, i) => {
-        if (files.length || i > 0) td.appendChild(document.createElement('br'));
-        const a = document.createElement('a');
-        a.href = link.url;
-        a.target = '_blank';
-        a.rel = 'noopener';
-        a.textContent = link.title || `Ссылка ${i + 1}`;
-        td.appendChild(a);
-      });
-    }
-    return;
-  }
-
-  fillTextCell(td, cell.value || (cell.values || []).join(', '));
-}
-
-function renderProgram() {
-  programBody.innerHTML = '';
-  const items = filteredProgramItems();
-  items.forEach((item, idx) => {
+  rows.forEach((row) => {
     const tr = document.createElement('tr');
-    tr.dataset.itemId = String(item.program_item_id);
-
-    if (item.kind === 'break') {
-      tr.className = 'program-break-row';
-      tr.innerHTML = `<td></td><td>≡</td><td colspan="${5 + (currentRenderedTagMeta || []).length}"><div class="program-break-cell"><span>${item.label}</span><button class="btn btn-secondary btn-inline">Удалить</button></div></td>`;
-      tr.querySelector('button').onclick = () => deleteBreak(item.program_item_id);
-    } else {
-      tr.className = `program-entry-row ${item.is_problematic ? 'program-problem-row' : ''}`.trim();
-      tr.draggable = true;
-      tr.ondragstart = () => { draggedProgramItemId = item.program_item_id; };
-      tr.ondragover = (e) => e.preventDefault();
-      tr.ondrop = async () => {
-        if (!draggedProgramItemId || draggedProgramItemId === item.program_item_id) return;
-        await reorderByDrop(draggedProgramItemId, item.program_item_id);
-      };
-
-      const no = document.createElement('td');
-      no.textContent = String(item.display_number || '');
-      no.className = 'clickable-number';
-      no.onclick = async () => {
-        const v = prompt('Введите новую позицию', String(item.display_number || ''));
-        if (!v) return;
-        setAutosave('Сохраняю…');
-        const resp = await fetch(`/api/tables/${currentTableId}/program/item/${item.program_item_id}/move_to_position`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: Number(v) })
-        });
-        if (requireAuth(resp)) return;
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) return alert(data.detail || 'Не удалось переместить');
-        currentProgramItems = data.items || [];
-        renderProgram();
-        setAutosave('Изменения сохранены');
-      };
-
-      tr.appendChild(no);
-      tr.innerHTML += '<td class="drag-handle">≡</td>';
-      const titleTd = document.createElement('td');
-      const fioTd = document.createElement('td');
-      const teamTd = document.createElement('td');
-      fillTextCell(titleTd, item.number_title || '');
-      fillTextCell(fioTd, item.fio || '');
-      fillTextCell(teamTd, item.team || '');
-      tr.appendChild(titleTd);
-      tr.appendChild(fioTd);
-      tr.appendChild(teamTd);
-
-      (currentRenderedTagMeta || []).forEach(({ index }) => {
-        const cell = (item.cells || [])[index];
-        const td = document.createElement('td');
-        renderTagCell(td, item, cell);
-        tr.appendChild(td);
-      });
-
-      tr.onclick = (event) => {
-        if (event.target.closest('a, button, select, input, label')) return;
-        tr.classList.toggle('is-expanded');
-      };
-    }
-
-    programBody.appendChild(tr);
-    if (item.kind === 'entry' && idx < items.length - 1) {
-      const plusRow = document.createElement('tr');
-      plusRow.className = 'program-insert-row';
-      plusRow.innerHTML = `<td colspan="${5 + (currentRenderedTagMeta || []).length}"><button class="insert-break-btn">+ добавить перерыв здесь</button></td>`;
-      const nextItem = items.slice(idx + 1).find((x) => x.kind === 'entry');
-      plusRow.querySelector('button').onclick = () => addBreakAfter(item.program_item_id, nextItem ? nextItem.program_item_id : null);
-      programBody.appendChild(plusRow);
-    }
+    headers.forEach((_, index) => {
+      const td = document.createElement('td');
+      td.textContent = row[index] || '';
+      tr.appendChild(td);
+    });
+    previewBodyEl.appendChild(tr);
   });
 }
 
-
-async function reorderByDrop(fromId, toId) {
-  setAutosave('Сохраняю…');
-  const ids = currentProgramItems.map((x) => x.program_item_id);
-  const fromIndex = ids.indexOf(fromId);
-  const toIndex = ids.indexOf(toId);
-  if (fromIndex < 0 || toIndex < 0) return;
-  ids.splice(fromIndex, 1);
-  ids.splice(toIndex, 0, fromId);
-  const resp = await fetch(`/api/tables/${currentTableId}/program/reorder`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ program_item_ids: ids })
-  });
-  if (requireAuth(resp)) return;
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) return alert(data.detail || 'Ошибка reorder');
-  currentProgramItems = data.items || [];
-  renderProgram();
-  setAutosave('Изменения сохранены');
-}
-
-async function addBreakAfter(afterItemId, beforeItemId = null) {
-  const mins = Number(prompt('Перерыв в минутах', '10'));
-  if (!mins) return;
-  setAutosave('Сохраняю…');
-  const resp = await fetch(`/api/tables/${currentTableId}/program/break`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ after_item_id: afterItemId, before_item_id: beforeItemId, break_minutes: mins })
-  });
-  if (requireAuth(resp)) return;
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) return alert(data.detail || 'Ошибка добавления перерыва');
-  currentProgramItems = data.items || [];
-  renderProgram();
-  setAutosave('Изменения сохранены');
-}
-
-async function deleteBreak(itemId) {
-  if (!confirm('Удалить перерыв?')) return;
-  setAutosave('Сохраняю…');
-  const resp = await fetch(`/api/tables/${currentTableId}/program/item/${itemId}`, { method: 'DELETE' });
-  if (requireAuth(resp)) return;
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) return alert(data.detail || 'Ошибка удаления');
-  currentProgramItems = data.items || [];
-  renderProgram();
-  setAutosave('Изменения сохранены');
-}
-
-async function loadProgram() {
-  if (!currentTableId) return;
-  const resp = await fetch(`/api/tables/${currentTableId}/program`);
-  if (requireAuth(resp)) return;
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) return;
-  if (!data.is_finalized) {
-    setProgramMode(false);
+function renderMapping() {
+  mappingListEl.innerHTML = '';
+  const fields = Object.entries(mappingFields);
+  if (!fields.length) {
+    mappingListEl.innerHTML = '<p class="hint">Сначала загрузите Excel, чтобы получить схему тегов.</p>';
+    saveMappingBtn.disabled = true;
     return;
   }
-  setProgramMode(true);
-  currentProgramItems = data.items || [];
-  currentVisibleTags = data.visible_tags || [];
-  rebuildVisibleProgramTags(currentProgramItems, currentVisibleTags);
-  renderProgramHead();
-  renderProgram();
-}
 
-async function openTable(id, title) {
-  currentTableId = id;
-  tableTitle.textContent = `Таблица: ${title} (#${id})`;
-  tableView.classList.remove('hidden');
-  setWorkspaceVisible(false);
-  showAutofillInfo('');
-  await refreshTables();
-  await loadProgram();
-  if (!isProgramMode) {
-    await refreshMapping();
-    await loadExcelPreview();
-  }
-}
+  fields.forEach(([fieldKey, fieldLabel]) => {
+    const row = document.createElement('div');
+    row.className = 'mapping-row';
 
-function initTablesSection() {
-  document.getElementById('closeMappingDialog').onclick = () => mappingDialog.close();
-  document.getElementById('closeReceiptViewer').onclick = () => receiptViewerDialog.close();
-  if (backToTablesBtn) {
-    backToTablesBtn.onclick = () => {
-      currentTableId = null;
-      tableView.classList.add('hidden');
-      setProgramMode(false);
-      setWorkspaceVisible(true);
-      refreshTables();
-    };
-  }
+    const name = document.createElement('div');
+    name.className = 'mapping-tag';
+    name.textContent = fieldLabel;
 
-  [programSearch, filterNoAudio, filterNoReceipt, filterNoPresentation].forEach((el) => {
-    el.addEventListener('input', renderProgram);
-    el.addEventListener('change', renderProgram);
+    const select = document.createElement('select');
+    select.className = 'mapping-select';
+    select.dataset.field = fieldKey;
+
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.textContent = 'не выбрано';
+    select.appendChild(emptyOption);
+
+    currentHeaders.forEach((header, index) => {
+      const option = document.createElement('option');
+      option.value = String(index);
+      option.textContent = `${index + 1}. ${header || `Колонка ${index + 1}`}`;
+      select.appendChild(option);
+    });
+
+    const mappedIndex = normalizeMappingValue(currentMapping[fieldKey]);
+    select.value = mappedIndex === null ? '' : String(mappedIndex);
+
+    select.addEventListener('change', () => {
+      const value = select.value === '' ? null : Number(select.value);
+      if (value === null) {
+        delete currentMapping[fieldKey];
+      } else {
+        currentMapping[fieldKey] = value;
+      }
+      setStatus(mappingStatusEl, 'Есть несохранённые изменения в mapping.', 'warning');
+    });
+
+    row.appendChild(name);
+    row.appendChild(select);
+    mappingListEl.appendChild(row);
   });
 
-  downloadAllProgramBtn.onclick = () => {
-    if (!currentTableId) return;
-    window.location.href = `/api/tables/${currentTableId}/program/download_all`;
-  };
-
-  finalizeTableBtn.onclick = async () => {
-    if (!currentTableId) return alert('Сначала выберите таблицу');
-    setAutosave('Сохраняю…');
-    const resp = await fetch(`/api/tables/${currentTableId}/finalize`, { method: 'POST' });
-    if (requireAuth(resp)) return;
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) return alert(data.detail || 'Не удалось сформировать программу');
-    await loadProgram();
-    setAutosave('Изменения сохранены');
-    await refreshTables();
-  };
-
-  resetMappingBtn.onclick = async () => {
-    currentMapping = {};
-    await saveMapping();
-    await refreshMapping();
-    showAutofillInfo('Схема сброшена. Назначьте колонки и запомните схему заново.');
-  };
-
-  rememberMappingBtn.onclick = async () => {
-    if (!currentTableId) return alert('Сначала выберите таблицу');
-    const resp = await fetch(`/api/tables/${currentTableId}/mapping/remember`, { method: 'POST' });
-    if (requireAuth(resp)) return;
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) return alert(data.detail || 'Не удалось запомнить схему');
-    showAutofillInfo(`Схема сохранена. Запомнено полей: ${data.saved_fields}.`);
-  };
-
-  document.getElementById('createTable').onclick = async () => {
-    const title = document.getElementById('newTitle').value.trim();
-    if (!title) return alert('Введите название таблицы');
-    await postForm('/api/tables', { title });
-    await refreshTables();
-  };
-
-  document.getElementById('uploadExcel').onclick = async () => {
-    if (!currentTableId) return alert('Сначала выберите таблицу');
-    const f = document.getElementById('excelFile').files[0];
-    if (!f) return alert('Выберите файл Excel');
-    const fd = new FormData();
-    fd.append('excel', f);
-    const resp = await fetch(`/api/tables/${currentTableId}/excel`, { method: 'POST', body: fd });
-    if (requireAuth(resp)) return;
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      showPreviewError(data.detail || 'Ошибка загрузки Excel');
-      return;
-    }
-    clearPreviewError();
-    if (data.mapping_autofilled) {
-      const sourceText = data.mapping_autofill_source === 'template' ? 'из сохранённого шаблона' : 'по памяти/эвристикам';
-      showAutofillInfo(`Сопоставление автозаполнено ${sourceText}. Проверьте и при необходимости скорректируйте.`);
-    } else {
-      showAutofillInfo('Автосопоставление не найдено. Назначьте колонки вручную.');
-    }
-    await loadExcelPreview();
-    await refreshMapping();
-    await refreshTables();
-  };
-
-  document.getElementById('connectYandex').onclick = async () => {
-    if (!currentTableId) return alert('Сначала выберите таблицу');
-    await refreshYandexSession(currentTableId, true);
-  };
-
-  openCaptchaBtn.onclick = async () => {
-    if (!currentTableId) return alert('Сначала выберите таблицу');
-    const resp = await fetch(`/api/tables/${currentTableId}/captcha/open`, { method: 'POST' });
-    if (requireAuth(resp)) return;
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) return alert(data.detail || 'Не удалось открыть CAPTCHA на сервере');
-    lastVncUrl = data.vnc_url || lastVncUrl;
-    alert(data.detail || 'Капча открыта в браузере на сервере. Откройте окно noVNC и пройдите проверку.');
-  };
-
-  resumeAfterCaptchaBtn.onclick = async () => {
-    startDownloadBtn.click();
-  };
-
-  openAdminLoginBtn.onclick = async () => {
-    if (!currentTableId) return alert('Сначала выберите таблицу');
-    let vncUrl = lastVncUrl;
-    if (!vncUrl) {
-      const resp = await fetch(`/api/tables/${currentTableId}/yandex/vnc/start`, { method: 'POST' });
-      if (requireAuth(resp)) return;
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) return alert(data.detail || 'Не удалось получить ссылку VNC');
-      vncUrl = data.vnc_url;
-    }
-    lastVncUrl = vncUrl;
-    window.open(vncUrl, 'yandex_vnc', 'width=520,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=no');
-  };
-
-  startDownloadBtn.onclick = async () => {
-    if (!currentTableId) return alert('Сначала выберите таблицу');
-    const resp = await fetch(`/api/tables/${currentTableId}/start-download`, { method: 'POST' });
-    const data = await resp.json().catch(() => ({}));
-    if (resp.status === 400 && data.status === 'need_login') {
-      setYandexState(data.yandex_status || 'auth_required', data.detail || '', data.vnc_url || null);
-      await refreshTables();
-      return;
-    }
-    if (requireAuth(resp)) return;
-    if (!resp.ok) return alert(data.detail || 'Ошибка запуска');
-    await refreshTables();
-    alert(data.mode === 'resume' ? 'Продолжение скачивания запущено' : 'Фоновая загрузка запущена');
-  };
-
-  renderMappingPanel();
-  setWorkspaceVisible(true);
-  setupPreviewResizeRecalc();
-  window.addEventListener('resize', schedulePreviewLayoutRecalc);
-  document.addEventListener('layout:sidebar-toggled', schedulePreviewLayoutRecalc);
-  refreshTables();
-  setYandexState('disconnected');
-  if (captchaAlertEl) captchaAlertEl.classList.add('hidden');
-  setInterval(async () => {
-    await refreshTables();
-    await refreshMapping();
-    if (isProgramMode) await loadProgram();
-  }, 6000);
+  saveMappingBtn.disabled = !currentTableId || !currentHeaders.length;
 }
 
-document.addEventListener('DOMContentLoaded', initTablesSection);
+async function loadPreviewAndMapping(tableId) {
+  try {
+    const [preview, mappingResp] = await Promise.all([
+      apiGet(`/api/tables/${tableId}/excel_preview`),
+      apiGet(`/api/tables/${tableId}/mapping`),
+    ]);
+
+    currentHeaders = Array.isArray(preview.headers) ? preview.headers : [];
+    currentRows = Array.isArray(preview.rows) ? preview.rows : [];
+    mappingFields = (mappingResp && mappingResp.mapping_fields) || preview.mapping_fields || {};
+    currentMapping = (mappingResp && mappingResp.mapping) || {};
+
+    renderPreview(currentHeaders, currentRows, preview.total_rows || 0);
+    renderMapping();
+
+    if (currentHeaders.length) {
+      setStatus(uploadStatusEl, 'Excel уже загружен. Можно обновить файл.', 'success');
+    } else {
+      setStatus(uploadStatusEl, 'Excel ещё не загружен.', 'muted');
+    }
+    setStatus(mappingStatusEl, 'Mapping загружен.', 'muted');
+  } catch (error) {
+    renderPreview([], []);
+    mappingFields = {};
+    currentMapping = {};
+    renderMapping();
+    setStatus(uploadStatusEl, `Ошибка загрузки данных: ${error.message}`, 'error');
+  }
+}
+
+async function openTable(tableId, title) {
+  currentTableId = tableId;
+  currentProjectEl.textContent = `Текущий проект: ${title} (#${tableId})`;
+  uploadExcelBtn.disabled = false;
+  await loadPreviewAndMapping(tableId);
+}
+
+createTableBtn.addEventListener('click', async () => {
+  const title = newTitleEl.value.trim();
+  if (!title) {
+    setStatus(uploadStatusEl, 'Введите название проекта перед созданием.', 'warning');
+    return;
+  }
+
+  try {
+    await apiPostForm('/api/tables', { title });
+    newTitleEl.value = '';
+    await loadTables();
+    setStatus(uploadStatusEl, 'Проект создан.', 'success');
+  } catch (error) {
+    setStatus(uploadStatusEl, `Не удалось создать проект: ${error.message}`, 'error');
+  }
+});
+
+refreshTablesBtn.addEventListener('click', async () => {
+  try {
+    await loadTables();
+  } catch (error) {
+    setStatus(uploadStatusEl, `Не удалось обновить список: ${error.message}`, 'error');
+  }
+});
+
+uploadExcelBtn.addEventListener('click', async () => {
+  if (!currentTableId) {
+    setStatus(uploadStatusEl, 'Сначала выберите проект импорта.', 'warning');
+    return;
+  }
+
+  const file = excelFileEl.files && excelFileEl.files[0];
+  if (!file) {
+    setStatus(uploadStatusEl, 'Выберите Excel-файл (.xlsx или .xls).', 'warning');
+    return;
+  }
+
+  const isExcel = /\.(xlsx|xls)$/i.test(file.name || '');
+  if (!isExcel) {
+    setStatus(uploadStatusEl, 'Поддерживаются только файлы .xlsx или .xls.', 'warning');
+    return;
+  }
+
+  try {
+    setStatus(uploadStatusEl, 'Загрузка и чтение Excel...', 'muted');
+    const payload = await apiPostForm(`/api/tables/${currentTableId}/excel`, { excel: file });
+
+    currentHeaders = Array.isArray(payload.headers) ? payload.headers : [];
+    currentRows = Array.isArray(payload.rows) ? payload.rows : [];
+    currentMapping = payload.mapping || {};
+
+    if (!Object.keys(mappingFields).length && payload.mapping_fields) {
+      mappingFields = payload.mapping_fields;
+    }
+
+    renderPreview(currentHeaders, currentRows, payload.total_rows || 0);
+    renderMapping();
+
+    const autoLabel = payload.mapping_autofilled ? ' Mapping автоопределён, проверьте вручную.' : '';
+    setStatus(uploadStatusEl, `Excel загружен успешно.${autoLabel}`, 'success');
+    setStatus(mappingStatusEl, 'Проверьте и сохраните mapping.', 'warning');
+  } catch (error) {
+    setStatus(uploadStatusEl, `Ошибка загрузки Excel: ${error.message}`, 'error');
+  }
+});
+
+saveMappingBtn.addEventListener('click', async () => {
+  if (!currentTableId) {
+    setStatus(mappingStatusEl, 'Сначала выберите проект.', 'warning');
+    return;
+  }
+
+  try {
+    const response = await apiPostJson(`/api/tables/${currentTableId}/mapping`, { mapping: currentMapping });
+    currentMapping = response.mapping || currentMapping;
+    renderMapping();
+    setStatus(mappingStatusEl, 'Mapping сохранён. Нормализация данных выполнена в backend.', 'success');
+  } catch (error) {
+    setStatus(mappingStatusEl, `Не удалось сохранить mapping: ${error.message}`, 'error');
+  }
+});
+
+(async function init() {
+  try {
+    await loadTables();
+  } catch (error) {
+    setStatus(uploadStatusEl, `Ошибка инициализации: ${error.message}`, 'error');
+  }
+})();
