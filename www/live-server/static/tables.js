@@ -176,26 +176,173 @@ async function initDetailPage() {
   const saveMappingBtn = document.getElementById('saveMapping');
   const collapseConfiguredBtn = document.getElementById('collapseConfigured');
   const previewMetaEl = document.getElementById('previewMeta');
-  const previewHeadEl = document.getElementById('previewHead');
-  const previewBodyEl = document.getElementById('previewBody');
+  const previewCardsEl = document.getElementById('previewCards');
 
   let headers = [];
   let mappingByTag = {};
   let collapsedMappingCards = {};
   let mappingFieldTags = [];
+  let previewRowsData = [];
+  let rowOrder = [];
+  const expandedRows = {};
 
-  function renderPreview(rows) {
-    previewHeadEl.innerHTML = '';
-    previewBodyEl.innerHTML = '';
+  const coreColumnDefs = [
+    { key: 'territory', title: 'Территория', tags: ['Муниципалитет', 'Территория'], headers: ['Муниципалитет', 'Территория', 'Округ'] },
+    { key: 'fio', title: 'ФИО участников', tags: ['ФИО участника', 'Список участников'], headers: ['ФИО участника', 'Список участников', 'ФИО'] },
+    { key: 'nomination', title: 'Номинация', tags: ['Номинация'], headers: ['Номинация'] },
+    { key: 'numberTitle', title: 'Название номера', tags: ['Название номера'], headers: ['Название номера'] },
+    { key: 'phonograms', title: 'Фонограммы', tags: ['Фонограмма'], headers: ['Фонограмма'] },
+    { key: 'presentationVideo', title: 'Презентации / видео', tags: ['Презентация', 'Видео', 'Ссылки'], headers: ['Презентация', 'Видео', 'Ссылка', 'Ссылки'] },
+    { key: 'consents', title: 'Согласия', tags: ['Согласие / квитки'], headers: ['Согласие', 'Квитки', 'Согласие / квитки'] },
+  ];
+
+  function findHeaderIndexByTagOrName(tagCandidates, headerCandidates = []) {
+    const normalizedHeaders = headers.map((h) => normalizeHeaderLikeBackend(h));
+    for (const tag of tagCandidates || []) {
+      const mappedHeader = mappingByTag[tag];
+      if (!mappedHeader) continue;
+      const idx = headers.findIndex((h) => h === mappedHeader);
+      if (idx >= 0) return idx;
+    }
+    const allCandidates = [...(headerCandidates || []), ...(tagCandidates || [])];
+    for (const candidate of allCandidates) {
+      const normCandidate = normalizeHeaderLikeBackend(candidate);
+      const idx = normalizedHeaders.findIndex((headerNorm) => headerNorm && (headerNorm.includes(normCandidate) || normCandidate.includes(headerNorm)));
+      if (idx >= 0) return idx;
+    }
+    return -1;
+  }
+
+  function buildCoreCells(row) {
+    const usedIndexes = new Set();
+    const cells = coreColumnDefs.map((def) => {
+      if (def.key === 'presentationVideo') {
+        const presentationIdx = findHeaderIndexByTagOrName(['Презентация'], ['Презентация']);
+        const videoIdx = findHeaderIndexByTagOrName(['Видео', 'Ссылки'], ['Видео', 'Ссылка', 'Ссылки']);
+        if (presentationIdx >= 0) usedIndexes.add(presentationIdx);
+        if (videoIdx >= 0) usedIndexes.add(videoIdx);
+        const values = [presentationIdx, videoIdx]
+          .filter((idx, index, arr) => idx >= 0 && arr.indexOf(idx) === index)
+          .map((idx) => (row[idx] ?? '').toString().trim())
+          .filter(Boolean);
+        return { title: def.title, value: values.join('\n') || '—' };
+      }
+      const idx = findHeaderIndexByTagOrName(def.tags, def.headers);
+      if (idx >= 0) usedIndexes.add(idx);
+      return {
+        title: def.title,
+        value: idx >= 0 ? ((row[idx] ?? '').toString().trim() || '—') : '—',
+      };
+    });
+    return { cells, usedIndexes };
+  }
+
+  function moveRow(fromPos, toPos) {
+    if (!rowOrder.length) return;
+    const from = Number(fromPos);
+    const to = Number(toPos);
+    if (!Number.isInteger(from) || !Number.isInteger(to)) return;
+    if (from < 1 || to < 1 || from > rowOrder.length || to > rowOrder.length || from === to) return;
+    const [moved] = rowOrder.splice(from - 1, 1);
+    rowOrder.splice(to - 1, 0, moved);
+    renderPreview();
+  }
+
+  function renderPreview() {
+    previewCardsEl.innerHTML = '';
     if (!headers.length) {
       previewMetaEl.textContent = 'Нет данных для предпросмотра.';
       return;
     }
-    previewHeadEl.innerHTML = `<tr>${headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr>`;
-    rows.forEach((row) => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = headers.map((_, i) => `<td>${esc(row[i])}</td>`).join('');
-      previewBodyEl.appendChild(tr);
+    if (!previewRowsData.length) {
+      previewMetaEl.textContent = 'Нет строк для предпросмотра.';
+      return;
+    }
+    rowOrder.forEach((rowRef, index) => {
+      const row = previewRowsData[rowRef - 1] || [];
+      const rowNumber = index + 1;
+      const isExpanded = Boolean(expandedRows[rowRef]);
+      const { cells, usedIndexes } = buildCoreCells(row);
+
+      const card = document.createElement('article');
+      card.className = `preview-row-card${isExpanded ? ' is-expanded' : ''}`;
+
+      const rowTop = document.createElement('div');
+      rowTop.className = 'preview-row-top';
+      rowTop.innerHTML = `
+        <button type="button" class="btn btn-secondary btn-small preview-expand-btn">${isExpanded ? 'Свернуть' : 'Развернуть'}</button>
+      `;
+      const numberCell = document.createElement('div');
+      numberCell.className = 'preview-cell preview-cell-order';
+      numberCell.innerHTML = `
+        <div class="preview-cell-title">Номер</div>
+        <div class="preview-order-controls">
+          <input class="preview-order-input" type="number" min="1" max="${rowOrder.length}" value="${rowNumber}" />
+          <button type="button" class="btn btn-secondary btn-small preview-move-btn" title="Переместить строку">↕</button>
+        </div>
+      `;
+      const numberInput = numberCell.querySelector('.preview-order-input');
+      const moveBtn = numberCell.querySelector('.preview-move-btn');
+      const commitMove = () => {
+        const nextPos = Number(numberInput.value || rowNumber);
+        if (!Number.isInteger(nextPos) || nextPos < 1 || nextPos > rowOrder.length) {
+          numberInput.value = rowNumber;
+          return;
+        }
+        moveRow(rowNumber, nextPos);
+      };
+      numberInput?.addEventListener('change', commitMove);
+      numberInput?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        commitMove();
+      });
+      moveBtn?.addEventListener('click', commitMove);
+      rowTop.querySelector('.preview-expand-btn')?.addEventListener('click', () => {
+        expandedRows[rowRef] = !expandedRows[rowRef];
+        renderPreview();
+      });
+
+      const grid = document.createElement('div');
+      grid.className = 'preview-row-grid';
+      grid.appendChild(numberCell);
+      cells.forEach((cell) => {
+        const item = document.createElement('div');
+        item.className = 'preview-cell';
+        item.innerHTML = `
+          <div class="preview-cell-title">${esc(cell.title)}</div>
+          <div class="preview-cell-value${isExpanded ? '' : ' preview-cell-clamp'}">${esc(cell.value)}</div>
+        `;
+        grid.appendChild(item);
+      });
+
+      card.appendChild(rowTop);
+      card.appendChild(grid);
+
+      if (isExpanded) {
+        const extra = document.createElement('div');
+        extra.className = 'preview-extra-block';
+        const remaining = headers
+          .map((header, headerIndex) => ({ header, value: (row[headerIndex] ?? '').toString().trim(), headerIndex }))
+          .filter((item) => !usedIndexes.has(item.headerIndex) && item.value);
+        extra.innerHTML = `
+          <h3 class="preview-extra-title">Дополнительные поля</h3>
+          <div class="preview-extra-grid">
+            ${remaining.length
+              ? remaining
+                .map((item) => `
+                  <div class="preview-extra-row">
+                    <div class="preview-extra-key">${esc(item.header)}</div>
+                    <div class="preview-extra-value">${esc(item.value)}</div>
+                  </div>
+                `).join('')
+              : '<div class="hint">Дополнительных данных нет.</div>'}
+          </div>
+        `;
+        card.appendChild(extra);
+      }
+
+      previewCardsEl.appendChild(card);
     });
   }
 
@@ -271,6 +418,7 @@ async function initDetailPage() {
       if (isMapped) card.appendChild(toggleBtn);
       mappingListEl.appendChild(card);
     });
+    renderPreview();
   }
 
   async function reload() {
@@ -282,7 +430,8 @@ async function initDetailPage() {
     titleEl.textContent = table.title || `Таблица #${tableId}`;
     headers = preview.headers || [];
     mappingByTag = mapResp.mapping || {};
-    renderPreview(preview.rows || []);
+    previewRowsData = preview.rows || [];
+    rowOrder = previewRowsData.map((_, idx) => idx + 1);
     renderMapping(mapResp.field_tags || []);
     previewMetaEl.textContent = `Показано ${preview.rows?.length || 0} из ${preview.total_rows || 0} строк`;
   }
