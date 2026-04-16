@@ -179,59 +179,51 @@ async function initDetailPage() {
   const previewCardsEl = document.getElementById('previewCards');
 
   let headers = [];
-  let mappingByTag = {};
+  let mappingByHeaderIdx = {};
   let collapsedMappingCards = {};
   let mappingFieldTags = [];
   let previewRowsData = [];
   let rowOrder = [];
   const expandedRows = {};
 
-  const coreColumnDefs = [
-    { key: 'territory', title: 'Территория', tags: ['Муниципалитет', 'Территория'], headers: ['Муниципалитет', 'Территория', 'Округ'] },
-    { key: 'fio', title: 'ФИО участников', tags: ['ФИО участника', 'Список участников'], headers: ['ФИО участника', 'Список участников', 'ФИО'] },
-    { key: 'nomination', title: 'Номинация', tags: ['Номинация'], headers: ['Номинация'] },
-    { key: 'numberTitle', title: 'Название номера', tags: ['Название номера'], headers: ['Название номера'] },
-    { key: 'phonograms', title: 'Фонограммы', tags: ['Фонограмма'], headers: ['Фонограмма'] },
-    { key: 'presentationVideo', title: 'Презентации / видео', tags: ['Презентация', 'Видео', 'Ссылки'], headers: ['Презентация', 'Видео', 'Ссылка', 'Ссылки'] },
-    { key: 'consents', title: 'Согласия', tags: ['Согласие / квитки'], headers: ['Согласие', 'Квитки', 'Согласие / квитки'] },
-  ];
-
-  function findHeaderIndexByTagOrName(tagCandidates, headerCandidates = []) {
-    const normalizedHeaders = headers.map((h) => normalizeHeaderLikeBackend(h));
-    for (const tag of tagCandidates || []) {
-      const mappedHeader = mappingByTag[tag];
-      if (!mappedHeader) continue;
-      const idx = headers.findIndex((h) => h === mappedHeader);
-      if (idx >= 0) return idx;
-    }
-    const allCandidates = [...(headerCandidates || []), ...(tagCandidates || [])];
-    for (const candidate of allCandidates) {
-      const normCandidate = normalizeHeaderLikeBackend(candidate);
-      const idx = normalizedHeaders.findIndex((headerNorm) => headerNorm && (headerNorm.includes(normCandidate) || normCandidate.includes(headerNorm)));
-      if (idx >= 0) return idx;
-    }
-    return -1;
+  function mappedTagsInOrder() {
+    const used = new Set();
+    return mappingFieldTags.filter((tag) => {
+      const hasAny = Object.values(mappingByHeaderIdx).some((v) => v === tag);
+      if (!hasAny || used.has(tag)) return false;
+      used.add(tag);
+      return true;
+    });
   }
 
-  function buildCoreCells(row) {
+  function normalizeRowByTags(row) {
+    const tags = mappedTagsInOrder();
     const usedIndexes = new Set();
-    const cells = coreColumnDefs.map((def) => {
-      if (def.key === 'presentationVideo') {
-        const presentationIdx = findHeaderIndexByTagOrName(['Презентация'], ['Презентация']);
-        const videoIdx = findHeaderIndexByTagOrName(['Видео', 'Ссылки'], ['Видео', 'Ссылка', 'Ссылки']);
-        if (presentationIdx >= 0) usedIndexes.add(presentationIdx);
-        if (videoIdx >= 0) usedIndexes.add(videoIdx);
-        const values = [presentationIdx, videoIdx]
-          .filter((idx, index, arr) => idx >= 0 && arr.indexOf(idx) === index)
-          .map((idx) => (row[idx] ?? '').toString().trim())
-          .filter(Boolean);
-        return { title: def.title, value: values.join('\n') || '—' };
-      }
-      const idx = findHeaderIndexByTagOrName(def.tags, def.headers);
-      if (idx >= 0) usedIndexes.add(idx);
+    const cells = tags.map((tag) => {
+      const src = Object.entries(mappingByHeaderIdx)
+        .map(([idxText, mappedTag]) => ({ idx: Number(idxText), mappedTag }))
+        .filter((item) => item.mappedTag === tag && Number.isInteger(item.idx) && item.idx >= 0 && item.idx < headers.length)
+        .sort((a, b) => a.idx - b.idx);
+
+      const sourceValues = src
+        .map((item) => {
+          usedIndexes.add(item.idx);
+          return {
+            idx: item.idx,
+            header: headers[item.idx] || `Колонка ${item.idx + 1}`,
+            value: (row[item.idx] ?? '').toString().trim(),
+          };
+        })
+        .filter((item) => item.value);
+
+      const hasConflict = sourceValues.length > 1;
+      const mergedValue = sourceValues.length === 1 ? sourceValues[0].value : '';
       return {
-        title: def.title,
-        value: idx >= 0 ? ((row[idx] ?? '').toString().trim() || '—') : '—',
+        title: tag,
+        value: mergedValue || '—',
+        mergedValue,
+        sourceValues,
+        hasConflict,
       };
     });
     return { cells, usedIndexes };
@@ -262,7 +254,7 @@ async function initDetailPage() {
       const row = previewRowsData[rowRef - 1] || [];
       const rowNumber = index + 1;
       const isExpanded = Boolean(expandedRows[rowRef]);
-      const { cells, usedIndexes } = buildCoreCells(row);
+      const { cells, usedIndexes } = normalizeRowByTags(row);
 
       const card = document.createElement('article');
       card.className = `preview-row-card${isExpanded ? ' is-expanded' : ''}`;
@@ -308,10 +300,11 @@ async function initDetailPage() {
       grid.appendChild(numberCell);
       cells.forEach((cell) => {
         const item = document.createElement('div');
-        item.className = 'preview-cell';
+        item.className = `preview-cell${cell.hasConflict ? ' preview-cell-conflict' : ''}`;
         item.innerHTML = `
           <div class="preview-cell-title">${esc(cell.title)}</div>
           <div class="preview-cell-value${isExpanded ? '' : ' preview-cell-clamp'}">${esc(cell.value)}</div>
+          ${cell.hasConflict ? '<div class="preview-conflict-badge">Конфликт значений</div>' : ''}
         `;
         grid.appendChild(item);
       });
@@ -325,7 +318,24 @@ async function initDetailPage() {
         const remaining = headers
           .map((header, headerIndex) => ({ header, value: (row[headerIndex] ?? '').toString().trim(), headerIndex }))
           .filter((item) => !usedIndexes.has(item.headerIndex) && item.value);
+        const conflictDetails = cells.filter((cell) => cell.hasConflict);
         extra.innerHTML = `
+          ${conflictDetails.length ? `
+            <h3 class="preview-extra-title">Конфликты тегов</h3>
+            <div class="preview-conflict-list">
+              ${conflictDetails.map((cell) => `
+                <div class="preview-conflict-item">
+                  <div class="preview-conflict-tag">${esc(cell.title)}</div>
+                  ${cell.sourceValues.map((item) => `
+                    <div class="preview-conflict-source">
+                      <span class="preview-conflict-col">${esc(item.header)}</span>
+                      <span class="preview-conflict-val">${esc(item.value)}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
           <h3 class="preview-extra-title">Дополнительные поля</h3>
           <div class="preview-extra-grid">
             ${remaining.length
@@ -356,11 +366,16 @@ async function initDetailPage() {
   function renderMapping(fieldTags) {
     mappingListEl.innerHTML = '';
     mappingFieldTags = fieldTags;
-    headers.forEach((header) => {
-      const tag = Object.keys(mappingByTag).find((fieldTag) => mappingByTag[fieldTag] === header) || '';
+    const usageByTag = {};
+    Object.values(mappingByHeaderIdx).forEach((tag) => {
+      if (!tag) return;
+      usageByTag[tag] = (usageByTag[tag] || 0) + 1;
+    });
+    headers.forEach((header, headerIndex) => {
+      const tag = mappingByHeaderIdx[headerIndex] || '';
       const card = document.createElement('article');
       const isMapped = Boolean(tag);
-      const isCollapsed = Boolean(collapsedMappingCards[header] && isMapped);
+      const isCollapsed = Boolean(collapsedMappingCards[headerIndex] && isMapped);
       const isAutoDetected = isAutoDetectedMapping(header, tag);
       card.className = `mapping-card${isMapped ? ' is-mapped' : ''}${isAutoDetected ? ' is-auto' : ''}${isCollapsed ? ' is-collapsed' : ''}`;
 
@@ -378,19 +393,18 @@ async function initDetailPage() {
       const select = document.createElement('select');
       select.className = 'mapping-select';
       select.innerHTML = '<option value="">не выбрано</option>' + fieldTags.map((fieldTag) => {
+        const usedCount = usageByTag[fieldTag] || 0;
+        const externalCount = tag === fieldTag ? Math.max(usedCount - 1, 0) : usedCount;
+        const usageSuffix = externalCount > 0 ? ` (используется ещё в ${externalCount})` : '';
         const selected = tag === fieldTag ? ' selected' : '';
-        return `<option value="${esc(fieldTag)}"${selected}>${esc(fieldTag)}</option>`;
+        return `<option value="${esc(fieldTag)}"${selected}>${esc(fieldTag + usageSuffix)}</option>`;
       }).join('');
       select.addEventListener('change', () => {
         const nextTag = select.value;
-        if (tag) delete mappingByTag[tag];
-        if (nextTag) {
-          Object.keys(mappingByTag).forEach((key) => {
-            if (key !== nextTag && mappingByTag[key] === header) delete mappingByTag[key];
-          });
-          mappingByTag[nextTag] = header;
-        } else {
-          collapsedMappingCards[header] = false;
+        if (nextTag) mappingByHeaderIdx[headerIndex] = nextTag;
+        else {
+          delete mappingByHeaderIdx[headerIndex];
+          collapsedMappingCards[headerIndex] = false;
         }
         setStatus(mappingStatusEl, 'Есть несохранённые изменения.', 'warning');
         renderMapping(fieldTags);
@@ -402,7 +416,7 @@ async function initDetailPage() {
       toggleBtn.title = isCollapsed ? 'Развернуть карточку' : 'Свернуть карточку';
       toggleBtn.textContent = isCollapsed ? '▼' : '▲';
       toggleBtn.addEventListener('click', () => {
-        collapsedMappingCards[header] = !collapsedMappingCards[header];
+        collapsedMappingCards[headerIndex] = !collapsedMappingCards[headerIndex];
         renderMapping(fieldTags);
       });
 
@@ -429,7 +443,12 @@ async function initDetailPage() {
     ]);
     titleEl.textContent = table.title || `Таблица #${tableId}`;
     headers = preview.headers || [];
-    mappingByTag = mapResp.mapping || {};
+    const nextMappingByHeader = {};
+    (mapResp.mapping_rows || []).forEach((item) => {
+      if (!item || typeof item.excel_column_index !== 'number' || !item.field_tag) return;
+      nextMappingByHeader[item.excel_column_index] = item.field_tag;
+    });
+    mappingByHeaderIdx = nextMappingByHeader;
     previewRowsData = preview.rows || [];
     rowOrder = previewRowsData.map((_, idx) => idx + 1);
     renderMapping(mapResp.field_tags || []);
@@ -454,7 +473,11 @@ async function initDetailPage() {
 
   saveMappingBtn.addEventListener('click', async () => {
     try {
-      await apiPostJson(`/api/tables/${tableId}/mapping`, { mapping: mappingByTag });
+      const mappingRows = Object.entries(mappingByHeaderIdx).map(([idxText, fieldTag]) => ({
+        field_tag: fieldTag,
+        excel_column_index: Number(idxText),
+      }));
+      await apiPostJson(`/api/tables/${tableId}/mapping`, { mapping_rows: mappingRows });
       setStatus(mappingStatusEl, 'Mapping сохранён.', 'success');
       await reload();
     } catch (e) {
@@ -463,9 +486,9 @@ async function initDetailPage() {
   });
 
   collapseConfiguredBtn?.addEventListener('click', () => {
-    headers.forEach((header) => {
-      const tag = Object.keys(mappingByTag).find((fieldTag) => mappingByTag[fieldTag] === header);
-      if (tag) collapsedMappingCards[header] = true;
+    headers.forEach((_, headerIndex) => {
+      const tag = mappingByHeaderIdx[headerIndex];
+      if (tag) collapsedMappingCards[headerIndex] = true;
     });
     renderMapping(mappingFieldTags);
   });
