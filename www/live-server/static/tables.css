@@ -58,14 +58,90 @@
   min-width: 0;
 }
 
-.documentation-placeholder {
-  min-height: 120px;
-  border: 1px dashed #cbd5e1;
-  border-radius: 8px;
-  background: #f8fafc;
-  padding: 14px;
-  display: flex;
-  align-items: center;
+.documentation-program-card {
+  display: grid;
+  gap: 12px;
+}
+
+.documentation-subtitle {
+  margin: 0;
+  font-size: 18px;
+}
+
+.doc-form-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.doc-form-field {
+  display: grid;
+  gap: 6px;
+}
+
+.doc-form-field span {
+  color: #475569;
+  font-size: 13px;
+}
+
+.doc-form-field input {
+  width: 100%;
+}
+
+.doc-program-preview {
+  margin-top: 4px;
+  border: 1px solid #dbe2ea;
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+  color: #0f172a;
+  display: grid;
+  gap: 12px;
+}
+
+.doc-program-preview.is-empty {
+  border-style: dashed;
+  color: #64748b;
+}
+
+.doc-preview-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.doc-preview-date {
+  color: #475569;
+}
+
+.doc-preview-time-block {
+  font-weight: 600;
+}
+
+.doc-preview-age {
+  margin-top: 4px;
+  font-weight: 700;
+  font-size: 17px;
+}
+
+.doc-preview-nomination {
+  margin-top: 2px;
+  font-weight: 600;
+}
+
+.doc-preview-items {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 4px;
+}
+
+.doc-preview-item {
+  line-height: 1.4;
+}
+
+.doc-preview-service {
+  color: #334155;
+  font-style: italic;
 }
 
 .section-title-row {

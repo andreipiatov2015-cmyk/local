@@ -43,6 +43,65 @@ function normalizeHeaderLikeBackend(value) {
   return (value || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function parseClockToMinutes(value) {
+  const text = (value || '').toString().trim();
+  if (!text || !text.includes(':')) return null;
+  const [hh, mm] = text.split(':');
+  const h = Number(hh);
+  const m = Number(mm);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+  return h * 60 + m;
+}
+
+function formatMinutesToClock(totalMinutes) {
+  if (!Number.isFinite(totalMinutes)) return '--:--';
+  const normalized = ((Math.floor(totalMinutes) % 1440) + 1440) % 1440;
+  const hh = Math.floor(normalized / 60).toString().padStart(2, '0');
+  const mm = (normalized % 60).toString().padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function parseDurationToSeconds(value, fallbackMinutes = 3) {
+  const fallback = Math.max(1, Number(fallbackMinutes) || 3) * 60;
+  const text = (value || '').toString().trim();
+  if (!text) return fallback;
+
+  if (text.includes(':')) {
+    const parts = text.split(':').map((v) => Number(v.trim()));
+    if (parts.some((v) => !Number.isFinite(v))) return fallback;
+    if (parts.length === 2) {
+      const [mm, ss] = parts;
+      if (mm >= 0 && ss >= 0 && ss < 60) return mm * 60 + ss;
+    }
+    if (parts.length === 3) {
+      const [hh, mm, ss] = parts;
+      if (hh >= 0 && mm >= 0 && mm < 60 && ss >= 0 && ss < 60) return hh * 3600 + mm * 60 + ss;
+    }
+    return fallback;
+  }
+
+  const normalized = text.replace(',', '.');
+  const asNumber = Number(normalized);
+  if (!Number.isFinite(asNumber) || asNumber <= 0) return fallback;
+  if (normalized.includes('.')) {
+    const [minsRaw, secRaw] = normalized.split('.');
+    const mins = Number(minsRaw);
+    const seconds = Number((secRaw || '').slice(0, 2));
+    if (Number.isFinite(mins) && Number.isFinite(seconds) && seconds >= 0 && seconds < 60) {
+      return mins * 60 + seconds;
+    }
+  }
+  return Math.round(asNumber * 60);
+}
+
+function formatDurationLabel(seconds) {
+  const s = Math.max(0, Math.floor(seconds || 0));
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${mm}:${ss.toString().padStart(2, '0')}`;
+}
+
 async function initListPage() {
   const listEl = document.getElementById('tableList');
   if (!listEl) return;
@@ -179,6 +238,16 @@ async function initDetailPage() {
   const mappingSectionToggleBtn = document.getElementById('toggleMappingSection');
   const previewMetaEl = document.getElementById('previewMeta');
   const previewCardsEl = document.getElementById('previewCards');
+  const docEventDateEl = document.getElementById('docEventDate');
+  const docRehearsalStartEl = document.getElementById('docRehearsalStart');
+  const docCompetitionStartEl = document.getElementById('docCompetitionStart');
+  const docResultsMinutesEl = document.getElementById('docResultsMinutes');
+  const docAwardMinutesEl = document.getElementById('docAwardMinutes');
+  const docTechIntervalMinutesEl = document.getElementById('docTechIntervalMinutes');
+  const docDefaultDurationMinutesEl = document.getElementById('docDefaultDurationMinutes');
+  const docBuildProgramBtn = document.getElementById('docBuildProgram');
+  const docProgramStatusEl = document.getElementById('docProgramStatus');
+  const docProgramPreviewEl = document.getElementById('docProgramPreview');
 
   let headers = [];
   let mappingByHeaderIdx = {};
@@ -188,6 +257,7 @@ async function initDetailPage() {
   let rowOrder = [];
   let isMappingSectionCollapsed = false;
   const expandedRows = {};
+  let documentationState = null;
 
   function syncMappingSectionCollapsedState() {
     if (!mappingSectionCardEl || !mappingSectionToggleBtn) return;
@@ -367,6 +437,185 @@ async function initDetailPage() {
     });
   }
 
+  function getMappedValueByMatchers(row, matchers) {
+    const matcherList = (matchers || []).map((item) => normalizeHeaderLikeBackend(item));
+    for (const [idxText, mappedTag] of Object.entries(mappingByHeaderIdx)) {
+      const idx = Number(idxText);
+      const tagNorm = normalizeHeaderLikeBackend(mappedTag);
+      if (!matcherList.some((m) => tagNorm.includes(m))) continue;
+      const value = (row[idx] ?? '').toString().trim();
+      if (value) return value;
+    }
+    return '';
+  }
+
+  function readDocumentationSettingsFromForm() {
+    return {
+      event_date: docEventDateEl?.value || '',
+      rehearsal_start: docRehearsalStartEl?.value || '09:00',
+      competition_start: docCompetitionStartEl?.value || '10:00',
+      results_minutes: Math.max(0, Number(docResultsMinutesEl?.value || 20) || 20),
+      award_minutes: Math.max(0, Number(docAwardMinutesEl?.value || 15) || 15),
+      tech_interval_minutes: Math.max(0, Number(docTechIntervalMinutesEl?.value || 20) || 20),
+      default_duration_minutes: Math.max(1, Number(docDefaultDurationMinutesEl?.value || 3) || 3),
+      age_order: documentationState?.settings?.age_order || [],
+      nomination_order: documentationState?.settings?.nomination_order || {},
+    };
+  }
+
+  function applyDocumentationSettingsToForm(settings = {}) {
+    if (docEventDateEl) docEventDateEl.value = settings.event_date || '';
+    if (docRehearsalStartEl) docRehearsalStartEl.value = settings.rehearsal_start || '09:00';
+    if (docCompetitionStartEl) docCompetitionStartEl.value = settings.competition_start || '10:00';
+    if (docResultsMinutesEl) docResultsMinutesEl.value = settings.results_minutes ?? 20;
+    if (docAwardMinutesEl) docAwardMinutesEl.value = settings.award_minutes ?? 15;
+    if (docTechIntervalMinutesEl) docTechIntervalMinutesEl.value = settings.tech_interval_minutes ?? 20;
+    if (docDefaultDurationMinutesEl) docDefaultDurationMinutesEl.value = settings.default_duration_minutes ?? 3;
+  }
+
+  function buildProgramPreviewData(settings) {
+    const rowsInOrder = rowOrder.map((rowRef, index) => {
+      const row = previewRowsData[rowRef - 1] || [];
+      const ageCategory = getMappedValueByMatchers(row, ['возраст']);
+      const nomination = getMappedValueByMatchers(row, ['номинац']);
+      const numberTitle = getMappedValueByMatchers(row, ['название номера', 'навание номреа', 'номер']);
+      const fio = getMappedValueByMatchers(row, ['участник', 'фио']);
+      const team = getMappedValueByMatchers(row, ['коллектив']);
+      const institution = getMappedValueByMatchers(row, ['учрежден']);
+      const municipality = getMappedValueByMatchers(row, ['территор', 'муницип']);
+      const rawDuration = getMappedValueByMatchers(row, ['время исполнения', 'продолжительность']);
+      const durationSeconds = parseDurationToSeconds(rawDuration, settings.default_duration_minutes);
+      return {
+        order: index + 1,
+        ageCategory: ageCategory || 'Без возрастной категории',
+        nomination: nomination || 'Без номинации',
+        numberTitle: numberTitle || 'Без названия номера',
+        fio,
+        team,
+        institution,
+        municipality,
+        durationSeconds,
+      };
+    });
+
+    const ageOrder = [];
+    const groupedByAge = {};
+    rowsInOrder.forEach((item) => {
+      if (!groupedByAge[item.ageCategory]) {
+        groupedByAge[item.ageCategory] = {};
+        ageOrder.push(item.ageCategory);
+      }
+      if (!groupedByAge[item.ageCategory][item.nomination]) groupedByAge[item.ageCategory][item.nomination] = [];
+      groupedByAge[item.ageCategory][item.nomination].push(item);
+    });
+
+    const competitionStart = parseClockToMinutes(settings.competition_start) ?? 600;
+    const rehearsalStart = parseClockToMinutes(settings.rehearsal_start);
+    let cursor = competitionStart;
+    const blocks = [];
+
+    if (Number.isFinite(rehearsalStart) && rehearsalStart < competitionStart && ageOrder.length) {
+      blocks.push({
+        type: 'service',
+        text: `Репетиция возрастной категории ${ageOrder[0]}`,
+        start: rehearsalStart,
+        end: competitionStart,
+      });
+    }
+
+    ageOrder.forEach((ageCategory, ageIndex) => {
+      const nominations = Object.keys(groupedByAge[ageCategory] || {});
+      const ageBlock = {
+        type: 'age_category',
+        ageCategory,
+        start: cursor,
+        nominations: [],
+      };
+
+      nominations.forEach((nomination) => {
+        const nominationStart = cursor;
+        const items = groupedByAge[ageCategory][nomination];
+        const previewItems = items.map((item) => {
+          cursor += item.durationSeconds / 60;
+          const person = item.fio && item.team ? `${item.fio}, ${item.team}` : (item.fio || item.team || 'Участник');
+          const details = [person, item.institution, item.municipality].filter(Boolean).join(', ');
+          return {
+            order: item.order,
+            text: `«${item.numberTitle}» — ${details} (${formatDurationLabel(item.durationSeconds)})`,
+          };
+        });
+        ageBlock.nominations.push({ nomination, start: nominationStart, items: previewItems });
+      });
+      blocks.push(ageBlock);
+
+      const nextAge = ageOrder[ageIndex + 1];
+      if (nextAge) {
+        const resultsStart = cursor;
+        const resultsEnd = resultsStart + settings.results_minutes;
+        blocks.push({ type: 'service', text: `Подведение итогов`, start: resultsStart, end: resultsEnd });
+        cursor = resultsEnd;
+
+        const rehearsalEnd = cursor + settings.tech_interval_minutes;
+        blocks.push({ type: 'service', text: `Репетиция возрастной категории ${nextAge}`, start: cursor, end: rehearsalEnd });
+        cursor = rehearsalEnd;
+
+        const awardEnd = cursor + settings.award_minutes;
+        blocks.push({ type: 'service', text: `Награждение возрастной категории ${ageCategory}`, start: cursor, end: awardEnd });
+        cursor = awardEnd;
+      }
+    });
+
+    return { title: 'Программа конкурса', date: settings.event_date || '', blocks };
+  }
+
+  function renderDocumentationPreview(program) {
+    if (!docProgramPreviewEl) return;
+    if (!program || !Array.isArray(program.blocks) || !program.blocks.length) {
+      docProgramPreviewEl.classList.add('is-empty');
+      docProgramPreviewEl.innerHTML = '<div>После формирования здесь появится предпросмотр программы.</div>';
+      return;
+    }
+    docProgramPreviewEl.classList.remove('is-empty');
+    const parts = [
+      `<div class="doc-preview-title">${esc(program.title || 'Программа конкурса')}</div>`,
+      `<div class="doc-preview-date">Дата: ${esc(program.date || '—')}</div>`,
+    ];
+    program.blocks.forEach((block) => {
+      if (block.type === 'service') {
+        parts.push(`<div class="doc-preview-service">${esc(formatMinutesToClock(block.start))}–${esc(formatMinutesToClock(block.end))} — ${esc(block.text)}</div>`);
+        return;
+      }
+      parts.push(`<div class="doc-preview-age">${esc(formatMinutesToClock(block.start))} Возрастная категория: ${esc(block.ageCategory)}</div>`);
+      (block.nominations || []).forEach((nom) => {
+        parts.push(`<div class="doc-preview-nomination">${esc(formatMinutesToClock(nom.start))} Номинация: ${esc(nom.nomination)}</div>`);
+        parts.push(`<ol class="doc-preview-items">${(nom.items || []).map((item) => `<li class="doc-preview-item">${esc(item.text)}</li>`).join('')}</ol>`);
+      });
+    });
+    docProgramPreviewEl.innerHTML = parts.join('');
+  }
+
+  async function saveDocumentationState(state) {
+    await apiPostJson(`/api/tables/${tableId}/documentation/program`, state);
+  }
+
+  async function loadDocumentationState() {
+    const resp = await apiGet(`/api/tables/${tableId}/documentation/program`);
+    documentationState = resp || {};
+    const settings = documentationState.settings || {
+      event_date: '',
+      rehearsal_start: '09:00',
+      competition_start: '10:00',
+      results_minutes: 20,
+      award_minutes: 15,
+      tech_interval_minutes: 20,
+      default_duration_minutes: 3,
+      age_order: [],
+      nomination_order: {},
+    };
+    applyDocumentationSettingsToForm(settings);
+    renderDocumentationPreview(documentationState.program);
+  }
+
   function isAutoDetectedMapping(header, selectedTag) {
     if (!header || !selectedTag) return false;
     const tagNorm = normalizeHeaderLikeBackend(selectedTag);
@@ -509,9 +758,29 @@ async function initDetailPage() {
     syncMappingSectionCollapsedState();
   });
 
+  docBuildProgramBtn?.addEventListener('click', async () => {
+    try {
+      if (!previewRowsData.length) {
+        setStatus(docProgramStatusEl, 'Нет данных таблицы для формирования программы.', 'warning');
+        renderDocumentationPreview(null);
+        return;
+      }
+      const settings = readDocumentationSettingsFromForm();
+      const program = buildProgramPreviewData(settings);
+      const state = { settings, program };
+      documentationState = state;
+      renderDocumentationPreview(program);
+      await saveDocumentationState(state);
+      setStatus(docProgramStatusEl, 'Программа сформирована и сохранена.', 'success');
+    } catch (e) {
+      setStatus(docProgramStatusEl, `Ошибка формирования: ${e.message}`, 'error');
+    }
+  });
+
   try {
     syncMappingSectionCollapsedState();
     await reload();
+    await loadDocumentationState();
   } catch (e) {
     setStatus(uploadStatusEl, `Ошибка загрузки данных: ${e.message}`, 'error');
   }
