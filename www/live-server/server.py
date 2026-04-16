@@ -138,34 +138,7 @@ DOCUMENT_COLUMN_META = {
     "video_url": {"title": "Видео", "kind": "link"},
 }
 FILE_MAPPING_FIELDS = {"audio_url", "presentation_url", "consent_url"}
-TABLES_V2_FIELD_TAGS = [
-    "Муниципалитет",
-    "Полное название учреждения",
-    "Краткое название учреждения",
-    "ФИО участника",
-    "ФИО руководителя",
-    "ФИО педагога",
-    "Название коллектива",
-    "Название номера",
-    "Номинация",
-    "Возрастная категория",
-    "Количество участников",
-    "Список участников",
-    "Номер телефона",
-    "Email",
-    "Ссылки",
-    "Фонограмма",
-    "Презентация",
-    "Согласие / квитки",
-    "Райдер",
-    "Время исполнения",
-    "Баллы",
-    "Фото работ",
-    "Эскиз работ",
-    "Техника (ДПИ)",
-    "Лига",
-    "Название коллекции",
-]
+TABLES_V2_FIELD_TAGS = []
 
 
 
@@ -257,21 +230,37 @@ def load_table_header_tags_config():
         if not key or not tag or not isinstance(aliases, list):
             app.logger.warning("[table_tags] skipping invalid tag entry at index=%s key=%s tag=%s", i, key, tag)
             continue
-        alias_values = [str(a) for a in aliases if isinstance(a, str)]
+        alias_values = []
+        seen_aliases = set()
+        for alias in aliases:
+            if not isinstance(alias, str):
+                continue
+            alias_clean = _safe_trim(alias)
+            alias_key = alias_clean.lower()
+            if not alias_clean or alias_key in seen_aliases:
+                continue
+            seen_aliases.add(alias_key)
+            alias_values.append(alias_clean)
         cleaned_tags.append({"key": key, "tag": tag, "aliases": alias_values})
 
     return {"version": data.get("version", 1), "tags": cleaned_tags}
 
 
 def init_table_header_tags():
-    global MAPPING_FIELDS, HEADER_ALIASES
+    global MAPPING_FIELDS, HEADER_ALIASES, TABLES_V2_FIELD_TAGS
     config = load_table_header_tags_config()
     MAPPING_FIELDS = {}
     HEADER_ALIASES = {}
+    TABLES_V2_FIELD_TAGS = []
+    seen_tags = set()
     for item in config.get("tags", []):
         key = item["key"]
         MAPPING_FIELDS[key] = item["tag"]
         HEADER_ALIASES[key] = list(item.get("aliases", []))
+        tag = item["tag"]
+        if tag not in seen_tags:
+            TABLES_V2_FIELD_TAGS.append(tag)
+            seen_tags.add(tag)
     app.logger.info("[table_tags] loaded tags=%s aliases=%s from %s", len(MAPPING_FIELDS), sum(len(v) for v in HEADER_ALIASES.values()), TABLE_HEADER_TAGS_FILE)
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
@@ -505,7 +494,7 @@ def init_db():
             excel_column_index INTEGER,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            UNIQUE(table_id, field_tag)
+            UNIQUE(table_id, field_tag, excel_column_index)
         )
     """)
 
@@ -579,6 +568,44 @@ def init_db():
             cur.execute(stmt)
         except sqlite3.OperationalError:
             pass
+
+    # Миграция: разрешаем привязку одного тега к нескольким колонкам.
+    # В старой схеме была уникальность по (table_id, field_tag), что блокировало повтор тега.
+    try:
+        idx_rows = cur.execute("PRAGMA index_list('import_table_mappings')").fetchall()
+        has_legacy_unique = False
+        for idx in idx_rows:
+            idx_name = idx[1]
+            if not idx[2]:
+                continue
+            cols = cur.execute(f"PRAGMA index_info('{idx_name}')").fetchall()
+            col_names = [c[2] for c in cols]
+            if col_names == ["table_id", "field_tag"]:
+                has_legacy_unique = True
+                break
+        if has_legacy_unique:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS import_table_mappings_v2 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    table_id INTEGER NOT NULL,
+                    field_tag TEXT NOT NULL,
+                    excel_column_name TEXT,
+                    excel_column_index INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(table_id, field_tag, excel_column_index)
+                )
+            """)
+            cur.execute("""
+                INSERT OR IGNORE INTO import_table_mappings_v2
+                    (id, table_id, field_tag, excel_column_name, excel_column_index, created_at, updated_at)
+                SELECT id, table_id, field_tag, excel_column_name, excel_column_index, created_at, updated_at
+                FROM import_table_mappings
+            """)
+            cur.execute("DROP TABLE import_table_mappings")
+            cur.execute("ALTER TABLE import_table_mappings_v2 RENAME TO import_table_mappings")
+    except sqlite3.OperationalError:
+        pass
 
     con.commit()
     con.close()
@@ -3208,6 +3235,75 @@ def table_info_or_delete(table_id):
     return jsonify({"status": "ok"})
 
 
+def _parse_mapping_rows_payload(payload, headers):
+    parsed = []
+    if isinstance(payload, list):
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            field_tag = str(item.get("field_tag") or "").strip()
+            idx = item.get("excel_column_index")
+            if not field_tag or field_tag not in TABLES_V2_FIELD_TAGS or not isinstance(idx, int):
+                continue
+            if idx < 0 or idx >= len(headers):
+                continue
+            parsed.append({"field_tag": field_tag, "excel_column_index": idx, "excel_column_name": headers[idx]})
+        return parsed
+
+    if isinstance(payload, dict):
+        for field_tag, column_name in payload.items():
+            tag = str(field_tag or "").strip()
+            col_name = str(column_name or "").strip()
+            if not tag or tag not in TABLES_V2_FIELD_TAGS or not col_name:
+                continue
+            if col_name not in headers:
+                continue
+            idx = headers.index(col_name)
+            parsed.append({"field_tag": tag, "excel_column_index": idx, "excel_column_name": headers[idx]})
+    return parsed
+
+
+def rebuild_import_rows_normalized(table_id, headers, mapping_rows):
+    grouped = {}
+    for item in mapping_rows:
+        grouped.setdefault(item["field_tag"], []).append(item)
+
+    rows = query_db(
+        "SELECT id, raw_row_json FROM import_table_rows WHERE table_id=? AND row_index>0 ORDER BY row_index ASC",
+        (table_id,),
+    )
+    ts = now_iso()
+    for row in rows:
+        raw_values = json.loads(row["raw_row_json"] or "[]")
+        normalized = {}
+        for field_tag, sources in grouped.items():
+            source_values = []
+            for src in sources:
+                idx = src["excel_column_index"]
+                value = str(raw_values[idx] if idx < len(raw_values) else "").strip()
+                if not value:
+                    continue
+                source_values.append(
+                    {
+                        "column_index": idx,
+                        "column_name": src["excel_column_name"] if idx < len(headers) else "",
+                        "value": value,
+                    }
+                )
+            has_conflict = len(source_values) > 1
+            merged_value = source_values[0]["value"] if len(source_values) == 1 else ""
+            normalized[field_tag] = {
+                "field_tag": field_tag,
+                "merged_value": merged_value,
+                "source_values": source_values,
+                "has_conflict": has_conflict,
+            }
+        query_db(
+            "UPDATE import_table_rows SET normalized_row_json=?, updated_at=? WHERE id=?",
+            (json.dumps(normalized, ensure_ascii=False), ts, row["id"]),
+        )
+
+
 @app.route("/api/tables/<int:table_id>/excel", methods=["POST"])
 def upload_excel(table_id):
     user = table_user_from_request()
@@ -3246,21 +3342,26 @@ def upload_excel(table_id):
             (table_id, idx, json.dumps(row, ensure_ascii=False), json.dumps({}, ensure_ascii=False), ts, ts),
         )
 
-    normalized_headers = [normalize_header_text(h) for h in headers]
+    auto_mapping_keys, _, _ = apply_mapping_templates_and_presets(user["id"], headers)
+    auto_mapping_rows = []
     auto_mapping = {}
-    for tag in TABLES_V2_FIELD_TAGS:
-        tag_norm = normalize_header_text(tag)
-        matched_idx = None
-        for i, header_norm in enumerate(normalized_headers):
-            if tag_norm and (tag_norm in header_norm or header_norm in tag_norm):
-                matched_idx = i
-                break
-        if matched_idx is not None:
-            auto_mapping[tag] = headers[matched_idx]
+    for field_key, idx_list in auto_mapping_keys.items():
+        tag = MAPPING_FIELDS.get(field_key)
+        if not tag:
+            continue
+        indexes = idx_list if isinstance(idx_list, list) else [idx_list]
+        for idx in indexes:
+            if not isinstance(idx, int) or idx < 0 or idx >= len(headers):
+                continue
+            row = {"field_tag": tag, "excel_column_index": idx, "excel_column_name": headers[idx]}
+            auto_mapping_rows.append(row)
+            auto_mapping.setdefault(tag, []).append(headers[idx])
             query_db(
-                "INSERT INTO import_table_mappings (table_id, field_tag, excel_column_name, excel_column_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (table_id, tag, headers[matched_idx], matched_idx, ts, ts),
+                "INSERT OR IGNORE INTO import_table_mappings (table_id, field_tag, excel_column_name, excel_column_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (table_id, tag, headers[idx], idx, ts, ts),
             )
+
+    rebuild_import_rows_normalized(table_id, headers, auto_mapping_rows)
 
     query_db(
         "UPDATE import_tables SET status='excel_loaded', source_excel_path=?, updated_at=? WHERE id=?",
@@ -3285,6 +3386,7 @@ def upload_excel(table_id):
             "total_rows": total_rows,
             "sheet": sheet_name,
             "mapping": auto_mapping,
+            "mapping_rows": auto_mapping_rows,
             "mapping_autofilled": bool(auto_mapping),
         }
     )
@@ -3333,12 +3435,24 @@ def get_table_mapping(table_id):
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
     rows = query_db(
-        "SELECT field_tag, excel_column_name, excel_column_index FROM import_table_mappings WHERE table_id=? ORDER BY field_tag ASC",
+        "SELECT field_tag, excel_column_name, excel_column_index FROM import_table_mappings WHERE table_id=? ORDER BY field_tag ASC, excel_column_index ASC, id ASC",
         (table_id,),
     )
-    mapping = {r["field_tag"]: r["excel_column_name"] for r in rows if r["excel_column_name"]}
+    mapping_rows = [
+        {
+            "field_tag": r["field_tag"],
+            "excel_column_name": r["excel_column_name"],
+            "excel_column_index": r["excel_column_index"],
+        }
+        for r in rows
+        if r["field_tag"]
+    ]
+    mapping_by_tag = {}
+    for item in mapping_rows:
+        mapping_by_tag.setdefault(item["field_tag"], []).append(item["excel_column_name"])
     return jsonify({
-        "mapping": mapping,
+        "mapping": mapping_by_tag,
+        "mapping_rows": mapping_rows,
         "field_tags": TABLES_V2_FIELD_TAGS,
     })
 
@@ -3353,9 +3467,9 @@ def set_table_mapping(table_id):
         return jsonify({"detail": "Таблица не найдена"}), 404
 
     payload = request.get_json(silent=True) or {}
-    mapping = payload.get("mapping") if isinstance(payload, dict) else payload
-    if not isinstance(mapping, dict):
-        return jsonify({"detail": "Ожидается объект mapping"}), 400
+    mapping_payload = payload.get("mapping_rows") if isinstance(payload, dict) and "mapping_rows" in payload else (payload.get("mapping") if isinstance(payload, dict) else payload)
+    if not isinstance(mapping_payload, (dict, list)):
+        return jsonify({"detail": "Ожидается mapping_rows[] или объект mapping"}), 400
     headers_row = query_db(
         "SELECT raw_row_json FROM import_table_rows WHERE table_id=? AND row_index=0",
         (table_id,),
@@ -3363,18 +3477,16 @@ def set_table_mapping(table_id):
     )
     headers = json.loads((headers_row["raw_row_json"] if headers_row else "[]") or "[]")
     ts = now_iso()
+    mapping_rows = _parse_mapping_rows_payload(mapping_payload, headers)
     query_db("DELETE FROM import_table_mappings WHERE table_id=?", (table_id,))
-    for tag in TABLES_V2_FIELD_TAGS:
-        column_name = (mapping.get(tag) or "").strip()
-        if not column_name:
-            continue
-        column_index = headers.index(column_name) if column_name in headers else None
+    for item in mapping_rows:
         query_db(
-            "INSERT INTO import_table_mappings (table_id, field_tag, excel_column_name, excel_column_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (table_id, tag, column_name, column_index, ts, ts),
+            "INSERT OR IGNORE INTO import_table_mappings (table_id, field_tag, excel_column_name, excel_column_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (table_id, item["field_tag"], item["excel_column_name"], item["excel_column_index"], ts, ts),
         )
+    rebuild_import_rows_normalized(table_id, headers, mapping_rows)
     query_db("UPDATE import_tables SET updated_at=? WHERE id=?", (ts, table_id))
-    return jsonify({"status": "ok", "mapping": mapping})
+    return jsonify({"status": "ok", "mapping_rows": mapping_rows})
 
 
 @app.route("/api/tables/<int:table_id>/mapping/remember", methods=["POST"])
