@@ -45,93 +45,52 @@
     </div>
   </aside>
 
-  <main id="tablesContent" class="content container tables-content">
-    <section id="workspace" class="card workspace-card">
-      <h1 class="page-title">Таблицы заявок конкурса</h1>
-      <p class="workspace-subtitle">Создайте новую таблицу или откройте существующую для подготовки программы.</p>
-      <div class="row">
-        <input id="newTitle" placeholder="Название таблицы" />
-        <button id="createTable" class="btn btn-primary">Создать</button>
-      </div>
-      <ul id="tableList"></ul>
-    </section>
+  <main class="content container tables-content">
+    <section class="card page-card">
+      <h1 class="page-title">Tables: импорт Excel и схема колонок</h1>
+      <p class="page-subtitle">Минимальный интерфейс первого этапа: загрузка Excel, настройка схемы тегов и предпросмотр данных.</p>
 
-    <section id="tableView" class="card table-view hidden">
-      <div class="table-view-header">
-        <button id="backToTables" class="btn btn-secondary">← К списку таблиц</button>
-        <h2 id="tableTitle">Таблица</h2>
-      </div>
-      <div id="prepareControls" class="row wrap">
-        <input type="file" id="excelFile" accept=".xlsx,.xls" />
-        <button id="uploadExcel" class="btn btn-secondary">Загрузить Excel</button>
-        <button id="connectYandex" class="btn btn-secondary">Подключить Яндекс</button>
-        <button id="openAdminLogin" class="btn btn-secondary hidden">Открыть вход администратора (VNC)</button>
-        <button id="startDownload" class="btn btn-primary" disabled>Старт скачивания</button>
-        <button id="finalizeTable" class="btn btn-primary hidden">Сформировать</button>
-      </div>
-      <p id="progress" class="prepare-only"></p>
-      <p id="yandexStatus" class="status-badge status-badge--muted prepare-only">Яндекс: не подключен</p>
-      <p id="yandexHint" class="prepare-only"></p>
-      <section id="captchaAlert" class="captcha-alert hidden prepare-only">
-        <p class="captcha-alert__title">Скачивание остановлено: Яндекс требует подтверждение, что вы не робот.</p>
-        <p id="captchaAlertHint" class="captcha-alert__hint">Нажмите «Открыть капчу» — она откроется в серверном Chromium. Пройдите CAPTCHA через noVNC/VNC и затем нажмите «Продолжить скачивание».</p>
-        <div class="row wrap captcha-alert__actions">
-          <button id="openCaptcha" class="btn btn-secondary" type="button">Открыть капчу</button>
-          <button id="resumeAfterCaptcha" class="btn btn-primary" type="button">Продолжить скачивание</button>
+      <section class="card section-card">
+        <h2 class="section-title">Проект импорта</h2>
+        <div class="row wrap">
+          <input id="newTitle" type="text" placeholder="Название проекта" />
+          <button id="createTable" class="btn btn-primary" type="button">Создать проект</button>
+          <button id="refreshTables" class="btn btn-secondary" type="button">Обновить список</button>
         </div>
-      </section>
-      <p id="mappingAutofillInfo" class="mapping-autofill-info hidden prepare-only"></p>
-      <p id="previewError" class="preview-error hidden prepare-only"></p>
-      <section id="mappingPanel" class="mapping-panel prepare-only">
-        <details id="mappingAccordion" class="mapping-accordion">
-          <summary id="mappingSummary" class="mapping-summary">Схема: 0/0 заполнено</summary>
-          <div class="mapping-expanded">
-            <div id="mappingInfo" class="mapping-info"></div>
-            <div class="row wrap">
-              <button id="rememberMapping" class="btn btn-primary" type="button">Запомнить схему</button>
-              <button id="resetMapping" class="btn btn-secondary" type="button">Сбросить схему</button>
-            </div>
-            <p class="mapping-hint">Для скачивания обязательны: «Название номера», «ФИО участника(ов)», и «За кого оплата» (если указана квитанция).</p>
-          </div>
-        </details>
+        <ul id="tableList" class="table-list"></ul>
       </section>
 
-      <div class="table-layout prepare-only" id="prepareMode">
-        <div class="table-scroll">
-          <table id="excelTable">
-            <colgroup id="excelColgroup"></colgroup>
-            <thead id="excelHead"></thead>
-            <tbody id="excelBody"></tbody>
-          </table>
+      <section class="card section-card" id="uploadBlock">
+        <h2 class="section-title">1. Загрузка Excel</h2>
+        <p id="currentProject" class="hint">Проект не выбран.</p>
+        <div class="row wrap">
+          <input id="excelFile" type="file" accept=".xlsx,.xls" />
+          <button id="uploadExcel" class="btn btn-primary" type="button" disabled>Загрузить</button>
         </div>
-      </div>
+        <p id="uploadStatus" class="status status-muted">Ожидание действия.</p>
+      </section>
 
-      <section id="programMode" class="program-mode hidden">
-        <div class="program-toolbar row wrap">
-          <input id="programSearch" placeholder="Поиск по номеру, названию, ФИО, коллективу" />
-          <label><input type="checkbox" id="filterNoAudio" /> Нет фонограммы</label>
-          <label><input type="checkbox" id="filterNoReceipt" /> Нет квитка</label>
-          <label><input type="checkbox" id="filterNoPresentation" /> Нет презентации</label>
-          <button id="downloadAllProgram" class="btn btn-secondary">Скачать всё</button>
-          <span id="autosaveStatus" class="autosave-status">Изменения сохранены</span>
+      <section class="card section-card" id="mappingBlock">
+        <h2 class="section-title">2. Схема колонок</h2>
+        <p class="hint">Для каждого тега выберите колонку Excel вручную или проверьте автоопределение.</p>
+        <div id="mappingList" class="mapping-list"></div>
+        <div class="row wrap">
+          <button id="saveMapping" class="btn btn-primary" type="button" disabled>Сохранить mapping</button>
+          <span id="mappingStatus" class="status status-muted">Mapping ещё не сохранён.</span>
         </div>
-        <div class="table-scroll">
-          <table id="programTable">
-            <thead>
-              <tr id="programHeadRow"><th>№</th><th>↕</th><th>Название</th><th>ФИО</th><th>Коллектив</th></tr>
-            </thead>
-            <tbody id="programBody"></tbody>
+      </section>
+
+      <section class="card section-card" id="previewBlock">
+        <h2 class="section-title">3. Предпросмотр Excel</h2>
+        <p id="previewMeta" class="hint">Нет загруженного Excel.</p>
+        <div class="preview-wrap">
+          <table id="previewTable" class="preview-table">
+            <thead id="previewHead"></thead>
+            <tbody id="previewBody"></tbody>
           </table>
         </div>
       </section>
     </section>
-
-    <dialog id="mappingDialog">
-      <h3>Назначение колонки</h3>
-      <div id="mappingDialogActions" class="mapping-dialog-actions"></div>
-      <button id="closeMappingDialog" class="btn btn-secondary">Закрыть</button>
-    </dialog>
-      <dialog id="receiptViewerDialog"><img id="receiptViewerImage" alt="Квиток" /><div class="row"><a id="receiptViewerDownload" class="btn btn-primary" download>Скачать</a><button id="closeReceiptViewer" class="btn btn-secondary">Закрыть</button></div></dialog>
   </main>
 
   <script src="/static/layout.js"></script>
