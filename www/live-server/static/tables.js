@@ -175,6 +175,8 @@ async function initDetailPage() {
   const mappingStatusEl = document.getElementById('mappingStatus');
   const saveMappingBtn = document.getElementById('saveMapping');
   const collapseConfiguredBtn = document.getElementById('collapseConfigured');
+  const mappingSectionCardEl = document.getElementById('mappingSectionCard');
+  const mappingSectionToggleBtn = document.getElementById('toggleMappingSection');
   const previewMetaEl = document.getElementById('previewMeta');
   const previewCardsEl = document.getElementById('previewCards');
 
@@ -184,7 +186,16 @@ async function initDetailPage() {
   let mappingFieldTags = [];
   let previewRowsData = [];
   let rowOrder = [];
+  let isMappingSectionCollapsed = false;
   const expandedRows = {};
+
+  function syncMappingSectionCollapsedState() {
+    if (!mappingSectionCardEl || !mappingSectionToggleBtn) return;
+    mappingSectionCardEl.classList.toggle('is-collapsed', isMappingSectionCollapsed);
+    mappingSectionToggleBtn.textContent = isMappingSectionCollapsed ? '▼' : '▲';
+    mappingSectionToggleBtn.title = isMappingSectionCollapsed ? 'Развернуть блок «Схема колонок»' : 'Свернуть блок «Схема колонок»';
+    mappingSectionToggleBtn.setAttribute('aria-expanded', String(!isMappingSectionCollapsed));
+  }
 
   function mappedTagsInOrder() {
     const used = new Set();
@@ -493,7 +504,13 @@ async function initDetailPage() {
     renderMapping(mappingFieldTags);
   });
 
+  mappingSectionToggleBtn?.addEventListener('click', () => {
+    isMappingSectionCollapsed = !isMappingSectionCollapsed;
+    syncMappingSectionCollapsedState();
+  });
+
   try {
+    syncMappingSectionCollapsedState();
     await reload();
   } catch (e) {
     setStatus(uploadStatusEl, `Ошибка загрузки данных: ${e.message}`, 'error');

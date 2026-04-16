@@ -43,15 +43,20 @@
         <p id="uploadStatus" class="status status-muted">Ожидание действия.</p>
       </section>
 
-      <section class="card section-card">
-        <h2 class="section-title">2. Схема колонок</h2>
-        <div class="mapping-toolbar">
-          <button id="collapseConfigured" class="btn btn-secondary btn-small" type="button">Свернуть все настроенные</button>
+      <section class="card section-card mapping-section-card" id="mappingSectionCard">
+        <div class="section-title-row">
+          <h2 class="section-title">2. Схема колонок</h2>
+          <button id="toggleMappingSection" class="section-collapse-btn" type="button" aria-expanded="true" aria-controls="mappingSectionBody" title="Свернуть блок «Схема колонок»">▲</button>
         </div>
-        <div id="mappingList" class="mapping-list"></div>
-        <div class="row wrap">
-          <button id="saveMapping" class="btn btn-primary" type="button">Сохранить mapping</button>
-          <span id="mappingStatus" class="status status-muted">Ожидание.</span>
+        <div id="mappingSectionBody" class="section-body-collapsible">
+          <div class="mapping-toolbar">
+            <button id="collapseConfigured" class="btn btn-secondary btn-small" type="button">Свернуть все настроенные</button>
+          </div>
+          <div id="mappingList" class="mapping-list"></div>
+          <div class="row wrap">
+            <button id="saveMapping" class="btn btn-primary" type="button">Сохранить mapping</button>
+            <span id="mappingStatus" class="status status-muted">Ожидание.</span>
+          </div>
         </div>
       </section>
 
