@@ -115,7 +115,7 @@ DOWNLOAD_RETRIES = 3
 YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS = int(os.environ.get("YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS", "90000"))
 YANDEX_BROWSER_MIN_FILE_SIZE = int(os.environ.get("YANDEX_BROWSER_MIN_FILE_SIZE", "32"))
 MAX_FILENAME_LEN = 150
-EXCEL_PREVIEW_LIMIT = 200
+EXCEL_PREVIEW_LIMIT = None
 YANDEX_VNC_URL = os.environ.get("YANDEX_VNC_URL", "/tables/yandex/vnc/vnc.html?autoconnect=1&resize=scale&show_dot=0")
 YANDEX_PROFILE_DIR = os.environ.get("YANDEX_PROFILE_DIR", "/var/mount_point/nfv/contest_storage/yandex_profile")
 YANDEX_DISPLAY = os.environ.get("YANDEX_DISPLAY", ":99")
@@ -1092,7 +1092,7 @@ def parse_excel_preview(xlsx_path, preview_limit=EXCEL_PREVIEW_LIMIT):
         if len(values) < len(headers):
             values.extend([""] * (len(headers) - len(values)))
         preview_rows.append(values)
-        if len(preview_rows) >= preview_limit:
+        if preview_limit is not None and len(preview_rows) >= preview_limit:
             break
 
     for _ in rows_iter:
@@ -3416,7 +3416,7 @@ def upload_excel(table_id):
             "status": "ok",
             "table_status": "excel_loaded",
             "headers": headers,
-            "rows": preview_rows[:20],
+            "rows": preview_rows,
             "total_rows": total_rows,
             "sheet": sheet_name,
             "mapping": auto_mapping,
@@ -3435,7 +3435,7 @@ def table_excel_preview(table_id):
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
     rows_db = query_db(
-        "SELECT row_index, raw_row_json FROM import_table_rows WHERE table_id=? ORDER BY row_index ASC LIMIT 21",
+        "SELECT row_index, raw_row_json FROM import_table_rows WHERE table_id=? ORDER BY row_index ASC",
         (table_id,),
     )
     all_count_row = query_db("SELECT COUNT(*) AS c FROM import_table_rows WHERE table_id=? AND row_index>0", (table_id,), one=True)
@@ -3450,7 +3450,7 @@ def table_excel_preview(table_id):
     total_rows = int(all_count_row["c"] if all_count_row else 0)
     return jsonify({
         "headers": headers,
-        "rows": rows[:20],
+        "rows": rows,
         "total_rows": total_rows,
     })
 

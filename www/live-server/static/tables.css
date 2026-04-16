@@ -53,6 +53,21 @@
   padding: 16px;
 }
 
+.documentation-section-card {
+  width: 100%;
+  min-width: 0;
+}
+
+.documentation-placeholder {
+  min-height: 120px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 14px;
+  display: flex;
+  align-items: center;
+}
+
 .section-title-row {
   display: flex;
   align-items: center;
