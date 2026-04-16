@@ -1144,6 +1144,34 @@ def normalize_header_text(value):
     return text.strip()
 
 
+def infer_field_by_header_keywords(normalized_header):
+    header = normalize_header_text(normalized_header).lower()
+    if not header:
+        return ""
+
+    def has_any(markers):
+        return any(marker in header for marker in markers)
+
+    has_phone = has_any(["телефон", "сотов", "мобильн", "контактный телефон", "номер телефона"])
+    has_email = has_any(["e-mail", "email", "e mail", "эл. почт", "электронная почта", "почта"])
+    institution_markers = ["учрежд", "организац", "школ", "дом творч", "цент", "дк", "гимназ"]
+    leader_markers = ["руковод", "педагог", "конкурсант", "участник", "родител", "наставник", "солист"]
+
+    if has_phone:
+        if has_any(institution_markers) and not has_any(leader_markers):
+            return "institution_phone"
+        if has_any(leader_markers):
+            return "leader_phone"
+
+    if has_email:
+        if has_any(institution_markers) and not has_any(leader_markers):
+            return "institution_email"
+        if has_any(leader_markers):
+            return "leader_email"
+
+    return ""
+
+
 def mapping_signature(headers):
     normalized = [normalize_header_text(h) for h in (headers or [])]
     return hashlib.sha256("|".join(normalized).encode("utf-8")).hexdigest()
@@ -1179,6 +1207,12 @@ def apply_mapping_templates_and_presets(user_id, headers):
                 matched = True
             if matched:
                 matches.append(label)
+
+        if not matches:
+            inferred = infer_field_by_header_keywords(header)
+            if inferred and inferred in MAPPING_FIELDS:
+                matches.append(inferred)
+
         uniq = list(dict.fromkeys(matches))
         if len(uniq) == 1:
             label = uniq[0]
