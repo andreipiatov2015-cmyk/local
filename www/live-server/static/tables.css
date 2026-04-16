@@ -60,18 +60,84 @@
 
 .mapping-list {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
-.mapping-row {
-  display: grid;
-  grid-template-columns: minmax(220px, 360px) 1fr;
+.mapping-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.btn-small {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.mapping-card {
+  border: 1px solid #364255;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #101828;
+  display: flex;
   align-items: center;
   gap: 12px;
 }
 
+.mapping-card.is-auto {
+  background: #e8f2ff;
+  border-color: #94bfff;
+}
+
+.mapping-card.is-mapped:not(.is-auto) {
+  background: #f8fafc;
+}
+
+.mapping-card-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.mapping-card.is-collapsed .mapping-card-body {
+  grid-template-columns: auto 1fr;
+}
+
+.mapping-selected-value {
+  color: #475467;
+  font-weight: 500;
+}
+
+.mapping-tag {
+  font-weight: 600;
+}
+
 .mapping-select {
   width: 100%;
+  min-height: 34px;
+}
+
+.mapping-toggle-btn {
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+@media (max-width: 720px) {
+  .mapping-card-body {
+    grid-template-columns: 1fr;
+  }
+
+  .mapping-card {
+    align-items: flex-start;
+  }
 }
 
 .preview-wrap {

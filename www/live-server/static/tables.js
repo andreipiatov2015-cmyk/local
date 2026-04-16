@@ -39,6 +39,10 @@ function esc(v) {
   return (v ?? '').toString().replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
+function normalizeHeaderLikeBackend(value) {
+  return (value || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 async function initListPage() {
   const listEl = document.getElementById('tableList');
   if (!listEl) return;
@@ -112,12 +116,15 @@ async function initDetailPage() {
   const mappingListEl = document.getElementById('mappingList');
   const mappingStatusEl = document.getElementById('mappingStatus');
   const saveMappingBtn = document.getElementById('saveMapping');
+  const collapseConfiguredBtn = document.getElementById('collapseConfigured');
   const previewMetaEl = document.getElementById('previewMeta');
   const previewHeadEl = document.getElementById('previewHead');
   const previewBodyEl = document.getElementById('previewBody');
 
   let headers = [];
   let mapping = {};
+  let collapsedMappingCards = {};
+  let mappingFieldTags = [];
 
   function renderPreview(rows) {
     previewHeadEl.innerHTML = '';
@@ -134,13 +141,38 @@ async function initDetailPage() {
     });
   }
 
+  function isAutoDetectedMapping(tag, selectedHeader) {
+    if (!selectedHeader || !headers.length) return false;
+    const tagNorm = normalizeHeaderLikeBackend(tag);
+    const normalizedHeaders = headers.map((h) => normalizeHeaderLikeBackend(h));
+    const firstMatchedIndex = normalizedHeaders.findIndex((headerNorm) => {
+      return tagNorm && (tagNorm.includes(headerNorm) || headerNorm.includes(tagNorm));
+    });
+    return firstMatchedIndex >= 0 && headers[firstMatchedIndex] === selectedHeader;
+  }
+
   function renderMapping(fieldTags) {
     mappingListEl.innerHTML = '';
+    mappingFieldTags = fieldTags;
     fieldTags.forEach((tag) => {
-      const row = document.createElement('div');
-      row.className = 'mapping-row';
+      const card = document.createElement('article');
       const current = mapping[tag] || '';
-      row.innerHTML = `<label class="mapping-tag">${esc(tag)}</label>`;
+      const isMapped = Boolean(current);
+      const isCollapsed = Boolean(collapsedMappingCards[tag] && isMapped);
+      const isAutoDetected = isAutoDetectedMapping(tag, current);
+      card.className = `mapping-card${isMapped ? ' is-mapped' : ''}${isAutoDetected ? ' is-auto' : ''}${isCollapsed ? ' is-collapsed' : ''}`;
+
+      const body = document.createElement('div');
+      body.className = 'mapping-card-body';
+
+      const tagEl = document.createElement('span');
+      tagEl.className = 'mapping-tag';
+      tagEl.textContent = tag;
+
+      const selectedValueEl = document.createElement('span');
+      selectedValueEl.className = 'mapping-selected-value';
+      selectedValueEl.textContent = current || 'не выбрано';
+
       const select = document.createElement('select');
       select.className = 'mapping-select';
       select.innerHTML = '<option value="">не выбрано</option>' + headers.map((h, i) => {
@@ -150,10 +182,32 @@ async function initDetailPage() {
       select.addEventListener('change', () => {
         if (!select.value) delete mapping[tag];
         else mapping[tag] = select.value;
+        if (!select.value) collapsedMappingCards[tag] = false;
         setStatus(mappingStatusEl, 'Есть несохранённые изменения.', 'warning');
+        renderMapping(fieldTags);
       });
-      row.appendChild(select);
-      mappingListEl.appendChild(row);
+
+      const toggleBtn = document.createElement('button');
+      toggleBtn.type = 'button';
+      toggleBtn.className = 'mapping-toggle-btn';
+      toggleBtn.title = isCollapsed ? 'Развернуть карточку' : 'Свернуть карточку';
+      toggleBtn.textContent = isCollapsed ? '▼' : '▲';
+      toggleBtn.addEventListener('click', () => {
+        collapsedMappingCards[tag] = !collapsedMappingCards[tag];
+        renderMapping(fieldTags);
+      });
+
+      if (isCollapsed) {
+        body.appendChild(tagEl);
+        body.appendChild(selectedValueEl);
+      } else {
+        body.appendChild(select);
+        body.appendChild(tagEl);
+      }
+
+      card.appendChild(body);
+      if (isMapped) card.appendChild(toggleBtn);
+      mappingListEl.appendChild(card);
     });
   }
 
@@ -195,6 +249,13 @@ async function initDetailPage() {
     } catch (e) {
       setStatus(mappingStatusEl, `Ошибка: ${e.message}`, 'error');
     }
+  });
+
+  collapseConfiguredBtn?.addEventListener('click', () => {
+    mappingFieldTags.forEach((tag) => {
+      if (mapping[tag]) collapsedMappingCards[tag] = true;
+    });
+    renderMapping(mappingFieldTags);
   });
 
   try {
