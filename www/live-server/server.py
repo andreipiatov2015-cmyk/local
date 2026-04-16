@@ -138,6 +138,34 @@ DOCUMENT_COLUMN_META = {
     "video_url": {"title": "Видео", "kind": "link"},
 }
 FILE_MAPPING_FIELDS = {"audio_url", "presentation_url", "consent_url"}
+TABLES_V2_FIELD_TAGS = [
+    "Муниципалитет",
+    "Полное название учреждения",
+    "Краткое название учреждения",
+    "ФИО участника",
+    "ФИО руководителя",
+    "ФИО педагога",
+    "Название коллектива",
+    "Название номера",
+    "Номинация",
+    "Возрастная категория",
+    "Количество участников",
+    "Список участников",
+    "Номер телефона",
+    "Email",
+    "Ссылки",
+    "Фонограмма",
+    "Презентация",
+    "Согласие / квитки",
+    "Райдер",
+    "Время исполнения",
+    "Баллы",
+    "Фото работ",
+    "Эскиз работ",
+    "Техника (ДПИ)",
+    "Лига",
+    "Название коллекции",
+]
 
 
 
@@ -455,6 +483,62 @@ def init_db():
             updated_at TEXT NOT NULL
         )
     """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS import_tables (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'new',
+            source_excel_path TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS import_table_mappings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_id INTEGER NOT NULL,
+            field_tag TEXT NOT NULL,
+            excel_column_name TEXT,
+            excel_column_index INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(table_id, field_tag)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS import_table_rows (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_id INTEGER NOT NULL,
+            row_index INTEGER NOT NULL,
+            raw_row_json TEXT NOT NULL,
+            normalized_row_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(table_id, row_index)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS deprecated_features (
+            feature_key TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            deprecated_at TEXT NOT NULL
+        )
+    """)
+
+    cur.execute(
+        """
+        INSERT OR REPLACE INTO deprecated_features (feature_key, description, deprecated_at)
+        VALUES
+          ('tables_legacy_backend', 'Legacy tables backend disabled in v2 architecture', ?),
+          ('tables_legacy_ui', 'Legacy tables UI blocks removed in v2 architecture', ?)
+        """,
+        (now_iso(), now_iso()),
+    )
 
     for stmt in [
         "ALTER TABLE table_workspaces ADD COLUMN excel_headers_json TEXT",
@@ -2624,6 +2708,18 @@ def tables_page():
     return render_template("tables.html")
 
 
+@app.route("/tables/<int:table_id>")
+@login_required
+def table_details_page(table_id):
+    user = table_user_from_request()
+    if not user:
+        return redirect(url_for("login_page"))
+    row = query_db("SELECT id FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not row:
+        abort(404)
+    return render_template("table_detail.html", table_id=table_id)
+
+
 @app.route("/api/tables/send_code", methods=["POST"])
 def tables_send_code():
     return jsonify({"detail": "Используйте основной вход /login"}), 410
@@ -2640,16 +2736,10 @@ def list_tables():
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
     rows = query_db(
-        "SELECT id, title, status, total_count, processed_count, download_cursor_row_id, progress, last_error, created_at, mapping_json, yandex_status, yandex_last_error, yandex_last_checked_at, download_last_problem_kind, download_last_problem_url, download_last_problem_final_url, download_last_problem_row_id, download_last_problem_entry_id, download_last_problem_at, download_problem_json, is_finalized, finalized_at, program_updated_at FROM table_workspaces WHERE user_id=? ORDER BY id DESC",
+        "SELECT id, title, status, created_at, updated_at FROM import_tables WHERE user_id=? ORDER BY id DESC",
         (user["id"],),
     )
-    result = []
-    for r in rows:
-        item = dict(r)
-        item["yandex_status"] = item.get("yandex_status") or "disconnected"
-        item["mapping"] = normalize_mapping(json.loads(item.get("mapping_json") or "{}"))
-        result.append(item)
-    return jsonify(result)
+    return jsonify([dict(r) for r in rows])
 
 
 @app.route("/api/tables", methods=["POST"])
@@ -2660,13 +2750,13 @@ def create_table():
     title = (request.form.get("title") or "").strip()
     if not title:
         return jsonify({"detail": "Название обязательно"}), 400
-    cnt = query_db("SELECT COUNT(*) AS c FROM table_workspaces WHERE user_id=?", (user["id"],), one=True)["c"]
+    cnt = query_db("SELECT COUNT(*) AS c FROM import_tables WHERE user_id=?", (user["id"],), one=True)["c"]
     if cnt >= MAX_TABLES_PER_USER:
         return jsonify({"detail": "Достигнут лимит 10 таблиц"}), 400
     ts = now_iso()
     query_db(
-        "INSERT INTO table_workspaces (user_id, title, created_at, updated_at, yandex_status, yandex_last_checked_at) VALUES (?, ?, ?, ?, 'disconnected', ?)",
-        (user["id"], title, ts, ts, ts),
+        "INSERT INTO import_tables (user_id, title, status, source_excel_path, created_at, updated_at) VALUES (?, ?, 'new', NULL, ?, ?)",
+        (user["id"], title, ts, ts),
     )
     return jsonify({"status": "ok"})
 
@@ -3097,17 +3187,23 @@ def yandex_refresh(table_id):
     return jsonify(body)
 
 
-@app.route("/api/tables/<int:table_id>", methods=["DELETE"])
-def delete_table(table_id):
+@app.route("/api/tables/<int:table_id>", methods=["GET", "DELETE"])
+def table_info_or_delete(table_id):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    table = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    table = query_db(
+        "SELECT id, user_id, title, status, created_at, updated_at, source_excel_path FROM import_tables WHERE id=? AND user_id=?",
+        (table_id, user["id"]),
+        one=True,
+    )
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
-    query_db("DELETE FROM table_program_items WHERE table_id=?", (table_id,))
-    query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
-    query_db("DELETE FROM table_workspaces WHERE id=?", (table_id,))
+    if request.method == "GET":
+        return jsonify(dict(table))
+    query_db("DELETE FROM import_table_mappings WHERE table_id=?", (table_id,))
+    query_db("DELETE FROM import_table_rows WHERE table_id=?", (table_id,))
+    query_db("DELETE FROM import_tables WHERE id=?", (table_id,))
     shutil.rmtree(storage_for_table(user["id"], table_id), ignore_errors=True)
     return jsonify({"status": "ok"})
 
@@ -3117,7 +3213,7 @@ def upload_excel(table_id):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    table = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    table = query_db("SELECT id FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
     excel = request.files.get("excel")
@@ -3127,9 +3223,6 @@ def upload_excel(table_id):
     base = storage_for_table(user["id"], table_id)
     dst = os.path.join(base, "meta")
     os.makedirs(dst, exist_ok=True)
-    for folder in ["phonograms", "receipts", "presentations"]:
-        os.makedirs(os.path.join(base, folder), exist_ok=True)
-
     xlsx_path = os.path.join(dst, "original.xlsx")
     excel.save(xlsx_path)
 
@@ -3137,65 +3230,41 @@ def upload_excel(table_id):
         headers, preview_rows, total_rows, sheet_name = parse_excel_preview(xlsx_path)
     except Exception as exc:
         app.logger.warning("[tables_excel_preview] table_id=%s parse_failed error=%s", table_id, str(exc))
-        query_db(
-            "UPDATE table_workspaces SET status='error', progress=0, excel_headers_json='[]', excel_preview_rows_json='[]', excel_total_rows=0, excel_sheet_name=NULL, updated_at=? WHERE id=?",
-            (now_iso(), table_id),
-        )
+        query_db("UPDATE import_tables SET status='error', updated_at=? WHERE id=?", (now_iso(), table_id))
         return jsonify({"detail": f"Excel не распознан: {str(exc)}"}), 400
 
-    auto_mapping, signature, auto_source = apply_mapping_templates_and_presets(user["id"], headers)
+    query_db("DELETE FROM import_table_rows WHERE table_id=?", (table_id,))
+    query_db("DELETE FROM import_table_mappings WHERE table_id=?", (table_id,))
+    ts = now_iso()
+    query_db(
+        "INSERT INTO import_table_rows (table_id, row_index, raw_row_json, normalized_row_json, created_at, updated_at) VALUES (?, 0, ?, ?, ?, ?)",
+        (table_id, json.dumps(headers, ensure_ascii=False), json.dumps({}, ensure_ascii=False), ts, ts),
+    )
+    for idx, row in enumerate(preview_rows, start=1):
+        query_db(
+            "INSERT INTO import_table_rows (table_id, row_index, raw_row_json, normalized_row_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (table_id, idx, json.dumps(row, ensure_ascii=False), json.dumps({}, ensure_ascii=False), ts, ts),
+        )
 
-    query_db("DELETE FROM table_entries WHERE table_id=?", (table_id,))
-
-    for idx, row in enumerate(preview_rows, start=2):
-        row_data = {str(i): v for i, v in enumerate(row)}
-        try:
+    normalized_headers = [normalize_header_text(h) for h in headers]
+    auto_mapping = {}
+    for tag in TABLES_V2_FIELD_TAGS:
+        tag_norm = normalize_header_text(tag)
+        matched_idx = None
+        for i, header_norm in enumerate(normalized_headers):
+            if tag_norm and (tag_norm in header_norm or header_norm in tag_norm):
+                matched_idx = i
+                break
+        if matched_idx is not None:
+            auto_mapping[tag] = headers[matched_idx]
             query_db(
-                """
-                INSERT INTO table_entries (table_id, row_id, number_title, fio, team, unique_key, audio_url, receipt_url, consent_url, application_file, generic_file, video_url, presentation_url, audio_local, receipt_local, consent_local, application_local, generic_local, presentation_local, row_data_json, resolved_fields_json, conflicts_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    table_id,
-                    idx,
-                    "",
-                    "",
-                    "",
-                    f"preview-{idx}",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    json.dumps(row_data, ensure_ascii=False),
-                    json.dumps({}, ensure_ascii=False),
-                    json.dumps({}, ensure_ascii=False),
-                    now_iso(),
-                ),
+                "INSERT INTO import_table_mappings (table_id, field_tag, excel_column_name, excel_column_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (table_id, tag, headers[matched_idx], matched_idx, ts, ts),
             )
-        except Exception:
-            app.logger.exception("[tables_excel_preview] table_id=%s row_id=%s insert_failed", table_id, idx)
-            raise
 
     query_db(
-        "UPDATE table_workspaces SET excel_headers_json=?, excel_preview_rows_json=?, excel_total_rows=?, excel_sheet_name=?, mapping_json=?, status='excel_loaded', progress=100, updated_at=? WHERE id=?",
-        (
-            json.dumps(headers, ensure_ascii=False),
-            json.dumps(preview_rows, ensure_ascii=False),
-            total_rows,
-            sheet_name,
-            json.dumps(auto_mapping, ensure_ascii=False),
-            now_iso(),
-            table_id,
-        ),
+        "UPDATE import_tables SET status='excel_loaded', source_excel_path=?, updated_at=? WHERE id=?",
+        (xlsx_path, ts, table_id),
     )
 
     app.logger.info(
@@ -3207,22 +3276,16 @@ def upload_excel(table_id):
         total_rows,
     )
 
-    can_start, reason = table_required_mapping_status(auto_mapping)
-
     return jsonify(
         {
             "status": "ok",
             "table_status": "excel_loaded",
             "headers": headers,
-            "rows": preview_rows,
+            "rows": preview_rows[:20],
             "total_rows": total_rows,
             "sheet": sheet_name,
             "mapping": auto_mapping,
-            "mapping_signature": signature,
             "mapping_autofilled": bool(auto_mapping),
-            "mapping_autofill_source": auto_source,
-            "can_start": can_start,
-            "reason": reason,
         }
     )
 
@@ -3232,22 +3295,27 @@ def table_excel_preview(table_id):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    table = query_db(
-        "SELECT id, excel_headers_json, excel_preview_rows_json, excel_total_rows FROM table_workspaces WHERE id=? AND user_id=?",
-        (table_id, user["id"]),
-        one=True,
-    )
+    table = query_db("SELECT id FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
-    headers = json.loads(table["excel_headers_json"] or "[]")
-    rows = json.loads(table["excel_preview_rows_json"] or "[]")
-    total_rows = int(table["excel_total_rows"] or 0)
+    rows_db = query_db(
+        "SELECT row_index, raw_row_json FROM import_table_rows WHERE table_id=? ORDER BY row_index ASC LIMIT 21",
+        (table_id,),
+    )
+    all_count_row = query_db("SELECT COUNT(*) AS c FROM import_table_rows WHERE table_id=? AND row_index>0", (table_id,), one=True)
+    headers = []
+    rows = []
+    for row in rows_db:
+        raw = json.loads(row["raw_row_json"] or "[]")
+        if int(row["row_index"]) == 0:
+            headers = raw
+        else:
+            rows.append(raw)
+    total_rows = int(all_count_row["c"] if all_count_row else 0)
     return jsonify({
         "headers": headers,
-        "rows": rows,
+        "rows": rows[:20],
         "total_rows": total_rows,
-        "mapping_fields": MAPPING_FIELDS,
-        "mapping_signature": mapping_signature(headers),
     })
 
 
@@ -3261,18 +3329,17 @@ def get_table_mapping(table_id):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    table = query_db("SELECT id, mapping_json, excel_headers_json FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    table = query_db("SELECT id FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
-    mapping = normalize_mapping(json.loads(table["mapping_json"] or "{}"))
-    headers = json.loads(table["excel_headers_json"] or "[]")
-    can_start, reason = table_required_mapping_status(mapping)
+    rows = query_db(
+        "SELECT field_tag, excel_column_name, excel_column_index FROM import_table_mappings WHERE table_id=? ORDER BY field_tag ASC",
+        (table_id,),
+    )
+    mapping = {r["field_tag"]: r["excel_column_name"] for r in rows if r["excel_column_name"]}
     return jsonify({
         "mapping": mapping,
-        "can_start": can_start,
-        "reason": reason,
-        "mapping_fields": MAPPING_FIELDS,
-        "mapping_signature": mapping_signature(headers),
+        "field_tags": TABLES_V2_FIELD_TAGS,
     })
 
 
@@ -3281,88 +3348,43 @@ def set_table_mapping(table_id):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
-    table = query_db("SELECT id FROM table_workspaces WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    table = query_db("SELECT id FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
     if not table:
         return jsonify({"detail": "Таблица не найдена"}), 404
 
     payload = request.get_json(silent=True) or {}
-    mapping = normalize_mapping(payload.get("mapping") if isinstance(payload, dict) else payload)
-    query_db("UPDATE table_workspaces SET mapping_json=?, updated_at=? WHERE id=?", (json.dumps(mapping, ensure_ascii=False), now_iso(), table_id))
-    try:
-        before_stats = collect_table_entries_stats(table_id)
-        stats = rebuild_entries_from_excel(table_id, user["id"], mapping, preserve_files=True, clear_existing=True)
-        app.logger.info(
-            "[tables_entries_rebuild] stage=mapping_saved table_id=%s total=%s with_number_title=%s with_fio=%s with_audio_local=%s with_receipt_local=%s with_presentation_local=%s",
-            table_id,
-            stats["total"],
-            stats["with_number_title"],
-            stats["with_fio"],
-            stats["with_audio_local"],
-            stats["with_receipt_local"],
-            stats["with_presentation_local"],
+    mapping = payload.get("mapping") if isinstance(payload, dict) else payload
+    if not isinstance(mapping, dict):
+        return jsonify({"detail": "Ожидается объект mapping"}), 400
+    headers_row = query_db(
+        "SELECT raw_row_json FROM import_table_rows WHERE table_id=? AND row_index=0",
+        (table_id,),
+        one=True,
+    )
+    headers = json.loads((headers_row["raw_row_json"] if headers_row else "[]") or "[]")
+    ts = now_iso()
+    query_db("DELETE FROM import_table_mappings WHERE table_id=?", (table_id,))
+    for tag in TABLES_V2_FIELD_TAGS:
+        column_name = (mapping.get(tag) or "").strip()
+        if not column_name:
+            continue
+        column_index = headers.index(column_name) if column_name in headers else None
+        query_db(
+            "INSERT INTO import_table_mappings (table_id, field_tag, excel_column_name, excel_column_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (table_id, tag, column_name, column_index, ts, ts),
         )
-        log_table_entries_stats("mapping_saved", table_id, previous=before_stats)
-    except Exception as exc:
-        app.logger.warning("[tables_entries_rebuild] stage=mapping_saved table_id=%s skipped error=%s", table_id, str(exc))
-    can_start, reason = table_required_mapping_status(mapping)
-    return jsonify({"status": "ok", "mapping": mapping, "can_start": can_start, "reason": reason})
+    query_db("UPDATE import_tables SET updated_at=? WHERE id=?", (ts, table_id))
+    return jsonify({"status": "ok", "mapping": mapping})
 
 
 @app.route("/api/tables/<int:table_id>/mapping/remember", methods=["POST"])
 def remember_table_mapping(table_id):
-    user = table_user_from_request()
-    if not user:
-        return jsonify({"detail": "Не авторизован"}), 401
-
-    table = query_db(
-        "SELECT id, excel_headers_json, mapping_json FROM table_workspaces WHERE id=? AND user_id=?",
-        (table_id, user["id"]),
-        one=True,
-    )
-    if not table:
-        return jsonify({"detail": "Таблица не найдена"}), 404
-
-    headers = json.loads(table["excel_headers_json"] or "[]")
-    if not headers:
-        return jsonify({"detail": "Сначала загрузите Excel"}), 400
-
-    mapping = normalize_mapping(json.loads(table["mapping_json"] or "{}"))
-    if not mapping:
-        return jsonify({"detail": "Сначала назначьте хотя бы одну колонку"}), 400
-
-    signature = mapping_signature(headers)
-    save_mapping_template(user["id"], signature, mapping)
-
-    for label in mapping.keys():
-        for idx in mapped_field_indexes(mapping, label):
-            if idx >= len(headers):
-                continue
-            header_norm = normalize_header_text(headers[idx])
-            upsert_mapping_preset(user["id"], label, header_norm, "exact", priority=10)
-
-    return jsonify({"status": "ok", "signature": signature, "saved_fields": len(mapping)})
+    return jsonify({"detail": "Legacy endpoint отключен в новой архитектуре tables"}), 410
 
 
 @app.route("/api/tables/<int:table_id>/start-download", methods=["POST"])
 def start_download(table_id):
-    user = table_user_from_request()
-    if not user:
-        return jsonify({"detail": "Не авторизован"}), 401
-    t = query_db(
-        "SELECT id, status, processed_count, download_cursor_row_id, mapping_json, excel_total_rows FROM table_workspaces WHERE id=? AND user_id=?",
-        (table_id, user["id"]),
-        one=True,
-    )
-    if not t:
-        return jsonify({"detail": "Таблица не найдена"}), 404
-
-    mapping = normalize_mapping(json.loads(t["mapping_json"] or "{}"))
-    can_start, reason = table_required_mapping_status(mapping)
-    if not can_start:
-        return jsonify({"detail": reason}), 400
-
-    resume_statuses = {"auth_required", "captcha_required", "paused", "downloading_partial"}
-    current_status = str(t["status"] or "new").lower()
+    return jsonify({"detail": "Legacy endpoint отключен в новой архитектуре tables"}), 410
     is_resume = current_status in resume_statuses and int(t["download_cursor_row_id"] or 0) >= 2
 
     if not has_global_yandex_session():
