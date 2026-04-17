@@ -171,7 +171,7 @@
 
 .section-body-collapsible {
   display: block;
-  max-height: 4000px;
+  max-height: none;
   overflow: hidden;
   transition: max-height 0.28s ease, opacity 0.2s ease, margin-top 0.2s ease;
   margin-top: 10px;
@@ -186,6 +186,10 @@
   max-height: 0;
   opacity: 0;
   margin-top: 0;
+}
+
+.preview-conditional-row.is-hidden {
+  display: none;
 }
 
 .table-list {

@@ -264,10 +264,20 @@ async function initDetailPage() {
   function syncMappingSectionCollapsedState() {
     if (!mappingSectionCardEl || !mappingSectionToggleBtn) return;
     const bodyEl = document.getElementById('mappingSectionBody');
-    const nextHeight = isMappingSectionCollapsed ? 0 : (bodyEl?.scrollHeight || 0);
     mappingSectionCardEl.classList.toggle('is-collapsed', isMappingSectionCollapsed);
     if (bodyEl) {
-      bodyEl.style.maxHeight = `${nextHeight}px`;
+      if (isMappingSectionCollapsed) {
+        const currentHeight = bodyEl.scrollHeight;
+        bodyEl.style.maxHeight = `${currentHeight}px`;
+        window.requestAnimationFrame(() => {
+          bodyEl.style.maxHeight = '0px';
+        });
+      } else {
+        bodyEl.style.maxHeight = `${bodyEl.scrollHeight}px`;
+        window.setTimeout(() => {
+          if (!isMappingSectionCollapsed) bodyEl.style.maxHeight = 'none';
+        }, 300);
+      }
       bodyEl.style.opacity = isMappingSectionCollapsed ? '0' : '1';
       bodyEl.style.marginTop = isMappingSectionCollapsed ? '0px' : '10px';
     }
@@ -641,19 +651,26 @@ async function initDetailPage() {
         const settings = readDocumentationSettingsFromForm();
         const minStart = getLastEndMinutesBeforeIndex(index, settings);
         const award = normalizeAwardBlockSettings(item, minStart);
+        const showParallelToggle = award.include_results_time && award.include_rehearsal_time;
+        const resultsStart = Math.max(minStart, award.results_start_minutes);
+        const rehearsalStart = Math.max(minStart, award.rehearsal_start_minutes);
+        const resultsFieldsClass = award.include_results_time ? '' : ' is-hidden';
+        const rehearsalFieldsClass = award.include_rehearsal_time ? '' : ' is-hidden';
+        const parallelFieldClass = showParallelToggle ? '' : ' is-hidden';
         const extra = document.createElement('div');
         extra.className = 'preview-extra-block';
         extra.innerHTML = `
           <div class="preview-block-form-grid">
             <label><input type="checkbox" data-award-checkbox="include_results_time" ${award.include_results_time ? 'checked' : ''}/> Добавить время для подведения итогов</label>
             <label><input type="checkbox" data-award-checkbox="include_rehearsal_time" ${award.include_rehearsal_time ? 'checked' : ''}/> Добавить время для репетиций</label>
-            <label><input type="checkbox" data-award-checkbox="parallel_results_and_rehearsal" ${award.parallel_results_and_rehearsal ? 'checked' : ''}/> Подведение итогов и репетиции идут параллельно</label>
+            <label class="preview-conditional-row${parallelFieldClass}"><input type="checkbox" data-award-checkbox="parallel_results_and_rehearsal" ${award.parallel_results_and_rehearsal ? 'checked' : ''}/> Подведение итогов и репетиции идут параллельно</label>
             <label>Награждение, мин. <input type="number" min="1" step="1" data-award-input="award_duration_minutes" value="${award.award_duration_minutes}"/></label>
-            <label>Старт подведения итогов <input type="time" data-award-time="results_start_minutes" value="${formatMinutesToClock(Math.max(minStart, award.results_start_minutes))}"/></label>
-            <label>Длительность подведения итогов, мин. <input type="number" min="1" step="1" data-award-input="results_duration_minutes" value="${award.results_duration_minutes}"/></label>
-            <label>Старт репетиций <input type="time" data-award-time="rehearsal_start_minutes" value="${formatMinutesToClock(Math.max(minStart, award.rehearsal_start_minutes))}"/></label>
-            <label>Длительность репетиций, мин. <input type="number" min="1" step="1" data-award-input="rehearsal_duration_minutes" value="${award.rehearsal_duration_minutes}"/></label>
+            <label class="preview-conditional-row${resultsFieldsClass}">Старт подведения итогов <input type="time" data-award-time="results_start_minutes" value="${formatMinutesToClock(resultsStart)}"/></label>
+            <label class="preview-conditional-row${resultsFieldsClass}">Длительность подведения итогов, мин. <input type="number" min="1" step="1" data-award-input="results_duration_minutes" value="${award.results_duration_minutes}"/></label>
+            <label class="preview-conditional-row${rehearsalFieldsClass}">Старт репетиций <input type="time" data-award-time="rehearsal_start_minutes" value="${formatMinutesToClock(rehearsalStart)}"/></label>
+            <label class="preview-conditional-row${rehearsalFieldsClass}">Длительность репетиций, мин. <input type="number" min="1" step="1" data-award-input="rehearsal_duration_minutes" value="${award.rehearsal_duration_minutes}"/></label>
           </div>
+          <div class="hint">Ранний старт недоступен: не раньше ${formatMinutesToClock(minStart)} (окончание предыдущего номера).</div>
         `;
         extra.querySelectorAll('input').forEach((inputEl) => {
           inputEl.addEventListener('change', () => {
@@ -663,6 +680,9 @@ async function initDetailPage() {
               const nextMinutes = parseClockToMinutes(inputEl.value);
               award[inputEl.dataset.awardTime] = Math.max(minStart, Number.isFinite(nextMinutes) ? nextMinutes : minStart);
               inputEl.value = formatMinutesToClock(award[inputEl.dataset.awardTime]);
+            }
+            if (!(award.include_results_time && award.include_rehearsal_time)) {
+              award.parallel_results_and_rehearsal = false;
             }
             sequenceItems[index] = normalizeAwardBlockSettings(award, minStart);
             queueSequenceSave();
@@ -887,6 +907,11 @@ async function initDetailPage() {
   }
 
   function handleContextAction(action) {
+    if (action === 'edit' || action === 'mark_remote') {
+      alert('Функция будет реализована позже.');
+      closeContextMenu();
+      return;
+    }
     const item = getSequenceItemById(contextMenuTargetId);
     if (!item) {
       closeContextMenu();
