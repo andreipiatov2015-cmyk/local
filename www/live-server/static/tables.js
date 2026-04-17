@@ -393,9 +393,18 @@ async function initDetailPage() {
     const nextRow = Array.isArray(row) ? [...row] : [];
     const edits = item?.editedFields;
     if (!edits || typeof edits !== 'object') return nextRow;
+    if (edits.tags && typeof edits.tags === 'object') {
+      Object.entries(mappingByHeaderIdx).forEach(([idxText, mappedTag]) => {
+        const idx = Number(idxText);
+        if (!Number.isInteger(idx) || idx < 0 || idx >= headers.length) return;
+        const editedValue = typeof edits.tags[mappedTag] === 'string' ? edits.tags[mappedTag].trim() : null;
+        if (editedValue === null) return;
+        nextRow[idx] = editedValue;
+      });
+    }
     editableFieldSpecs.forEach((spec) => {
-      const editedValue = (typeof edits[spec.key] === 'string') ? edits[spec.key].trim() : '';
-      if (!editedValue) return;
+      const editedValue = (typeof edits[spec.key] === 'string') ? edits[spec.key].trim() : null;
+      if (editedValue === null) return;
       Object.entries(mappingByHeaderIdx).forEach(([idxText, mappedTag]) => {
         const idx = Number(idxText);
         if (!Number.isInteger(idx) || idx < 0 || idx >= headers.length) return;
@@ -407,8 +416,8 @@ async function initDetailPage() {
     });
     if (edits.extra && typeof edits.extra === 'object') {
       headers.forEach((header, idx) => {
-        const editedValue = typeof edits.extra[header] === 'string' ? edits.extra[header].trim() : '';
-        if (editedValue) nextRow[idx] = editedValue;
+        const editedValue = typeof edits.extra[header] === 'string' ? edits.extra[header].trim() : null;
+        if (editedValue !== null) nextRow[idx] = editedValue;
       });
     }
     return nextRow;
@@ -628,30 +637,37 @@ async function initDetailPage() {
         const numberCell = document.createElement('div');
         numberCell.className = 'preview-cell preview-cell-order';
         numberCell.dataset.noContext = '1';
-        numberCell.innerHTML = `
-          <div class="preview-cell-title">Номер</div>
-          <div class="preview-order-controls">
-            <input class="preview-order-input" type="number" min="1" max="${totalParticipants}" value="${participantNumber}" />
-            <button type="button" class="btn btn-secondary btn-small preview-move-btn" title="Переместить участника">↕</button>
-          </div>
-        `;
-        const numberInput = numberCell.querySelector('.preview-order-input');
-        const moveBtn = numberCell.querySelector('.preview-move-btn');
-        const commitMove = () => {
-          const nextPos = Number(numberInput.value || participantNumber);
-          if (!Number.isInteger(nextPos) || nextPos < 1 || nextPos > totalParticipants) {
-            numberInput.value = participantNumber;
-            return;
-          }
-          moveParticipant(participantNumber, nextPos);
-        };
-        numberInput?.addEventListener('change', commitMove);
-        numberInput?.addEventListener('keydown', (event) => {
-          if (event.key !== 'Enter') return;
-          event.preventDefault();
-          commitMove();
-        });
-        moveBtn?.addEventListener('click', commitMove);
+        if (isEditing) {
+          numberCell.innerHTML = `
+            <div class="preview-cell-title">Номер</div>
+            <div class="preview-order-controls">
+              <input class="preview-order-input" type="number" min="1" max="${totalParticipants}" value="${participantNumber}" />
+              <button type="button" class="btn btn-secondary btn-small preview-move-btn" title="Переместить участника">↕</button>
+            </div>
+          `;
+          const numberInput = numberCell.querySelector('.preview-order-input');
+          const moveBtn = numberCell.querySelector('.preview-move-btn');
+          const commitMove = () => {
+            const nextPos = Number(numberInput.value || participantNumber);
+            if (!Number.isInteger(nextPos) || nextPos < 1 || nextPos > totalParticipants) {
+              numberInput.value = participantNumber;
+              return;
+            }
+            moveParticipant(participantNumber, nextPos);
+          };
+          numberInput?.addEventListener('change', commitMove);
+          numberInput?.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            commitMove();
+          });
+          moveBtn?.addEventListener('click', commitMove);
+        } else {
+          numberCell.innerHTML = `
+            <div class="preview-cell-title">Номер</div>
+            <div class="preview-cell-value">${participantNumber}</div>
+          `;
+        }
         grid.appendChild(numberCell);
       }
 
@@ -683,16 +699,21 @@ async function initDetailPage() {
       cardCells.forEach((cell) => {
         const cellEl = document.createElement('div');
         cellEl.className = `preview-cell${cell.hasConflict ? ' preview-cell-conflict' : ''}`;
-        const editableSpec = editableFieldSpecs.find((spec) => spec.matchers.some((matcher) => normalizeHeaderLikeBackend(cell.title).includes(normalizeHeaderLikeBackend(matcher))));
-        const editableValue = editableSpec
-          ? ((item?.editedFields && typeof item.editedFields[editableSpec.key] === 'string' ? item.editedFields[editableSpec.key] : getMappedValueByMatchers(row, editableSpec.matchers)) || '')
-          : '';
-        const canEditCell = isParticipant && isEditing && Boolean(editableSpec);
+        const editedByTag = item?.editedFields?.tags && typeof item.editedFields.tags[cell.title] === 'string'
+          ? item.editedFields.tags[cell.title]
+          : null;
+        const editableValue = editedByTag !== null ? editedByTag : (cell.mergedValue || '');
+        const isLongValue = editableValue.length > 80 || editableValue.includes('\n');
+        const canEditCell = isParticipant && isEditing;
         cellEl.innerHTML = `
           <div class="preview-cell-title">${esc(cell.title)}</div>
           ${
             canEditCell
-              ? `<textarea class="input preview-cell-inline-input" rows="3" data-edit-field="${esc(editableSpec.key)}">${esc(editableValue)}</textarea>`
+              ? (
+                isLongValue
+                  ? `<textarea class="input preview-cell-inline-input" rows="3" data-tag-field="${esc(cell.title)}">${esc(editableValue)}</textarea>`
+                  : `<input class="input preview-cell-inline-input" type="text" data-tag-field="${esc(cell.title)}" value="${esc(editableValue)}" />`
+              )
               : `<div class="preview-cell-value${isExpanded ? '' : ' preview-cell-clamp'}">${esc(cell.value)}</div>`
           }
           ${cell.hasConflict ? '<div class="preview-conflict-badge">Конфликт значений</div>' : ''}
@@ -708,7 +729,7 @@ async function initDetailPage() {
         extra.className = 'preview-extra-block';
         const remaining = headers
           .map((header, headerIndex) => ({ header, value: (row[headerIndex] ?? '').toString().trim(), headerIndex }))
-          .filter((field) => !usedIndexes.has(field.headerIndex) && field.value);
+          .filter((field) => !usedIndexes.has(field.headerIndex));
         const conflictDetails = cells.filter((cell) => cell.hasConflict);
         extra.innerHTML = `
           ${conflictDetails.length ? `
@@ -720,7 +741,11 @@ async function initDetailPage() {
                   ${cell.sourceValues.map((valueItem) => `
                     <div class="preview-conflict-source">
                       <span class="preview-conflict-col">${esc(valueItem.header)}</span>
-                      <span class="preview-conflict-val">${esc(valueItem.value)}</span>
+                      ${
+                        isEditing
+                          ? `<textarea class="input preview-extra-inline-input" rows="2" data-extra-header="${esc(valueItem.header)}">${esc((item?.editedFields?.extra && typeof item.editedFields.extra[valueItem.header] === 'string') ? item.editedFields.extra[valueItem.header] : valueItem.value)}</textarea>`
+                          : `<span class="preview-conflict-val">${esc(valueItem.value)}</span>`
+                      }
                     </div>
                   `).join('')}
                 </div>
@@ -735,7 +760,13 @@ async function initDetailPage() {
                   <div class="preview-extra-key">${esc(field.header)}</div>
                   ${
                     isEditing
-                      ? `<textarea class="input preview-extra-inline-input" rows="2" data-extra-header="${esc(field.header)}">${esc((item?.editedFields?.extra && typeof item.editedFields.extra[field.header] === 'string') ? item.editedFields.extra[field.header] : field.value)}</textarea>`
+                      ? (
+                        ((item?.editedFields?.extra && typeof item.editedFields.extra[field.header] === 'string'
+                          ? item.editedFields.extra[field.header]
+                          : field.value).length > 80)
+                          ? `<textarea class="input preview-extra-inline-input" rows="2" data-extra-header="${esc(field.header)}">${esc((item?.editedFields?.extra && typeof item.editedFields.extra[field.header] === 'string') ? item.editedFields.extra[field.header] : field.value)}</textarea>`
+                          : `<input class="input preview-extra-inline-input" type="text" data-extra-header="${esc(field.header)}" value="${esc((item?.editedFields?.extra && typeof item.editedFields.extra[field.header] === 'string') ? item.editedFields.extra[field.header] : field.value)}" />`
+                      )
                       : `<div class="preview-extra-value">${esc(field.value)}</div>`
                   }
                 </div>
@@ -747,19 +778,16 @@ async function initDetailPage() {
         const currentStage = getParticipantStage(item);
         const stageSelectWrap = document.createElement('label');
         stageSelectWrap.className = 'hint';
-        stageSelectWrap.innerHTML = `
-          Статус этапа:
-          <select class="input" data-stage-select="1">
-            <option value="" ${currentStage ? '' : 'selected'}>Не распределено</option>
-            <option value="onsite" ${currentStage === 'onsite' ? 'selected' : ''}>Очный этап</option>
-            <option value="remote" ${currentStage === 'remote' ? 'selected' : ''}>Заочный этап</option>
-          </select>
-        `;
-        stageSelectWrap.querySelector('select')?.addEventListener('change', (event) => {
-          sequenceItems[index] = { ...item, stageStatus: event.target.value || null };
-          queueSequenceSave();
-          renderPreview();
-        });
+        stageSelectWrap.innerHTML = isEditing
+          ? `
+            Статус этапа:
+            <select class="input" data-edit-stage="1">
+              <option value="" ${currentStage ? '' : 'selected'}>Не распределено</option>
+              <option value="onsite" ${currentStage === 'onsite' ? 'selected' : ''}>Очный этап</option>
+              <option value="remote" ${currentStage === 'remote' ? 'selected' : ''}>Заочный этап</option>
+            </select>
+          `
+          : `Статус этапа: ${esc(getStageLabel(currentStage))}`;
         extra.prepend(stageSelectWrap);
 
         if (isEditing) {
@@ -771,14 +799,20 @@ async function initDetailPage() {
           `;
           controls.querySelector('[data-action="save-edit"]')?.addEventListener('click', () => {
             const edits = item.editedFields && typeof item.editedFields === 'object' ? item.editedFields : {};
-            const nextEdits = { ...edits, extra: { ...(edits.extra || {}) } };
-            card.querySelectorAll('[data-edit-field]').forEach((inputEl) => {
-              nextEdits[inputEl.dataset.editField] = (inputEl.value || '').trim();
+            const nextEdits = { ...edits, tags: { ...(edits.tags || {}) }, extra: { ...(edits.extra || {}) } };
+            card.querySelectorAll('[data-tag-field]').forEach((inputEl) => {
+              nextEdits.tags[inputEl.dataset.tagField] = (inputEl.value || '').trim();
             });
             card.querySelectorAll('[data-extra-header]').forEach((inputEl) => {
               nextEdits.extra[inputEl.dataset.extraHeader] = (inputEl.value || '').trim();
             });
-            sequenceItems[index] = { ...item, editedFields: nextEdits, isEditing: false };
+            const stageSelect = card.querySelector('[data-edit-stage]');
+            sequenceItems[index] = {
+              ...item,
+              stageStatus: stageSelect ? (stageSelect.value || null) : getParticipantStage(item),
+              editedFields: nextEdits,
+              isEditing: false,
+            };
             queueSequenceSave();
             renderPreview();
           });
