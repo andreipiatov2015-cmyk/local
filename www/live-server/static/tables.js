@@ -329,6 +329,98 @@ async function initDetailPage() {
     return { cells, usedIndexes };
   }
 
+  function getParticipantOrderByIndex(index) {
+    if (!Number.isInteger(index) || index < 0) return 0;
+    let order = 0;
+    for (let i = 0; i <= index && i < sequenceItems.length; i += 1) {
+      if (sequenceItems[i]?.type === 'participant') order += 1;
+    }
+    return order;
+  }
+
+  function getIndexByParticipantOrder(order) {
+    const target = Number(order);
+    if (!Number.isInteger(target) || target < 1) return -1;
+    let current = 0;
+    for (let i = 0; i < sequenceItems.length; i += 1) {
+      if (sequenceItems[i]?.type !== 'participant') continue;
+      current += 1;
+      if (current === target) return i;
+    }
+    return -1;
+  }
+
+  function moveParticipant(fromOrder, toOrder) {
+    const totalParticipants = sequenceItems.filter((item) => item.type === 'participant').length;
+    const from = Number(fromOrder);
+    const to = Number(toOrder);
+    if (!Number.isInteger(from) || !Number.isInteger(to)) return;
+    if (from < 1 || to < 1 || from > totalParticipants || to > totalParticipants || from === to) return;
+    const fromIndex = getIndexByParticipantOrder(from);
+    let toIndex = getIndexByParticipantOrder(to);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const [moved] = sequenceItems.splice(fromIndex, 1);
+    if (fromIndex < toIndex) toIndex -= 1;
+    sequenceItems.splice(toIndex, 0, moved);
+    queueSequenceSave();
+    renderPreview();
+  }
+
+  function getParticipantStage(item) {
+    if (item?.stageStatus === 'onsite' || item?.stageStatus === 'remote') return item.stageStatus;
+    if (item?.isOnsite === true) return 'onsite';
+    if (item?.isOnsite === false) return 'remote';
+    return null;
+  }
+
+  function getStageLabel(stageStatus) {
+    if (stageStatus === 'onsite') return 'Очный этап';
+    if (stageStatus === 'remote') return 'Заочный этап';
+    return 'Не распределено';
+  }
+
+  const editableFieldSpecs = [
+    { key: 'territory', label: 'Территория', matchers: ['территория'] },
+    { key: 'participant_fio', label: 'ФИО участника/участников', matchers: ['участник', 'фио'] },
+    { key: 'nomination', label: 'Номинация', matchers: ['номинация'] },
+    { key: 'number_title', label: 'Название номера', matchers: ['название номера', 'номер'] },
+    { key: 'audio', label: 'Фонограммы', matchers: ['фонограмм', 'audio'] },
+    { key: 'presentation_video', label: 'Презентации / видео', matchers: ['презентац', 'видео'] },
+    { key: 'consents', label: 'Согласия', matchers: ['соглас'] },
+  ];
+
+  function buildEffectiveRow(row, item) {
+    const nextRow = Array.isArray(row) ? [...row] : [];
+    const edits = item?.editedFields;
+    if (!edits || typeof edits !== 'object') return nextRow;
+    editableFieldSpecs.forEach((spec) => {
+      const editedValue = (typeof edits[spec.key] === 'string') ? edits[spec.key].trim() : '';
+      if (!editedValue) return;
+      Object.entries(mappingByHeaderIdx).forEach(([idxText, mappedTag]) => {
+        const idx = Number(idxText);
+        if (!Number.isInteger(idx) || idx < 0 || idx >= headers.length) return;
+        const tagNorm = normalizeHeaderLikeBackend(mappedTag);
+        if (spec.matchers.some((matcher) => tagNorm.includes(normalizeHeaderLikeBackend(matcher)))) {
+          nextRow[idx] = editedValue;
+        }
+      });
+    });
+    if (edits.extra && typeof edits.extra === 'object') {
+      headers.forEach((header, idx) => {
+        const editedValue = typeof edits.extra[header] === 'string' ? edits.extra[header].trim() : '';
+        if (editedValue) nextRow[idx] = editedValue;
+      });
+    }
+    return nextRow;
+  }
+
+  function setItemEditing(itemId, isEditing) {
+    sequenceItems = sequenceItems.map((item) => (item.id === itemId ? { ...item, isEditing: Boolean(isEditing) } : item));
+    expandedRows[itemId] = true;
+    queueSequenceSave();
+    renderPreview();
+  }
+
   function moveItem(fromPos, toPos) {
     if (!sequenceItems.length) return;
     const from = Number(fromPos);
@@ -394,7 +486,9 @@ async function initDetailPage() {
           id: item.id || createSequenceId('participant'),
           type: 'participant',
           rowRef,
-          isOnsite: item.isOnsite !== false,
+          stageStatus: getParticipantStage(item),
+          editedFields: item.editedFields && typeof item.editedFields === 'object' ? item.editedFields : {},
+          isEditing: false,
         });
         return;
       }
@@ -413,7 +507,9 @@ async function initDetailPage() {
           id: createSequenceId('participant'),
           type: 'participant',
           rowRef,
-          isOnsite: true,
+          stageStatus: null,
+          editedFields: {},
+          isEditing: false,
         });
       }
     }
@@ -460,8 +556,8 @@ async function initDetailPage() {
       const item = sequenceItems[i];
       if (!item) continue;
       if (item.type === 'participant') {
-        if (item.isOnsite !== false) {
-          const row = previewRowsData[item.rowRef - 1] || [];
+        if (getParticipantStage(item) === 'onsite') {
+          const row = buildEffectiveRow(previewRowsData[item.rowRef - 1] || [], item);
           const rawDuration = getMappedValueByMatchers(row, ['время исполнения', 'продолжительность']);
           const durationSeconds = parseDurationToSeconds(rawDuration, settings.default_duration_minutes);
           cursor += durationSeconds / 60;
@@ -504,9 +600,11 @@ async function initDetailPage() {
     sequenceItems.forEach((item, index) => {
       const isParticipant = item.type === 'participant';
       const rowRef = isParticipant ? item.rowRef : 0;
-      const row = isParticipant ? (previewRowsData[rowRef - 1] || []) : [];
-      const rowNumber = index + 1;
+      const rawRow = isParticipant ? (previewRowsData[rowRef - 1] || []) : [];
+      const row = isParticipant ? buildEffectiveRow(rawRow, item) : [];
+      const participantNumber = isParticipant ? getParticipantOrderByIndex(index) : null;
       const isExpanded = Boolean(expandedRows[item.id]);
+      const isEditing = Boolean(item.isEditing);
       const { cells, usedIndexes } = normalizeRowByTags(row);
 
       const card = document.createElement('article');
@@ -516,36 +614,7 @@ async function initDetailPage() {
 
       const rowTop = document.createElement('div');
       rowTop.className = 'preview-row-top';
-      rowTop.innerHTML = `
-        <button type="button" class="btn btn-secondary btn-small preview-expand-btn">${isExpanded ? 'Свернуть' : 'Развернуть'}</button>
-      `;
-      const numberCell = document.createElement('div');
-      numberCell.className = 'preview-cell preview-cell-order';
-      numberCell.innerHTML = `
-        <div class="preview-cell-title">Номер</div>
-        <div class="preview-order-controls">
-          <input class="preview-order-input" type="number" min="1" max="${sequenceItems.length}" value="${rowNumber}" />
-          <button type="button" class="btn btn-secondary btn-small preview-move-btn" title="Переместить строку">↕</button>
-        </div>
-      `;
-      numberCell.dataset.noContext = '1';
-      const numberInput = numberCell.querySelector('.preview-order-input');
-      const moveBtn = numberCell.querySelector('.preview-move-btn');
-      const commitMove = () => {
-        const nextPos = Number(numberInput.value || rowNumber);
-        if (!Number.isInteger(nextPos) || nextPos < 1 || nextPos > sequenceItems.length) {
-          numberInput.value = rowNumber;
-          return;
-        }
-        moveItem(rowNumber, nextPos);
-      };
-      numberInput?.addEventListener('change', commitMove);
-      numberInput?.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        commitMove();
-      });
-      moveBtn?.addEventListener('click', commitMove);
+      rowTop.innerHTML = `<button type="button" class="btn btn-secondary btn-small preview-expand-btn">${isExpanded ? 'Свернуть' : 'Развернуть'}</button>`;
       rowTop.querySelector('.preview-expand-btn')?.addEventListener('click', () => {
         expandedRows[item.id] = !expandedRows[item.id];
         renderPreview();
@@ -553,15 +622,43 @@ async function initDetailPage() {
 
       const grid = document.createElement('div');
       grid.className = 'preview-row-grid';
-      grid.appendChild(numberCell);
+
+      if (isParticipant) {
+        const totalParticipants = sequenceItems.filter((entry) => entry.type === 'participant').length;
+        const numberCell = document.createElement('div');
+        numberCell.className = 'preview-cell preview-cell-order';
+        numberCell.dataset.noContext = '1';
+        numberCell.innerHTML = `
+          <div class="preview-cell-title">Номер</div>
+          <div class="preview-order-controls">
+            <input class="preview-order-input" type="number" min="1" max="${totalParticipants}" value="${participantNumber}" />
+            <button type="button" class="btn btn-secondary btn-small preview-move-btn" title="Переместить участника">↕</button>
+          </div>
+        `;
+        const numberInput = numberCell.querySelector('.preview-order-input');
+        const moveBtn = numberCell.querySelector('.preview-move-btn');
+        const commitMove = () => {
+          const nextPos = Number(numberInput.value || participantNumber);
+          if (!Number.isInteger(nextPos) || nextPos < 1 || nextPos > totalParticipants) {
+            numberInput.value = participantNumber;
+            return;
+          }
+          moveParticipant(participantNumber, nextPos);
+        };
+        numberInput?.addEventListener('change', commitMove);
+        numberInput?.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          commitMove();
+        });
+        moveBtn?.addEventListener('click', commitMove);
+        grid.appendChild(numberCell);
+      }
+
       const cardCells = [];
       if (isParticipant) {
+        cardCells.push({ title: 'Статус этапа', value: getStageLabel(getParticipantStage(item)) });
         cardCells.push(...cells);
-        const stageCell = {
-          title: 'Статус этапа',
-          value: item.isOnsite !== false ? 'Очный этап' : 'Не участвует в очном этапе',
-        };
-        cardCells.unshift(stageCell);
       } else if (item.type === 'award_block') {
         const award = normalizeAwardBlockSettings(item);
         const serviceFlags = [
@@ -584,14 +681,14 @@ async function initDetailPage() {
         );
       }
       cardCells.forEach((cell) => {
-        const item = document.createElement('div');
-        item.className = `preview-cell${cell.hasConflict ? ' preview-cell-conflict' : ''}`;
-        item.innerHTML = `
+        const cellEl = document.createElement('div');
+        cellEl.className = `preview-cell${cell.hasConflict ? ' preview-cell-conflict' : ''}`;
+        cellEl.innerHTML = `
           <div class="preview-cell-title">${esc(cell.title)}</div>
           <div class="preview-cell-value${isExpanded ? '' : ' preview-cell-clamp'}">${esc(cell.value)}</div>
           ${cell.hasConflict ? '<div class="preview-conflict-badge">Конфликт значений</div>' : ''}
         `;
-        grid.appendChild(item);
+        grid.appendChild(cellEl);
       });
 
       card.appendChild(rowTop);
@@ -602,7 +699,7 @@ async function initDetailPage() {
         extra.className = 'preview-extra-block';
         const remaining = headers
           .map((header, headerIndex) => ({ header, value: (row[headerIndex] ?? '').toString().trim(), headerIndex }))
-          .filter((item) => !usedIndexes.has(item.headerIndex) && item.value);
+          .filter((field) => !usedIndexes.has(field.headerIndex) && field.value);
         const conflictDetails = cells.filter((cell) => cell.hasConflict);
         extra.innerHTML = `
           ${conflictDetails.length ? `
@@ -611,10 +708,10 @@ async function initDetailPage() {
               ${conflictDetails.map((cell) => `
                 <div class="preview-conflict-item">
                   <div class="preview-conflict-tag">${esc(cell.title)}</div>
-                  ${cell.sourceValues.map((item) => `
+                  ${cell.sourceValues.map((valueItem) => `
                     <div class="preview-conflict-source">
-                      <span class="preview-conflict-col">${esc(item.header)}</span>
-                      <span class="preview-conflict-val">${esc(item.value)}</span>
+                      <span class="preview-conflict-col">${esc(valueItem.header)}</span>
+                      <span class="preview-conflict-val">${esc(valueItem.value)}</span>
                     </div>
                   `).join('')}
                 </div>
@@ -624,26 +721,74 @@ async function initDetailPage() {
           <h3 class="preview-extra-title">Дополнительные поля</h3>
           <div class="preview-extra-grid">
             ${remaining.length
-              ? remaining
-                .map((item) => `
-                  <div class="preview-extra-row">
-                    <div class="preview-extra-key">${esc(item.header)}</div>
-                    <div class="preview-extra-value">${esc(item.value)}</div>
-                  </div>
-                `).join('')
+              ? remaining.map((field) => `
+                <div class="preview-extra-row">
+                  <div class="preview-extra-key">${esc(field.header)}</div>
+                  <div class="preview-extra-value">${esc(field.value)}</div>
+                </div>
+              `).join('')
               : '<div class="hint">Дополнительных данных нет.</div>'}
           </div>
         `;
-        const onsiteToggleWrap = document.createElement('label');
-        onsiteToggleWrap.className = 'hint';
-        onsiteToggleWrap.innerHTML = `<input type="checkbox" ${item.isOnsite !== false ? 'checked' : ''} /> Участник очного этапа`;
-        const onsiteToggle = onsiteToggleWrap.querySelector('input');
-        onsiteToggle?.addEventListener('change', () => {
-          sequenceItems[index] = { ...item, isOnsite: onsiteToggle.checked };
+
+        const currentStage = getParticipantStage(item);
+        const stageSelectWrap = document.createElement('label');
+        stageSelectWrap.className = 'hint';
+        stageSelectWrap.innerHTML = `
+          Статус этапа:
+          <select class="input" data-stage-select="1">
+            <option value="" ${currentStage ? '' : 'selected'}>Не распределено</option>
+            <option value="onsite" ${currentStage === 'onsite' ? 'selected' : ''}>Очный этап</option>
+            <option value="remote" ${currentStage === 'remote' ? 'selected' : ''}>Заочный этап</option>
+          </select>
+        `;
+        stageSelectWrap.querySelector('select')?.addEventListener('change', (event) => {
+          sequenceItems[index] = { ...item, stageStatus: event.target.value || null };
           queueSequenceSave();
           renderPreview();
         });
-        extra.prepend(onsiteToggleWrap);
+        extra.prepend(stageSelectWrap);
+
+        if (isEditing) {
+          const edits = item.editedFields && typeof item.editedFields === 'object' ? item.editedFields : {};
+          const editForm = document.createElement('div');
+          editForm.className = 'preview-block-form-grid';
+          const mainRows = editableFieldSpecs.map((spec) => {
+            const value = (typeof edits[spec.key] === 'string' ? edits[spec.key] : getMappedValueByMatchers(row, spec.matchers)) || '';
+            return `<label>${esc(spec.label)}<input type="text" class="input" data-edit-field="${esc(spec.key)}" value="${esc(value)}"/></label>`;
+          }).join('');
+          const extraRows = headers
+            .map((header, headerIndex) => ({ header, value: (row[headerIndex] ?? '').toString().trim(), headerIndex }))
+            .filter((field) => !usedIndexes.has(field.headerIndex))
+            .map((field) => {
+              const v = edits.extra && typeof edits.extra[field.header] === 'string' ? edits.extra[field.header] : field.value;
+              return `<label>${esc(field.header)}<input type="text" class="input" data-extra-header="${esc(field.header)}" value="${esc(v || '')}"/></label>`;
+            }).join('');
+          editForm.innerHTML = `
+            <h3 class="preview-extra-title">Редактирование участника</h3>
+            ${mainRows}
+            ${extraRows}
+            <div>
+              <button type="button" class="btn btn-primary btn-small" data-action="save-edit">Сохранить</button>
+              <button type="button" class="btn btn-secondary btn-small" data-action="cancel-edit">Отмена</button>
+            </div>
+          `;
+          editForm.querySelector('[data-action="save-edit"]')?.addEventListener('click', () => {
+            const nextEdits = { ...edits, extra: { ...(edits.extra || {}) } };
+            editForm.querySelectorAll('[data-edit-field]').forEach((inputEl) => {
+              nextEdits[inputEl.dataset.editField] = (inputEl.value || '').trim();
+            });
+            editForm.querySelectorAll('[data-extra-header]').forEach((inputEl) => {
+              nextEdits.extra[inputEl.dataset.extraHeader] = (inputEl.value || '').trim();
+            });
+            sequenceItems[index] = { ...item, editedFields: nextEdits, isEditing: false };
+            queueSequenceSave();
+            renderPreview();
+          });
+          editForm.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', () => setItemEditing(item.id, false));
+          extra.prepend(editForm);
+        }
+
         card.appendChild(extra);
       }
 
@@ -773,9 +918,9 @@ async function initDetailPage() {
 
     sequenceItems.forEach((item) => {
       if (item.type === 'participant') {
-        if (item.isOnsite === false) return;
+        if (getParticipantStage(item) !== 'onsite') return;
         onsiteCounter += 1;
-        const row = previewRowsData[item.rowRef - 1] || [];
+        const row = buildEffectiveRow(previewRowsData[item.rowRef - 1] || [], item);
         const numberTitle = getMappedValueByMatchers(row, ['название номера', 'навание номреа', 'номер']) || 'Без названия номера';
         const fio = getMappedValueByMatchers(row, ['участник', 'фио']);
         const team = getMappedValueByMatchers(row, ['коллектив']);
@@ -866,19 +1011,18 @@ async function initDetailPage() {
     if (!item || item.type !== 'participant') return;
     const menu = document.createElement('div');
     menu.className = 'preview-context-menu';
+    const stage = getParticipantStage(item);
     menu.innerHTML = `
       <button data-action="delete">Удалить участника</button>
-      <button data-action="edit" data-disabled="1">Редактировать участника (позже)</button>
-      <button data-action="mark_onsite">Отметить участника, очного этапа</button>
-      <button data-action="mark_remote" data-disabled="1">Отметить участника, заочного этапа (позже)</button>
+      <button data-action="edit">Редактировать участника</button>
+      <button data-action="mark_onsite" ${stage === 'onsite' ? 'disabled' : ''}>Отметить участника, очного этапа</button>
+      <button data-action="mark_remote" ${stage === 'remote' ? 'disabled' : ''}>Отметить участника, заочного этапа</button>
+      <button data-action="mark_unset" ${!stage ? 'disabled' : ''}>Снять назначение этапа</button>
       <button data-action="add_award_after">Добавить блок награждения после выбранного участника</button>
       <button data-action="add_award_before">Добавить блок награждения до выбранного участника</button>
       <button data-action="add_break_before">Добавить блок перерыва до выбранного участника</button>
       <button data-action="add_break_after">Добавить блок перерыва после выбранного участника</button>
     `;
-    menu.querySelectorAll('[data-disabled="1"]').forEach((btn) => {
-      btn.disabled = true;
-    });
     menu.querySelectorAll('button').forEach((btn) => {
       btn.addEventListener('click', () => handleContextAction(btn.dataset.action));
     });
@@ -907,11 +1051,6 @@ async function initDetailPage() {
   }
 
   function handleContextAction(action) {
-    if (action === 'edit' || action === 'mark_remote') {
-      alert('Функция будет реализована позже.');
-      closeContextMenu();
-      return;
-    }
     const item = getSequenceItemById(contextMenuTargetId);
     if (!item) {
       closeContextMenu();
@@ -922,12 +1061,22 @@ async function initDetailPage() {
       closeContextMenu();
       return;
     }
-    if (action === 'delete') {
+    if (action === 'edit') {
+      setItemEditing(item.id, true);
+    } else if (action === 'delete') {
       sequenceItems.splice(index, 1);
       queueSequenceSave();
       renderPreview();
     } else if (action === 'mark_onsite') {
-      sequenceItems[index] = { ...item, isOnsite: true };
+      sequenceItems[index] = { ...item, stageStatus: 'onsite' };
+      queueSequenceSave();
+      renderPreview();
+    } else if (action === 'mark_remote') {
+      sequenceItems[index] = { ...item, stageStatus: 'remote' };
+      queueSequenceSave();
+      renderPreview();
+    } else if (action === 'mark_unset') {
+      sequenceItems[index] = { ...item, stageStatus: null };
       queueSequenceSave();
       renderPreview();
     } else if (action === 'add_award_after') {
