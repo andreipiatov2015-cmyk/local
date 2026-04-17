@@ -608,7 +608,7 @@ async function initDetailPage() {
       const { cells, usedIndexes } = normalizeRowByTags(row);
 
       const card = document.createElement('article');
-      card.className = `preview-row-card${isExpanded ? ' is-expanded' : ''}${item.type === 'award_block' ? ' preview-row-card-award' : ''}${item.type === 'break_block' ? ' preview-row-card-break' : ''}`;
+      card.className = `preview-row-card${isExpanded ? ' is-expanded' : ''}${isEditing ? ' is-editing' : ''}${item.type === 'award_block' ? ' preview-row-card-award' : ''}${item.type === 'break_block' ? ' preview-row-card-break' : ''}`;
       card.dataset.itemId = item.id;
       card.dataset.itemType = item.type;
 
@@ -683,9 +683,18 @@ async function initDetailPage() {
       cardCells.forEach((cell) => {
         const cellEl = document.createElement('div');
         cellEl.className = `preview-cell${cell.hasConflict ? ' preview-cell-conflict' : ''}`;
+        const editableSpec = editableFieldSpecs.find((spec) => spec.matchers.some((matcher) => normalizeHeaderLikeBackend(cell.title).includes(normalizeHeaderLikeBackend(matcher))));
+        const editableValue = editableSpec
+          ? ((item?.editedFields && typeof item.editedFields[editableSpec.key] === 'string' ? item.editedFields[editableSpec.key] : getMappedValueByMatchers(row, editableSpec.matchers)) || '')
+          : '';
+        const canEditCell = isParticipant && isEditing && Boolean(editableSpec);
         cellEl.innerHTML = `
           <div class="preview-cell-title">${esc(cell.title)}</div>
-          <div class="preview-cell-value${isExpanded ? '' : ' preview-cell-clamp'}">${esc(cell.value)}</div>
+          ${
+            canEditCell
+              ? `<textarea class="input preview-cell-inline-input" rows="3" data-edit-field="${esc(editableSpec.key)}">${esc(editableValue)}</textarea>`
+              : `<div class="preview-cell-value${isExpanded ? '' : ' preview-cell-clamp'}">${esc(cell.value)}</div>`
+          }
           ${cell.hasConflict ? '<div class="preview-conflict-badge">Конфликт значений</div>' : ''}
         `;
         grid.appendChild(cellEl);
@@ -724,7 +733,11 @@ async function initDetailPage() {
               ? remaining.map((field) => `
                 <div class="preview-extra-row">
                   <div class="preview-extra-key">${esc(field.header)}</div>
-                  <div class="preview-extra-value">${esc(field.value)}</div>
+                  ${
+                    isEditing
+                      ? `<textarea class="input preview-extra-inline-input" rows="2" data-extra-header="${esc(field.header)}">${esc((item?.editedFields?.extra && typeof item.editedFields.extra[field.header] === 'string') ? item.editedFields.extra[field.header] : field.value)}</textarea>`
+                      : `<div class="preview-extra-value">${esc(field.value)}</div>`
+                  }
                 </div>
               `).join('')
               : '<div class="hint">Дополнительных данных нет.</div>'}
@@ -750,43 +763,27 @@ async function initDetailPage() {
         extra.prepend(stageSelectWrap);
 
         if (isEditing) {
-          const edits = item.editedFields && typeof item.editedFields === 'object' ? item.editedFields : {};
-          const editForm = document.createElement('div');
-          editForm.className = 'preview-block-form-grid';
-          const mainRows = editableFieldSpecs.map((spec) => {
-            const value = (typeof edits[spec.key] === 'string' ? edits[spec.key] : getMappedValueByMatchers(row, spec.matchers)) || '';
-            return `<label>${esc(spec.label)}<input type="text" class="input" data-edit-field="${esc(spec.key)}" value="${esc(value)}"/></label>`;
-          }).join('');
-          const extraRows = headers
-            .map((header, headerIndex) => ({ header, value: (row[headerIndex] ?? '').toString().trim(), headerIndex }))
-            .filter((field) => !usedIndexes.has(field.headerIndex))
-            .map((field) => {
-              const v = edits.extra && typeof edits.extra[field.header] === 'string' ? edits.extra[field.header] : field.value;
-              return `<label>${esc(field.header)}<input type="text" class="input" data-extra-header="${esc(field.header)}" value="${esc(v || '')}"/></label>`;
-            }).join('');
-          editForm.innerHTML = `
-            <h3 class="preview-extra-title">Редактирование участника</h3>
-            ${mainRows}
-            ${extraRows}
-            <div>
-              <button type="button" class="btn btn-primary btn-small" data-action="save-edit">Сохранить</button>
-              <button type="button" class="btn btn-secondary btn-small" data-action="cancel-edit">Отмена</button>
-            </div>
+          const controls = document.createElement('div');
+          controls.className = 'preview-edit-controls';
+          controls.innerHTML = `
+            <button type="button" class="btn btn-primary btn-small" data-action="save-edit">Сохранить</button>
+            <button type="button" class="btn btn-secondary btn-small" data-action="cancel-edit">Отмена</button>
           `;
-          editForm.querySelector('[data-action="save-edit"]')?.addEventListener('click', () => {
+          controls.querySelector('[data-action="save-edit"]')?.addEventListener('click', () => {
+            const edits = item.editedFields && typeof item.editedFields === 'object' ? item.editedFields : {};
             const nextEdits = { ...edits, extra: { ...(edits.extra || {}) } };
-            editForm.querySelectorAll('[data-edit-field]').forEach((inputEl) => {
+            card.querySelectorAll('[data-edit-field]').forEach((inputEl) => {
               nextEdits[inputEl.dataset.editField] = (inputEl.value || '').trim();
             });
-            editForm.querySelectorAll('[data-extra-header]').forEach((inputEl) => {
+            card.querySelectorAll('[data-extra-header]').forEach((inputEl) => {
               nextEdits.extra[inputEl.dataset.extraHeader] = (inputEl.value || '').trim();
             });
             sequenceItems[index] = { ...item, editedFields: nextEdits, isEditing: false };
             queueSequenceSave();
             renderPreview();
           });
-          editForm.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', () => setItemEditing(item.id, false));
-          extra.prepend(editForm);
+          controls.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', () => setItemEditing(item.id, false));
+          extra.appendChild(controls);
         }
 
         card.appendChild(extra);
