@@ -565,6 +565,7 @@ def init_db():
         "ALTER TABLE table_entries ADD COLUMN application_file TEXT",
         "ALTER TABLE import_tables ADD COLUMN documentation_program_settings_json TEXT",
         "ALTER TABLE import_tables ADD COLUMN documentation_program_preview_json TEXT",
+        "ALTER TABLE import_tables ADD COLUMN card_sequence_json TEXT",
     ]:
         try:
             cur.execute(stmt)
@@ -3501,6 +3502,40 @@ def table_documentation_program(table_id):
             now_iso(),
             table_id,
         ),
+    )
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tables/<int:table_id>/card-sequence", methods=["GET", "POST"])
+def table_card_sequence(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db(
+        "SELECT id, card_sequence_json FROM import_tables WHERE id=? AND user_id=?",
+        (table_id, user["id"]),
+        one=True,
+    )
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    if request.method == "GET":
+        try:
+            payload = json.loads(table["card_sequence_json"] or "{}")
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        items = payload.get("items")
+        return jsonify({"items": items if isinstance(items, list) else []})
+
+    payload = request.get_json(silent=True) or {}
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return jsonify({"detail": "Ожидается массив items"}), 400
+    query_db(
+        "UPDATE import_tables SET card_sequence_json=?, updated_at=? WHERE id=?",
+        (json.dumps({"items": items}, ensure_ascii=False), now_iso(), table_id),
     )
     return jsonify({"status": "ok"})
 
