@@ -430,6 +430,97 @@ async function initDetailPage() {
     renderPreview();
   }
 
+  function collectInlineEdits(cardEl, item, cells, row) {
+    const prevEdits = item?.editedFields && typeof item.editedFields === 'object' ? item.editedFields : {};
+    const prevTags = prevEdits.tags && typeof prevEdits.tags === 'object' ? prevEdits.tags : {};
+    const prevExtra = prevEdits.extra && typeof prevEdits.extra === 'object' ? prevEdits.extra : {};
+    const nextTags = { ...prevTags };
+    const nextExtra = { ...prevExtra };
+    const changedTags = [];
+    const changedExtra = [];
+
+    cardEl.querySelectorAll('[data-tag-field]').forEach((inputEl) => {
+      const tag = inputEl.dataset.tagField || '';
+      if (!tag) return;
+      const currentValue = (inputEl.value || '').trim();
+      const cell = cells.find((entry) => entry.title === tag);
+      const previousValue = typeof prevTags[tag] === 'string'
+        ? prevTags[tag]
+        : ((cell && typeof cell.mergedValue === 'string') ? cell.mergedValue : '');
+      if (currentValue === previousValue) {
+        delete nextTags[tag];
+        return;
+      }
+      nextTags[tag] = currentValue;
+      changedTags.push(tag);
+    });
+
+    cardEl.querySelectorAll('[data-extra-header]').forEach((inputEl) => {
+      const header = inputEl.dataset.extraHeader || '';
+      if (!header) return;
+      const headerIndex = headers.findIndex((h) => h === header);
+      const baselineValue = typeof prevExtra[header] === 'string'
+        ? prevExtra[header]
+        : ((headerIndex >= 0 && headerIndex < row.length) ? (row[headerIndex] ?? '').toString().trim() : '');
+      const currentValue = (inputEl.value || '').trim();
+      if (currentValue === baselineValue) {
+        delete nextExtra[header];
+        return;
+      }
+      nextExtra[header] = currentValue;
+      changedExtra.push(header);
+    });
+
+    const cleanedEdits = {};
+    if (Object.keys(nextTags).length) cleanedEdits.tags = nextTags;
+    if (Object.keys(nextExtra).length) cleanedEdits.extra = nextExtra;
+    return { cleanedEdits, changedTags, changedExtra };
+  }
+
+  function saveParticipantInlineEdit(itemId, cardEl, cells, row) {
+    const itemIndex = sequenceItems.findIndex((entry) => entry.id === itemId);
+    if (itemIndex < 0) return;
+    const item = sequenceItems[itemIndex];
+    if (!item || item.type !== 'participant') return;
+    const stageSelect = cardEl.querySelector('[data-edit-stage]');
+    const nextStageStatus = stageSelect ? (stageSelect.value || null) : getParticipantStage(item);
+    const { cleanedEdits, changedTags, changedExtra } = collectInlineEdits(cardEl, item, cells, row);
+    const hasEditsChanged = JSON.stringify(item.editedFields || {}) !== JSON.stringify(cleanedEdits);
+    const hasStageChanged = getParticipantStage(item) !== nextStageStatus;
+    const hasChanges = hasEditsChanged || hasStageChanged;
+
+    console.debug('[participant-inline-save]', {
+      itemId: item.id,
+      rowRef: item.rowRef,
+      hasChanges,
+      hasEditsChanged,
+      hasStageChanged,
+      changedTagFields: changedTags,
+      changedExtraFields: changedExtra,
+      fullTableRenormalized: false,
+      mappingChanged: false,
+      groupedTagStateChangedGlobally: false,
+    });
+
+    sequenceItems[itemIndex] = {
+      ...item,
+      stageStatus: nextStageStatus,
+      editedFields: cleanedEdits,
+      isEditing: false,
+    };
+
+    if (hasChanges) {
+      queueSequenceSave();
+    } else {
+      console.debug('[participant-inline-save]', {
+        itemId: item.id,
+        rowRef: item.rowRef,
+        message: 'No-op save: no field changes detected.',
+      });
+    }
+    renderPreview();
+  }
+
   function moveItem(fromPos, toPos) {
     if (!sequenceItems.length) return;
     const from = Number(fromPos);
@@ -798,23 +889,7 @@ async function initDetailPage() {
             <button type="button" class="btn btn-secondary btn-small" data-action="cancel-edit">Отмена</button>
           `;
           controls.querySelector('[data-action="save-edit"]')?.addEventListener('click', () => {
-            const edits = item.editedFields && typeof item.editedFields === 'object' ? item.editedFields : {};
-            const nextEdits = { ...edits, tags: { ...(edits.tags || {}) }, extra: { ...(edits.extra || {}) } };
-            card.querySelectorAll('[data-tag-field]').forEach((inputEl) => {
-              nextEdits.tags[inputEl.dataset.tagField] = (inputEl.value || '').trim();
-            });
-            card.querySelectorAll('[data-extra-header]').forEach((inputEl) => {
-              nextEdits.extra[inputEl.dataset.extraHeader] = (inputEl.value || '').trim();
-            });
-            const stageSelect = card.querySelector('[data-edit-stage]');
-            sequenceItems[index] = {
-              ...item,
-              stageStatus: stageSelect ? (stageSelect.value || null) : getParticipantStage(item),
-              editedFields: nextEdits,
-              isEditing: false,
-            };
-            queueSequenceSave();
-            renderPreview();
+            saveParticipantInlineEdit(item.id, card, cells, row);
           });
           controls.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', () => setItemEditing(item.id, false));
           extra.appendChild(controls);
