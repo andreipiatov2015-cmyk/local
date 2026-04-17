@@ -254,14 +254,23 @@ async function initDetailPage() {
   let collapsedMappingCards = {};
   let mappingFieldTags = [];
   let previewRowsData = [];
-  let rowOrder = [];
+  let sequenceItems = [];
   let isMappingSectionCollapsed = false;
   const expandedRows = {};
   let documentationState = null;
+  let contextMenuEl = null;
+  let contextMenuTargetId = '';
 
   function syncMappingSectionCollapsedState() {
     if (!mappingSectionCardEl || !mappingSectionToggleBtn) return;
+    const bodyEl = document.getElementById('mappingSectionBody');
+    const nextHeight = isMappingSectionCollapsed ? 0 : (bodyEl?.scrollHeight || 0);
     mappingSectionCardEl.classList.toggle('is-collapsed', isMappingSectionCollapsed);
+    if (bodyEl) {
+      bodyEl.style.maxHeight = `${nextHeight}px`;
+      bodyEl.style.opacity = isMappingSectionCollapsed ? '0' : '1';
+      bodyEl.style.marginTop = isMappingSectionCollapsed ? '0px' : '10px';
+    }
     mappingSectionToggleBtn.textContent = isMappingSectionCollapsed ? '▼' : '▲';
     mappingSectionToggleBtn.title = isMappingSectionCollapsed ? 'Развернуть блок «Схема колонок»' : 'Свернуть блок «Схема колонок»';
     mappingSectionToggleBtn.setAttribute('aria-expanded', String(!isMappingSectionCollapsed));
@@ -310,15 +319,164 @@ async function initDetailPage() {
     return { cells, usedIndexes };
   }
 
-  function moveRow(fromPos, toPos) {
-    if (!rowOrder.length) return;
+  function moveItem(fromPos, toPos) {
+    if (!sequenceItems.length) return;
     const from = Number(fromPos);
     const to = Number(toPos);
     if (!Number.isInteger(from) || !Number.isInteger(to)) return;
-    if (from < 1 || to < 1 || from > rowOrder.length || to > rowOrder.length || from === to) return;
-    const [moved] = rowOrder.splice(from - 1, 1);
-    rowOrder.splice(to - 1, 0, moved);
+    if (from < 1 || to < 1 || from > sequenceItems.length || to > sequenceItems.length || from === to) return;
+    const [moved] = sequenceItems.splice(from - 1, 1);
+    sequenceItems.splice(to - 1, 0, moved);
+    queueSequenceSave();
     renderPreview();
+  }
+
+  function createSequenceId(prefix) {
+    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function getSequenceItemById(itemId) {
+    return sequenceItems.find((item) => item.id === itemId) || null;
+  }
+
+  function normalizeAwardBlockSettings(item = {}, minStartMinutes = 0) {
+    const safeMin = Math.max(0, Math.floor(minStartMinutes || 0));
+    const awardDurationMinutes = Math.max(1, Number(item.award_duration_minutes || 15) || 15);
+    const includeResults = Boolean(item.include_results_time);
+    const includeRehearsal = Boolean(item.include_rehearsal_time);
+    const resultsStart = Math.max(safeMin, Number(item.results_start_minutes ?? safeMin) || safeMin);
+    const rehearsalStart = Math.max(safeMin, Number(item.rehearsal_start_minutes ?? safeMin) || safeMin);
+    return {
+      ...item,
+      block_type: 'award_block',
+      award_duration_minutes: awardDurationMinutes,
+      include_results_time: includeResults,
+      include_rehearsal_time: includeRehearsal,
+      parallel_results_and_rehearsal: Boolean(item.parallel_results_and_rehearsal),
+      results_start_minutes: resultsStart,
+      results_duration_minutes: Math.max(1, Number(item.results_duration_minutes || 20) || 20),
+      rehearsal_start_minutes: rehearsalStart,
+      rehearsal_duration_minutes: Math.max(1, Number(item.rehearsal_duration_minutes || 20) || 20),
+    };
+  }
+
+  function normalizeBreakBlockSettings(item = {}) {
+    return {
+      ...item,
+      block_type: 'break_block',
+      break_duration_minutes: Math.max(1, Number(item.break_duration_minutes || 15) || 15),
+      add_rehearsal_during_break: Boolean(item.add_rehearsal_during_break),
+    };
+  }
+
+  function ensureSequenceFromRows(serializedItems) {
+    const existsByRowRef = new Map();
+    const parsed = Array.isArray(serializedItems) ? serializedItems : [];
+    const normalized = [];
+
+    parsed.forEach((item) => {
+      if (!item || typeof item !== 'object') return;
+      if (item.type === 'participant') {
+        const rowRef = Number(item.rowRef || 0);
+        if (!Number.isInteger(rowRef) || rowRef < 1 || rowRef > previewRowsData.length || existsByRowRef.has(rowRef)) return;
+        existsByRowRef.set(rowRef, true);
+        normalized.push({
+          id: item.id || createSequenceId('participant'),
+          type: 'participant',
+          rowRef,
+          isOnsite: item.isOnsite !== false,
+        });
+        return;
+      }
+      if (item.type === 'award_block') {
+        normalized.push(normalizeAwardBlockSettings({ id: item.id || createSequenceId('award'), type: 'award_block', ...item }));
+        return;
+      }
+      if (item.type === 'break_block') {
+        normalized.push(normalizeBreakBlockSettings({ id: item.id || createSequenceId('break'), type: 'break_block', ...item }));
+      }
+    });
+
+    for (let rowRef = 1; rowRef <= previewRowsData.length; rowRef += 1) {
+      if (!existsByRowRef.has(rowRef)) {
+        normalized.push({
+          id: createSequenceId('participant'),
+          type: 'participant',
+          rowRef,
+          isOnsite: true,
+        });
+      }
+    }
+    sequenceItems = normalized;
+  }
+
+  async function saveSequenceState() {
+    await apiPostJson(`/api/tables/${tableId}/card-sequence`, { items: sequenceItems });
+  }
+
+  let queueTimer = null;
+  function queueSequenceSave() {
+    if (queueTimer) window.clearTimeout(queueTimer);
+    queueTimer = window.setTimeout(async () => {
+      try {
+        await saveSequenceState();
+      } catch (e) {
+        setStatus(uploadStatusEl, `Не удалось сохранить порядок карточек: ${e.message}`, 'warning');
+      }
+    }, 250);
+  }
+
+  async function loadSequenceState() {
+    const resp = await apiGet(`/api/tables/${tableId}/card-sequence`);
+    ensureSequenceFromRows(resp?.items || []);
+  }
+
+  function closeContextMenu() {
+    if (contextMenuEl) contextMenuEl.remove();
+    contextMenuEl = null;
+    contextMenuTargetId = '';
+  }
+
+  function getParticipantLabel(item) {
+    const row = previewRowsData[(item?.rowRef || 1) - 1] || [];
+    const title = getMappedValueByMatchers(row, ['название номера', 'номер']) || 'Без названия номера';
+    const fio = getMappedValueByMatchers(row, ['участник', 'фио']);
+    return fio ? `${title} — ${fio}` : title;
+  }
+
+  function getLastEndMinutesBeforeIndex(index, settings) {
+    let cursor = parseClockToMinutes(settings.competition_start) ?? 600;
+    for (let i = 0; i < index; i += 1) {
+      const item = sequenceItems[i];
+      if (!item) continue;
+      if (item.type === 'participant') {
+        if (item.isOnsite !== false) {
+          const row = previewRowsData[item.rowRef - 1] || [];
+          const rawDuration = getMappedValueByMatchers(row, ['время исполнения', 'продолжительность']);
+          const durationSeconds = parseDurationToSeconds(rawDuration, settings.default_duration_minutes);
+          cursor += durationSeconds / 60;
+        }
+        continue;
+      }
+      if (item.type === 'break_block') {
+        cursor += Math.max(0, Number(item.break_duration_minutes || 0));
+        continue;
+      }
+      if (item.type === 'award_block') {
+        const award = normalizeAwardBlockSettings(item, cursor);
+        let serviceEnd = cursor;
+        if (award.include_results_time && award.include_rehearsal_time && award.parallel_results_and_rehearsal) {
+          const resultsEnd = award.results_start_minutes + award.results_duration_minutes;
+          const rehearsalEnd = award.rehearsal_start_minutes + award.rehearsal_duration_minutes;
+          serviceEnd = Math.max(serviceEnd, resultsEnd, rehearsalEnd);
+        } else {
+          if (award.include_results_time) serviceEnd = Math.max(serviceEnd, award.results_start_minutes + award.results_duration_minutes);
+          if (award.include_rehearsal_time) serviceEnd = Math.max(serviceEnd, award.rehearsal_start_minutes + award.rehearsal_duration_minutes);
+        }
+        cursor = Math.max(cursor, serviceEnd) + award.award_duration_minutes;
+      }
+    }
+    return cursor;
   }
 
   function renderPreview() {
@@ -327,18 +485,24 @@ async function initDetailPage() {
       previewMetaEl.textContent = 'Нет данных для предпросмотра.';
       return;
     }
-    if (!previewRowsData.length) {
+    if (!previewRowsData.length || !sequenceItems.length) {
       previewMetaEl.textContent = 'Нет строк для предпросмотра.';
       return;
     }
-    rowOrder.forEach((rowRef, index) => {
-      const row = previewRowsData[rowRef - 1] || [];
+    previewMetaEl.textContent = `Карточек: ${sequenceItems.length}, участников: ${sequenceItems.filter((item) => item.type === 'participant').length}`;
+
+    sequenceItems.forEach((item, index) => {
+      const isParticipant = item.type === 'participant';
+      const rowRef = isParticipant ? item.rowRef : 0;
+      const row = isParticipant ? (previewRowsData[rowRef - 1] || []) : [];
       const rowNumber = index + 1;
-      const isExpanded = Boolean(expandedRows[rowRef]);
+      const isExpanded = Boolean(expandedRows[item.id]);
       const { cells, usedIndexes } = normalizeRowByTags(row);
 
       const card = document.createElement('article');
-      card.className = `preview-row-card${isExpanded ? ' is-expanded' : ''}`;
+      card.className = `preview-row-card${isExpanded ? ' is-expanded' : ''}${item.type === 'award_block' ? ' preview-row-card-award' : ''}${item.type === 'break_block' ? ' preview-row-card-break' : ''}`;
+      card.dataset.itemId = item.id;
+      card.dataset.itemType = item.type;
 
       const rowTop = document.createElement('div');
       rowTop.className = 'preview-row-top';
@@ -350,19 +514,20 @@ async function initDetailPage() {
       numberCell.innerHTML = `
         <div class="preview-cell-title">Номер</div>
         <div class="preview-order-controls">
-          <input class="preview-order-input" type="number" min="1" max="${rowOrder.length}" value="${rowNumber}" />
+          <input class="preview-order-input" type="number" min="1" max="${sequenceItems.length}" value="${rowNumber}" />
           <button type="button" class="btn btn-secondary btn-small preview-move-btn" title="Переместить строку">↕</button>
         </div>
       `;
+      numberCell.dataset.noContext = '1';
       const numberInput = numberCell.querySelector('.preview-order-input');
       const moveBtn = numberCell.querySelector('.preview-move-btn');
       const commitMove = () => {
         const nextPos = Number(numberInput.value || rowNumber);
-        if (!Number.isInteger(nextPos) || nextPos < 1 || nextPos > rowOrder.length) {
+        if (!Number.isInteger(nextPos) || nextPos < 1 || nextPos > sequenceItems.length) {
           numberInput.value = rowNumber;
           return;
         }
-        moveRow(rowNumber, nextPos);
+        moveItem(rowNumber, nextPos);
       };
       numberInput?.addEventListener('change', commitMove);
       numberInput?.addEventListener('keydown', (event) => {
@@ -372,14 +537,43 @@ async function initDetailPage() {
       });
       moveBtn?.addEventListener('click', commitMove);
       rowTop.querySelector('.preview-expand-btn')?.addEventListener('click', () => {
-        expandedRows[rowRef] = !expandedRows[rowRef];
+        expandedRows[item.id] = !expandedRows[item.id];
         renderPreview();
       });
 
       const grid = document.createElement('div');
       grid.className = 'preview-row-grid';
       grid.appendChild(numberCell);
-      cells.forEach((cell) => {
+      const cardCells = [];
+      if (isParticipant) {
+        cardCells.push(...cells);
+        const stageCell = {
+          title: 'Статус этапа',
+          value: item.isOnsite !== false ? 'Очный этап' : 'Не участвует в очном этапе',
+        };
+        cardCells.unshift(stageCell);
+      } else if (item.type === 'award_block') {
+        const award = normalizeAwardBlockSettings(item);
+        const serviceFlags = [
+          award.include_results_time ? 'есть подведение итогов' : 'без подведения итогов',
+          award.include_rehearsal_time ? 'есть репетиции' : 'без репетиций',
+          award.parallel_results_and_rehearsal ? 'параллельно' : 'последовательно',
+        ].join(', ');
+        cardCells.push(
+          { title: 'Тип блока', value: 'Награждение' },
+          { title: 'Длительность награждения', value: `${award.award_duration_minutes} мин.` },
+          { title: 'Дополнительно', value: serviceFlags },
+        );
+      } else if (item.type === 'break_block') {
+        const block = normalizeBreakBlockSettings(item);
+        const rehearsalMinutes = block.add_rehearsal_during_break ? Math.max(0, block.break_duration_minutes - 5) : 0;
+        cardCells.push(
+          { title: 'Тип блока', value: 'Перерыв' },
+          { title: 'Длительность', value: `${block.break_duration_minutes} мин.` },
+          { title: 'Репетиция во время перерыва', value: block.add_rehearsal_during_break ? `${rehearsalMinutes} мин.` : 'нет' },
+        );
+      }
+      cardCells.forEach((cell) => {
         const item = document.createElement('div');
         item.className = `preview-cell${cell.hasConflict ? ' preview-cell-conflict' : ''}`;
         item.innerHTML = `
@@ -393,7 +587,7 @@ async function initDetailPage() {
       card.appendChild(rowTop);
       card.appendChild(grid);
 
-      if (isExpanded) {
+      if (isExpanded && isParticipant) {
         const extra = document.createElement('div');
         extra.className = 'preview-extra-block';
         const remaining = headers
@@ -430,7 +624,85 @@ async function initDetailPage() {
               : '<div class="hint">Дополнительных данных нет.</div>'}
           </div>
         `;
+        const onsiteToggleWrap = document.createElement('label');
+        onsiteToggleWrap.className = 'hint';
+        onsiteToggleWrap.innerHTML = `<input type="checkbox" ${item.isOnsite !== false ? 'checked' : ''} /> Участник очного этапа`;
+        const onsiteToggle = onsiteToggleWrap.querySelector('input');
+        onsiteToggle?.addEventListener('change', () => {
+          sequenceItems[index] = { ...item, isOnsite: onsiteToggle.checked };
+          queueSequenceSave();
+          renderPreview();
+        });
+        extra.prepend(onsiteToggleWrap);
         card.appendChild(extra);
+      }
+
+      if (isExpanded && item.type === 'award_block') {
+        const settings = readDocumentationSettingsFromForm();
+        const minStart = getLastEndMinutesBeforeIndex(index, settings);
+        const award = normalizeAwardBlockSettings(item, minStart);
+        const extra = document.createElement('div');
+        extra.className = 'preview-extra-block';
+        extra.innerHTML = `
+          <div class="preview-block-form-grid">
+            <label><input type="checkbox" data-award-checkbox="include_results_time" ${award.include_results_time ? 'checked' : ''}/> Добавить время для подведения итогов</label>
+            <label><input type="checkbox" data-award-checkbox="include_rehearsal_time" ${award.include_rehearsal_time ? 'checked' : ''}/> Добавить время для репетиций</label>
+            <label><input type="checkbox" data-award-checkbox="parallel_results_and_rehearsal" ${award.parallel_results_and_rehearsal ? 'checked' : ''}/> Подведение итогов и репетиции идут параллельно</label>
+            <label>Награждение, мин. <input type="number" min="1" step="1" data-award-input="award_duration_minutes" value="${award.award_duration_minutes}"/></label>
+            <label>Старт подведения итогов <input type="time" data-award-time="results_start_minutes" value="${formatMinutesToClock(Math.max(minStart, award.results_start_minutes))}"/></label>
+            <label>Длительность подведения итогов, мин. <input type="number" min="1" step="1" data-award-input="results_duration_minutes" value="${award.results_duration_minutes}"/></label>
+            <label>Старт репетиций <input type="time" data-award-time="rehearsal_start_minutes" value="${formatMinutesToClock(Math.max(minStart, award.rehearsal_start_minutes))}"/></label>
+            <label>Длительность репетиций, мин. <input type="number" min="1" step="1" data-award-input="rehearsal_duration_minutes" value="${award.rehearsal_duration_minutes}"/></label>
+          </div>
+        `;
+        extra.querySelectorAll('input').forEach((inputEl) => {
+          inputEl.addEventListener('change', () => {
+            if (inputEl.dataset.awardCheckbox) award[inputEl.dataset.awardCheckbox] = inputEl.checked;
+            if (inputEl.dataset.awardInput) award[inputEl.dataset.awardInput] = Math.max(1, Number(inputEl.value || 1) || 1);
+            if (inputEl.dataset.awardTime) {
+              const nextMinutes = parseClockToMinutes(inputEl.value);
+              award[inputEl.dataset.awardTime] = Math.max(minStart, Number.isFinite(nextMinutes) ? nextMinutes : minStart);
+              inputEl.value = formatMinutesToClock(award[inputEl.dataset.awardTime]);
+            }
+            sequenceItems[index] = normalizeAwardBlockSettings(award, minStart);
+            queueSequenceSave();
+            renderPreview();
+          });
+        });
+        card.appendChild(extra);
+      }
+
+      if (isExpanded && item.type === 'break_block') {
+        const block = normalizeBreakBlockSettings(item);
+        const rehearsalMinutes = block.add_rehearsal_during_break ? Math.max(0, block.break_duration_minutes - 5) : 0;
+        const extra = document.createElement('div');
+        extra.className = 'preview-extra-block';
+        extra.innerHTML = `
+          <div class="preview-block-form-grid">
+            <label>Длительность перерыва, мин. <input type="number" min="1" step="1" data-break-input="break_duration_minutes" value="${block.break_duration_minutes}"/></label>
+            <label><input type="checkbox" data-break-checkbox="add_rehearsal_during_break" ${block.add_rehearsal_during_break ? 'checked' : ''}/> Добавить репетицию на время перерыва</label>
+            <div class="hint">Репетиция во время перерыва: ${rehearsalMinutes} мин. (последние 5 минут — резерв).</div>
+          </div>
+        `;
+        extra.querySelectorAll('input').forEach((inputEl) => {
+          inputEl.addEventListener('change', () => {
+            if (inputEl.dataset.breakCheckbox) block[inputEl.dataset.breakCheckbox] = inputEl.checked;
+            if (inputEl.dataset.breakInput) block[inputEl.dataset.breakInput] = Math.max(1, Number(inputEl.value || 1) || 1);
+            sequenceItems[index] = normalizeBreakBlockSettings(block);
+            queueSequenceSave();
+            renderPreview();
+          });
+        });
+        card.appendChild(extra);
+      }
+
+      if (isParticipant) {
+        card.addEventListener('contextmenu', (event) => {
+          const inNumberArea = event.target?.closest?.('[data-no-context="1"]');
+          if (inNumberArea) return;
+          event.preventDefault();
+          openContextMenu(event.clientX, event.clientY, item.id);
+        });
       }
 
       previewCardsEl.appendChild(card);
@@ -474,94 +746,69 @@ async function initDetailPage() {
   }
 
   function buildProgramPreviewData(settings) {
-    const rowsInOrder = rowOrder.map((rowRef, index) => {
-      const row = previewRowsData[rowRef - 1] || [];
-      const ageCategory = getMappedValueByMatchers(row, ['возраст']);
-      const nomination = getMappedValueByMatchers(row, ['номинац']);
-      const numberTitle = getMappedValueByMatchers(row, ['название номера', 'навание номреа', 'номер']);
-      const fio = getMappedValueByMatchers(row, ['участник', 'фио']);
-      const team = getMappedValueByMatchers(row, ['коллектив']);
-      const institution = getMappedValueByMatchers(row, ['учрежден']);
-      const municipality = getMappedValueByMatchers(row, ['территор', 'муницип']);
-      const rawDuration = getMappedValueByMatchers(row, ['время исполнения', 'продолжительность']);
-      const durationSeconds = parseDurationToSeconds(rawDuration, settings.default_duration_minutes);
-      return {
-        order: index + 1,
-        ageCategory: ageCategory || 'Без возрастной категории',
-        nomination: nomination || 'Без номинации',
-        numberTitle: numberTitle || 'Без названия номера',
-        fio,
-        team,
-        institution,
-        municipality,
-        durationSeconds,
-      };
-    });
-
-    const ageOrder = [];
-    const groupedByAge = {};
-    rowsInOrder.forEach((item) => {
-      if (!groupedByAge[item.ageCategory]) {
-        groupedByAge[item.ageCategory] = {};
-        ageOrder.push(item.ageCategory);
-      }
-      if (!groupedByAge[item.ageCategory][item.nomination]) groupedByAge[item.ageCategory][item.nomination] = [];
-      groupedByAge[item.ageCategory][item.nomination].push(item);
-    });
-
     const competitionStart = parseClockToMinutes(settings.competition_start) ?? 600;
-    const rehearsalStart = parseClockToMinutes(settings.rehearsal_start);
     let cursor = competitionStart;
     const blocks = [];
+    let onsiteCounter = 0;
 
-    if (Number.isFinite(rehearsalStart) && rehearsalStart < competitionStart && ageOrder.length) {
-      blocks.push({
-        type: 'service',
-        text: `Репетиция возрастной категории ${ageOrder[0]}`,
-        start: rehearsalStart,
-        end: competitionStart,
-      });
-    }
-
-    ageOrder.forEach((ageCategory, ageIndex) => {
-      const nominations = Object.keys(groupedByAge[ageCategory] || {});
-      const ageBlock = {
-        type: 'age_category',
-        ageCategory,
-        start: cursor,
-        nominations: [],
-      };
-
-      nominations.forEach((nomination) => {
-        const nominationStart = cursor;
-        const items = groupedByAge[ageCategory][nomination];
-        const previewItems = items.map((item) => {
-          cursor += item.durationSeconds / 60;
-          const person = item.fio && item.team ? `${item.fio}, ${item.team}` : (item.fio || item.team || 'Участник');
-          const details = [person, item.institution, item.municipality].filter(Boolean).join(', ');
-          return {
-            order: item.order,
-            text: `«${item.numberTitle}» — ${details} (${formatDurationLabel(item.durationSeconds)})`,
-          };
+    sequenceItems.forEach((item) => {
+      if (item.type === 'participant') {
+        if (item.isOnsite === false) return;
+        onsiteCounter += 1;
+        const row = previewRowsData[item.rowRef - 1] || [];
+        const numberTitle = getMappedValueByMatchers(row, ['название номера', 'навание номреа', 'номер']) || 'Без названия номера';
+        const fio = getMappedValueByMatchers(row, ['участник', 'фио']);
+        const team = getMappedValueByMatchers(row, ['коллектив']);
+        const rawDuration = getMappedValueByMatchers(row, ['время исполнения', 'продолжительность']);
+        const durationSeconds = parseDurationToSeconds(rawDuration, settings.default_duration_minutes);
+        const person = fio && team ? `${fio}, ${team}` : (fio || team || 'Участник');
+        blocks.push({
+          type: 'participant',
+          start: cursor,
+          end: cursor + (durationSeconds / 60),
+          order: onsiteCounter,
+          text: `№${onsiteCounter}. «${numberTitle}» — ${person} (${formatDurationLabel(durationSeconds)})`,
         });
-        ageBlock.nominations.push({ nomination, start: nominationStart, items: previewItems });
-      });
-      blocks.push(ageBlock);
-
-      const nextAge = ageOrder[ageIndex + 1];
-      if (nextAge) {
-        const resultsStart = cursor;
-        const resultsEnd = resultsStart + settings.results_minutes;
-        blocks.push({ type: 'service', text: `Подведение итогов`, start: resultsStart, end: resultsEnd });
-        cursor = resultsEnd;
-
-        const rehearsalEnd = cursor + settings.tech_interval_minutes;
-        blocks.push({ type: 'service', text: `Репетиция возрастной категории ${nextAge}`, start: cursor, end: rehearsalEnd });
-        cursor = rehearsalEnd;
-
-        const awardEnd = cursor + settings.award_minutes;
-        blocks.push({ type: 'service', text: `Награждение возрастной категории ${ageCategory}`, start: cursor, end: awardEnd });
-        cursor = awardEnd;
+        cursor += durationSeconds / 60;
+        return;
+      }
+      if (item.type === 'break_block') {
+        const block = normalizeBreakBlockSettings(item);
+        const rehearsalMinutes = block.add_rehearsal_during_break ? Math.max(0, block.break_duration_minutes - 5) : 0;
+        blocks.push({
+          type: 'service',
+          start: cursor,
+          end: cursor + block.break_duration_minutes,
+          text: rehearsalMinutes > 0
+            ? `Перерыв (${block.break_duration_minutes} мин), репетиция ${rehearsalMinutes} мин`
+            : `Перерыв (${block.break_duration_minutes} мин)`,
+        });
+        cursor += block.break_duration_minutes;
+        return;
+      }
+      if (item.type === 'award_block') {
+        const award = normalizeAwardBlockSettings(item, cursor);
+        if (award.include_results_time && award.include_rehearsal_time && award.parallel_results_and_rehearsal) {
+          const start = Math.max(cursor, Math.min(award.results_start_minutes, award.rehearsal_start_minutes));
+          const end = Math.max(award.results_start_minutes + award.results_duration_minutes, award.rehearsal_start_minutes + award.rehearsal_duration_minutes);
+          blocks.push({ type: 'parallel_service', start, end, text: 'Параллельно: подведение итогов и репетиции' });
+          cursor = Math.max(cursor, end);
+        } else {
+          if (award.include_results_time) {
+            const start = Math.max(cursor, award.results_start_minutes);
+            const end = start + award.results_duration_minutes;
+            blocks.push({ type: 'service', start, end, text: 'Подведение итогов' });
+            cursor = Math.max(cursor, end);
+          }
+          if (award.include_rehearsal_time) {
+            const start = Math.max(cursor, award.rehearsal_start_minutes);
+            const end = start + award.rehearsal_duration_minutes;
+            blocks.push({ type: 'service', start, end, text: 'Репетиции' });
+            cursor = Math.max(cursor, end);
+          }
+        }
+        blocks.push({ type: 'service', start: cursor, end: cursor + award.award_duration_minutes, text: 'Награждение' });
+        cursor += award.award_duration_minutes;
       }
     });
 
@@ -581,17 +828,93 @@ async function initDetailPage() {
       `<div class="doc-preview-date">Дата: ${esc(program.date || '—')}</div>`,
     ];
     program.blocks.forEach((block) => {
-      if (block.type === 'service') {
+      if (block.type === 'service' || block.type === 'parallel_service') {
         parts.push(`<div class="doc-preview-service">${esc(formatMinutesToClock(block.start))}–${esc(formatMinutesToClock(block.end))} — ${esc(block.text)}</div>`);
         return;
       }
-      parts.push(`<div class="doc-preview-age">${esc(formatMinutesToClock(block.start))} Возрастная категория: ${esc(block.ageCategory)}</div>`);
-      (block.nominations || []).forEach((nom) => {
-        parts.push(`<div class="doc-preview-nomination">${esc(formatMinutesToClock(nom.start))} Номинация: ${esc(nom.nomination)}</div>`);
-        parts.push(`<ol class="doc-preview-items">${(nom.items || []).map((item) => `<li class="doc-preview-item">${esc(item.text)}</li>`).join('')}</ol>`);
-      });
+      if (block.type === 'participant') {
+        parts.push(`<div class="doc-preview-nomination">${esc(formatMinutesToClock(block.start))}–${esc(formatMinutesToClock(block.end))} ${esc(block.text)}</div>`);
+      }
     });
     docProgramPreviewEl.innerHTML = parts.join('');
+  }
+
+  function openContextMenu(x, y, targetId) {
+    closeContextMenu();
+    contextMenuTargetId = targetId;
+    const item = getSequenceItemById(targetId);
+    if (!item || item.type !== 'participant') return;
+    const menu = document.createElement('div');
+    menu.className = 'preview-context-menu';
+    menu.innerHTML = `
+      <button data-action="delete">Удалить участника</button>
+      <button data-action="edit" data-disabled="1">Редактировать участника (позже)</button>
+      <button data-action="mark_onsite">Отметить участника, очного этапа</button>
+      <button data-action="mark_remote" data-disabled="1">Отметить участника, заочного этапа (позже)</button>
+      <button data-action="add_award_after">Добавить блок награждения после выбранного участника</button>
+      <button data-action="add_award_before">Добавить блок награждения до выбранного участника</button>
+      <button data-action="add_break_before">Добавить блок перерыва до выбранного участника</button>
+      <button data-action="add_break_after">Добавить блок перерыва после выбранного участника</button>
+    `;
+    menu.querySelectorAll('[data-disabled="1"]').forEach((btn) => {
+      btn.disabled = true;
+    });
+    menu.querySelectorAll('button').forEach((btn) => {
+      btn.addEventListener('click', () => handleContextAction(btn.dataset.action));
+    });
+    document.body.appendChild(menu);
+    contextMenuEl = menu;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const mw = menu.offsetWidth;
+    const mh = menu.offsetHeight;
+    menu.style.left = `${Math.min(x, vw - mw - 8)}px`;
+    menu.style.top = `${Math.min(y, vh - mh - 8)}px`;
+  }
+
+  function insertServiceBlockNear(targetId, type, place) {
+    const index = sequenceItems.findIndex((item) => item.id === targetId);
+    if (index < 0) return;
+    const insertIndex = place === 'before' ? index : index + 1;
+    const settings = readDocumentationSettingsFromForm();
+    const minStart = getLastEndMinutesBeforeIndex(insertIndex, settings);
+    const nextItem = type === 'award_block'
+      ? normalizeAwardBlockSettings({ id: createSequenceId('award'), type }, minStart)
+      : normalizeBreakBlockSettings({ id: createSequenceId('break'), type });
+    sequenceItems.splice(insertIndex, 0, nextItem);
+    queueSequenceSave();
+    renderPreview();
+  }
+
+  function handleContextAction(action) {
+    const item = getSequenceItemById(contextMenuTargetId);
+    if (!item) {
+      closeContextMenu();
+      return;
+    }
+    const index = sequenceItems.findIndex((entry) => entry.id === item.id);
+    if (index < 0) {
+      closeContextMenu();
+      return;
+    }
+    if (action === 'delete') {
+      sequenceItems.splice(index, 1);
+      queueSequenceSave();
+      renderPreview();
+    } else if (action === 'mark_onsite') {
+      sequenceItems[index] = { ...item, isOnsite: true };
+      queueSequenceSave();
+      renderPreview();
+    } else if (action === 'add_award_after') {
+      insertServiceBlockNear(item.id, 'award_block', 'after');
+    } else if (action === 'add_award_before') {
+      insertServiceBlockNear(item.id, 'award_block', 'before');
+    } else if (action === 'add_break_after') {
+      insertServiceBlockNear(item.id, 'break_block', 'after');
+    } else if (action === 'add_break_before') {
+      insertServiceBlockNear(item.id, 'break_block', 'before');
+    }
+    closeContextMenu();
   }
 
   async function saveDocumentationState(state) {
@@ -710,7 +1033,7 @@ async function initDetailPage() {
     });
     mappingByHeaderIdx = nextMappingByHeader;
     previewRowsData = preview.rows || [];
-    rowOrder = previewRowsData.map((_, idx) => idx + 1);
+    await loadSequenceState();
     renderMapping(mapResp.field_tags || []);
     previewMetaEl.textContent = `Показано ${preview.rows?.length || 0} из ${preview.total_rows || 0} строк`;
   }
@@ -756,6 +1079,20 @@ async function initDetailPage() {
   mappingSectionToggleBtn?.addEventListener('click', () => {
     isMappingSectionCollapsed = !isMappingSectionCollapsed;
     syncMappingSectionCollapsedState();
+  });
+
+  previewCardsEl?.addEventListener('contextmenu', (event) => {
+    if (!event.target.closest('.preview-row-card')) return;
+    if (event.target.closest('[data-no-context="1"]')) return;
+    event.preventDefault();
+  });
+  document.addEventListener('click', (event) => {
+    if (!contextMenuEl) return;
+    if (event.target.closest('.preview-context-menu')) return;
+    closeContextMenu();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeContextMenu();
   });
 
   docBuildProgramBtn?.addEventListener('click', async () => {
