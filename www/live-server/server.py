@@ -3512,15 +3512,53 @@ def build_program_docx_bytes(document_title, program):
         ]
         if "bold" in flags:
             parts.append("<w:b/>")
+        if "italic" in flags:
+            parts.append("<w:i/>")
         if "underline" in flags:
             parts.append("<w:u w:val=\"single\"/>")
         return f"<w:rPr>{''.join(parts)}</w:rPr>"
+
+    def format_date_ru_long(value):
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        match = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", text)
+        if not match:
+            return text
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = int(match.group(3))
+        month_names = [
+            "января", "февраля", "марта", "апреля", "мая", "июня",
+            "июля", "августа", "сентября", "октября", "ноября", "декабря",
+        ]
+        if month < 1 or month > 12 or day < 1 or day > 31:
+            return text
+        return f"{day} {month_names[month - 1]} {year} года"
 
     paragraphs = []
     paragraphs.append(
         f"<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r>{run_props_xml('bold')}<w:t>{xml_escape(title)}</w:t></w:r></w:p>"
     )
     paragraphs.append("<w:p/>")
+    formatted_date = format_date_ru_long((program or {}).get("date"))
+    rehearsal_start = str((program or {}).get("rehearsal_start") or "").strip()
+    if formatted_date:
+        paragraphs.append(
+            "<w:p>"
+            "<w:pPr><w:jc w:val=\"left\"/><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
+            f"<w:r>{run_props_xml('bold', 'italic')}<w:t>{xml_escape(formatted_date)}</w:t></w:r>"
+            "</w:p>"
+        )
+    if rehearsal_start:
+        paragraphs.append(
+            "<w:p>"
+            "<w:pPr><w:jc w:val=\"left\"/><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
+            f"<w:r>{run_props_xml()}<w:t>{xml_escape(f'Репетиции: {rehearsal_start}')}</w:t></w:r>"
+            "</w:p>"
+        )
+    if formatted_date or rehearsal_start:
+        paragraphs.append("<w:p/>")
 
     for block in blocks:
         block_type = str((block or {}).get("type") or "").strip()

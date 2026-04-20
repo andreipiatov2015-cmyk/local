@@ -113,6 +113,25 @@ function formatDurationLabel(seconds) {
   return `${mm}:${ss.toString().padStart(2, '0')}`;
 }
 
+function formatDateRuLong(value) {
+  const text = (value || '').toString().trim();
+  if (!text) return '';
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return text;
+  const [, yRaw, mRaw, dRaw] = match;
+  const year = Number(yRaw);
+  const month = Number(mRaw);
+  const day = Number(dRaw);
+  const monthNames = [
+    'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+  ];
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day) || month < 1 || month > 12 || day < 1 || day > 31) {
+    return text;
+  }
+  return `${day} ${monthNames[month - 1]} ${year} года`;
+}
+
 async function initListPage() {
   const listEl = document.getElementById('tableList');
   if (!listEl) return;
@@ -1000,6 +1019,23 @@ async function initDetailPage() {
     return '';
   }
 
+  function getMappedValueByPreferredTag(row, preferredTags, fallbackMatchers = []) {
+    const preferredNorm = (preferredTags || []).map((item) => normalizeHeaderLikeBackend(item));
+    for (const [idxText, mappedTag] of Object.entries(mappingByHeaderIdx)) {
+      const idx = Number(idxText);
+      const tagNorm = normalizeHeaderLikeBackend(mappedTag);
+      if (!preferredNorm.includes(tagNorm)) continue;
+      return {
+        value: (row[idx] ?? '').toString().trim(),
+        foundPreferredTag: true,
+      };
+    }
+    return {
+      value: getMappedValueByMatchers(row, fallbackMatchers),
+      foundPreferredTag: false,
+    };
+  }
+
   function readDocumentationSettingsFromForm() {
     return {
       event_date: docEventDateEl?.value || '',
@@ -1112,7 +1148,12 @@ async function initDetailPage() {
         const numberTitle = getMappedValueByMatchers(row, ['название номера', 'навание номреа', 'номер']) || 'Без названия номера';
         const fio = getMappedValueByMatchers(row, ['список участников', 'участник', 'фио']);
         const team = getMappedValueByMatchers(row, ['название коллектива', 'коллектив']);
-        const fullInstitution = getMappedValueByMatchers(row, ['полное название учреждения', 'название учреждения', 'учреждение']);
+        const institutionResolved = getMappedValueByPreferredTag(
+          row,
+          ['полное название учереждения', 'полное название учреждения'],
+          ['полное название учреждения', 'название учреждения', 'учреждение'],
+        );
+        const fullInstitution = institutionResolved.value;
         const municipality = getMappedValueByMatchers(row, ['муниципалитет']);
         const nomination = getMappedValueByMatchers(row, ['номинация']) || 'Без номинации';
         const ageCategory = getMappedValueByMatchers(row, ['возрастная категория', 'возрастная кат', 'категория возраста', 'возраст']) || 'Без возрастной категории';
@@ -1142,8 +1183,8 @@ async function initDetailPage() {
           start: cursor,
           end: cursor + block.break_duration_minutes,
           text: rehearsalMinutes > 0
-            ? `Перерыв (${block.break_duration_minutes} мин), репетиция ${rehearsalMinutes} мин`
-            : `Перерыв (${block.break_duration_minutes} мин)`,
+            ? `Перерыв — ${block.break_duration_minutes} минут; репетиции — ${rehearsalMinutes} минут`
+            : `Перерыв — ${block.break_duration_minutes} минут`,
         });
         cursor += block.break_duration_minutes;
         return;
@@ -1165,7 +1206,7 @@ async function initDetailPage() {
           if (award.include_rehearsal_time) {
             const start = Math.max(cursor, award.rehearsal_start_minutes);
             const end = start + award.rehearsal_duration_minutes;
-            serviceBlocks.push({ type: 'service', start, end, text: 'Репетиции' });
+            serviceBlocks.push({ type: 'service', start, end, text: 'Репетиция' });
             cursor = Math.max(cursor, end);
           }
         }
@@ -1204,6 +1245,7 @@ async function initDetailPage() {
       if (byNominationAuto && group.nomination) {
         participantBlocks.push({
           type: 'nomination_header',
+          start: groupItems[0].start,
           text: `Номинация: ${normalizeQuotes(group.nomination) || '«Без номинации»'}`,
         });
       }
@@ -1218,12 +1260,14 @@ async function initDetailPage() {
         if (byNomination && !byNominationAuto) {
           participantBlocks.push({
             type: 'nomination_header',
+            start: item.start,
             text: `Номинация: ${normalizeQuotes(item.nomination) || '«Без номинации»'}`,
           });
         }
         if (byAge && byNomination && byAgeAuto && !byNominationAuto) {
           participantBlocks.push({
             type: 'nomination_header',
+            start: item.start,
             text: `Номинация: ${normalizeQuotes(item.nomination) || '«Без номинации»'}`,
           });
         }
@@ -1238,12 +1282,30 @@ async function initDetailPage() {
       });
     });
 
-    const useSimpleTimeline = !byNomination && !byAge && !byNominationAuto && !byAgeAuto;
-    const blocks = useSimpleTimeline
-      ? [...serviceBlocks, ...participantBlocks].sort((a, b) => (Number(a.start) || 0) - (Number(b.start) || 0))
-      : participantBlocks;
+    const blockPriority = {
+      age_header: 1,
+      nomination_header: 2,
+      service: 3,
+      parallel_service: 3,
+      participant: 4,
+    };
+    const blocks = [...serviceBlocks, ...participantBlocks]
+      .map((block, idx) => ({ ...block, __idx: idx }))
+      .sort((a, b) => {
+        const startDiff = (Number(a.start) || 0) - (Number(b.start) || 0);
+        if (startDiff !== 0) return startDiff;
+        const priorityDiff = (blockPriority[a.type] || 99) - (blockPriority[b.type] || 99);
+        if (priorityDiff !== 0) return priorityDiff;
+        return a.__idx - b.__idx;
+      })
+      .map(({ __idx, ...rest }) => rest);
 
-    return { title: 'Программа конкурса', date: settings.event_date || '', blocks };
+    return {
+      title: 'Программа конкурса',
+      date: settings.event_date || '',
+      rehearsal_start: settings.rehearsal_start || '',
+      blocks,
+    };
   }
 
   function renderDocumentationPreview(program, containerEl) {
@@ -1254,9 +1316,11 @@ async function initDetailPage() {
       return;
     }
     containerEl.classList.remove('is-empty');
+    const formattedDate = formatDateRuLong(program.date || '');
     const parts = [
       `<div class="doc-preview-title">${esc(program.title || 'Программа конкурса')}</div>`,
-      `<div class="doc-preview-date">Дата: ${esc(program.date || '—')}</div>`,
+      `<div class="doc-preview-date">${esc(formattedDate || 'Дата не указана')}</div>`,
+      `<div class="doc-preview-rehearsal">Репетиции: ${esc(program.rehearsal_start || '—')}</div>`,
     ];
     program.blocks.forEach((block) => {
       if (block.type === 'service' || block.type === 'parallel_service') {
