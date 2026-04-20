@@ -139,6 +139,7 @@ DOCUMENT_COLUMN_META = {
 }
 FILE_MAPPING_FIELDS = {"audio_url", "presentation_url", "consent_url"}
 TABLES_V2_FIELD_TAGS = []
+TABLES_V2_FIELD_TYPES = {}
 
 
 
@@ -247,11 +248,12 @@ def load_table_header_tags_config():
 
 
 def init_table_header_tags():
-    global MAPPING_FIELDS, HEADER_ALIASES, TABLES_V2_FIELD_TAGS
+    global MAPPING_FIELDS, HEADER_ALIASES, TABLES_V2_FIELD_TAGS, TABLES_V2_FIELD_TYPES
     config = load_table_header_tags_config()
     MAPPING_FIELDS = {}
     HEADER_ALIASES = {}
     TABLES_V2_FIELD_TAGS = []
+    TABLES_V2_FIELD_TYPES = {}
     seen_tags = set()
     for item in config.get("tags", []):
         key = item["key"]
@@ -261,6 +263,7 @@ def init_table_header_tags():
         if tag not in seen_tags:
             TABLES_V2_FIELD_TAGS.append(tag)
             seen_tags.add(tag)
+            TABLES_V2_FIELD_TYPES[tag] = tag_type_for_key(key)
     app.logger.info("[table_tags] loaded tags=%s aliases=%s from %s", len(MAPPING_FIELDS), sum(len(v) for v in HEADER_ALIASES.values()), TABLE_HEADER_TAGS_FILE)
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
@@ -566,6 +569,7 @@ def init_db():
         "ALTER TABLE import_tables ADD COLUMN documentation_program_settings_json TEXT",
         "ALTER TABLE import_tables ADD COLUMN documentation_program_preview_json TEXT",
         "ALTER TABLE import_tables ADD COLUMN card_sequence_json TEXT",
+        "ALTER TABLE import_table_rows ADD COLUMN participant_edits_json TEXT",
     ]:
         try:
             cur.execute(stmt)
@@ -3537,7 +3541,110 @@ def table_card_sequence(table_id):
         "UPDATE import_tables SET card_sequence_json=?, updated_at=? WHERE id=?",
         (json.dumps({"items": items}, ensure_ascii=False), now_iso(), table_id),
     )
+    app.logger.info("[participant_edit] table_id=%s card-sequence update items=%s", table_id, len(items))
     return jsonify({"status": "ok"})
+
+
+def sanitize_participant_edits_payload(payload):
+    changed_tags_raw = payload.get("changed_tags") if isinstance(payload, dict) else {}
+    changed_extra_raw = payload.get("changed_extra") if isinstance(payload, dict) else {}
+    changed_tags = {}
+    changed_extra = {}
+    skipped_grouped = []
+
+    if isinstance(changed_tags_raw, dict):
+        for tag, value in changed_tags_raw.items():
+            tag_name = str(tag or "").strip()
+            if not tag_name or tag_name not in TABLES_V2_FIELD_TAGS:
+                continue
+            if TABLES_V2_FIELD_TYPES.get(tag_name) == "grouped_choice":
+                skipped_grouped.append(tag_name)
+                continue
+            changed_tags[tag_name] = str(value or "").strip()
+
+    if isinstance(changed_extra_raw, dict):
+        for header, value in changed_extra_raw.items():
+            header_name = str(header or "").strip()
+            if not header_name:
+                continue
+            changed_extra[header_name] = str(value or "").strip()
+
+    return changed_tags, changed_extra, sorted(set(skipped_grouped))
+
+
+@app.route("/api/tables/<int:table_id>/participant-edits", methods=["GET"])
+def table_participant_edits(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    rows = query_db(
+        "SELECT row_index, participant_edits_json FROM import_table_rows WHERE table_id=? AND row_index>0 ORDER BY row_index ASC",
+        (table_id,),
+    )
+    items = []
+    for row in rows:
+        raw = row["participant_edits_json"]
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        tags = parsed.get("tags") if isinstance(parsed.get("tags"), dict) else {}
+        extra = parsed.get("extra") if isinstance(parsed.get("extra"), dict) else {}
+        if not tags and not extra:
+            continue
+        items.append({
+            "rowRef": int(row["row_index"]),
+            "editedFields": {"tags": tags, "extra": extra},
+        })
+    return jsonify({"items": items})
+
+
+@app.route("/api/tables/<int:table_id>/participant/<int:row_ref>/edit", methods=["POST"])
+def table_participant_edit(table_id, row_ref):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+    if row_ref < 1:
+        return jsonify({"detail": "Некорректный rowRef"}), 400
+    row = query_db(
+        "SELECT id FROM import_table_rows WHERE table_id=? AND row_index=?",
+        (table_id, row_ref),
+        one=True,
+    )
+    if not row:
+        return jsonify({"detail": "Участник не найден"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    changed_tags, changed_extra, skipped_grouped = sanitize_participant_edits_payload(payload)
+    has_diff = bool(changed_tags or changed_extra)
+    app.logger.info(
+        "[participant_edit] table_id=%s row_ref=%s has_diff=%s changed_tags=%s changed_extra=%s skipped_grouped=%s uses_card_sequence=%s",
+        table_id,
+        row_ref,
+        has_diff,
+        sorted(changed_tags.keys()),
+        sorted(changed_extra.keys()),
+        skipped_grouped,
+        False,
+    )
+
+    edits_payload = {"tags": changed_tags, "extra": changed_extra} if has_diff else {}
+    query_db(
+        "UPDATE import_table_rows SET participant_edits_json=?, updated_at=? WHERE id=?",
+        (json.dumps(edits_payload, ensure_ascii=False) if has_diff else None, now_iso(), row["id"]),
+    )
+    return jsonify({"status": "ok", "has_diff": has_diff, "skipped_grouped_tags": skipped_grouped})
 
 
 @app.route("/api/tables/<int:table_id>/mapping", methods=["GET"])
@@ -3568,6 +3675,7 @@ def get_table_mapping(table_id):
         "mapping": mapping_by_tag,
         "mapping_rows": mapping_rows,
         "field_tags": TABLES_V2_FIELD_TAGS,
+        "field_tag_types": TABLES_V2_FIELD_TYPES,
     })
 
 
