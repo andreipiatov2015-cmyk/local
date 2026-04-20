@@ -253,8 +253,10 @@ async function initDetailPage() {
   let mappingByHeaderIdx = {};
   let collapsedMappingCards = {};
   let mappingFieldTags = [];
+  let mappingFieldTypes = {};
   let previewRowsData = [];
   let sequenceItems = [];
+  let participantEditsByRowRef = {};
   let isMappingSectionCollapsed = false;
   const expandedRows = {};
   let documentationState = null;
@@ -294,6 +296,10 @@ async function initDetailPage() {
       used.add(tag);
       return true;
     });
+  }
+
+  function isGroupedTag(tagTitle) {
+    return mappingFieldTypes?.[tagTitle] === 'grouped_choice';
   }
 
   function normalizeRowByTags(row) {
@@ -389,9 +395,16 @@ async function initDetailPage() {
     { key: 'consents', label: 'Согласия', matchers: ['соглас'] },
   ];
 
+  function getParticipantEdits(rowRef) {
+    const safeRowRef = Number(rowRef || 0);
+    if (!Number.isInteger(safeRowRef) || safeRowRef < 1) return {};
+    const edits = participantEditsByRowRef[safeRowRef];
+    return edits && typeof edits === 'object' ? edits : {};
+  }
+
   function buildEffectiveRow(row, item) {
     const nextRow = Array.isArray(row) ? [...row] : [];
-    const edits = item?.editedFields;
+    const edits = getParticipantEdits(item?.rowRef);
     if (!edits || typeof edits !== 'object') return nextRow;
     if (edits.tags && typeof edits.tags === 'object') {
       Object.entries(mappingByHeaderIdx).forEach(([idxText, mappedTag]) => {
@@ -496,7 +509,6 @@ async function initDetailPage() {
           type: 'participant',
           rowRef,
           stageStatus: getParticipantStage(item),
-          editedFields: item.editedFields && typeof item.editedFields === 'object' ? item.editedFields : {},
           isEditing: false,
         });
         return;
@@ -517,12 +529,26 @@ async function initDetailPage() {
           type: 'participant',
           rowRef,
           stageStatus: null,
-          editedFields: {},
           isEditing: false,
         });
       }
     }
     sequenceItems = normalized;
+  }
+
+  function applyParticipantEdits(items) {
+    const next = {};
+    (Array.isArray(items) ? items : []).forEach((item) => {
+      const rowRef = Number(item?.rowRef || 0);
+      if (!Number.isInteger(rowRef) || rowRef < 1) return;
+      const edits = item?.editedFields;
+      if (!edits || typeof edits !== 'object') return;
+      const tags = edits.tags && typeof edits.tags === 'object' ? edits.tags : {};
+      const extra = edits.extra && typeof edits.extra === 'object' ? edits.extra : {};
+      if (!Object.keys(tags).length && !Object.keys(extra).length) return;
+      next[rowRef] = { tags, extra };
+    });
+    participantEditsByRowRef = next;
   }
 
   async function saveSequenceState() {
@@ -699,12 +725,13 @@ async function initDetailPage() {
       cardCells.forEach((cell) => {
         const cellEl = document.createElement('div');
         cellEl.className = `preview-cell${cell.hasConflict ? ' preview-cell-conflict' : ''}`;
-        const editedByTag = item?.editedFields?.tags && typeof item.editedFields.tags[cell.title] === 'string'
-          ? item.editedFields.tags[cell.title]
+        const rowEdits = getParticipantEdits(item?.rowRef);
+        const editedByTag = rowEdits?.tags && typeof rowEdits.tags[cell.title] === 'string'
+          ? rowEdits.tags[cell.title]
           : null;
         const editableValue = editedByTag !== null ? editedByTag : (cell.mergedValue || '');
         const isLongValue = editableValue.length > 80 || editableValue.includes('\n');
-        const canEditCell = isParticipant && isEditing;
+        const canEditCell = isParticipant && isEditing && !isGroupedTag(cell.title);
         cellEl.innerHTML = `
           <div class="preview-cell-title">${esc(cell.title)}</div>
           ${
@@ -727,6 +754,7 @@ async function initDetailPage() {
       if (isExpanded && isParticipant) {
         const extra = document.createElement('div');
         extra.className = 'preview-extra-block';
+        const rowEdits = getParticipantEdits(item?.rowRef);
         const remaining = headers
           .map((header, headerIndex) => ({ header, value: (row[headerIndex] ?? '').toString().trim(), headerIndex }))
           .filter((field) => !usedIndexes.has(field.headerIndex));
@@ -743,7 +771,7 @@ async function initDetailPage() {
                       <span class="preview-conflict-col">${esc(valueItem.header)}</span>
                       ${
                         isEditing
-                          ? `<textarea class="input preview-extra-inline-input" rows="2" data-extra-header="${esc(valueItem.header)}">${esc((item?.editedFields?.extra && typeof item.editedFields.extra[valueItem.header] === 'string') ? item.editedFields.extra[valueItem.header] : valueItem.value)}</textarea>`
+                          ? `<textarea class="input preview-extra-inline-input" rows="2" data-extra-header="${esc(valueItem.header)}">${esc((rowEdits?.extra && typeof rowEdits.extra[valueItem.header] === 'string') ? rowEdits.extra[valueItem.header] : valueItem.value)}</textarea>`
                           : `<span class="preview-conflict-val">${esc(valueItem.value)}</span>`
                       }
                     </div>
@@ -761,11 +789,11 @@ async function initDetailPage() {
                   ${
                     isEditing
                       ? (
-                        ((item?.editedFields?.extra && typeof item.editedFields.extra[field.header] === 'string'
-                          ? item.editedFields.extra[field.header]
+                        ((rowEdits?.extra && typeof rowEdits.extra[field.header] === 'string'
+                          ? rowEdits.extra[field.header]
                           : field.value).length > 80)
-                          ? `<textarea class="input preview-extra-inline-input" rows="2" data-extra-header="${esc(field.header)}">${esc((item?.editedFields?.extra && typeof item.editedFields.extra[field.header] === 'string') ? item.editedFields.extra[field.header] : field.value)}</textarea>`
-                          : `<input class="input preview-extra-inline-input" type="text" data-extra-header="${esc(field.header)}" value="${esc((item?.editedFields?.extra && typeof item.editedFields.extra[field.header] === 'string') ? item.editedFields.extra[field.header] : field.value)}" />`
+                          ? `<textarea class="input preview-extra-inline-input" rows="2" data-extra-header="${esc(field.header)}">${esc((rowEdits?.extra && typeof rowEdits.extra[field.header] === 'string') ? rowEdits.extra[field.header] : field.value)}</textarea>`
+                          : `<input class="input preview-extra-inline-input" type="text" data-extra-header="${esc(field.header)}" value="${esc((rowEdits?.extra && typeof rowEdits.extra[field.header] === 'string') ? rowEdits.extra[field.header] : field.value)}" />`
                       )
                       : `<div class="preview-extra-value">${esc(field.value)}</div>`
                   }
@@ -797,24 +825,65 @@ async function initDetailPage() {
             <button type="button" class="btn btn-primary btn-small" data-action="save-edit">Сохранить</button>
             <button type="button" class="btn btn-secondary btn-small" data-action="cancel-edit">Отмена</button>
           `;
-          controls.querySelector('[data-action="save-edit"]')?.addEventListener('click', () => {
-            const edits = item.editedFields && typeof item.editedFields === 'object' ? item.editedFields : {};
-            const nextEdits = { ...edits, tags: { ...(edits.tags || {}) }, extra: { ...(edits.extra || {}) } };
+          controls.querySelector('[data-action="save-edit"]')?.addEventListener('click', async () => {
+            const rawRow = previewRowsData[(item.rowRef || 1) - 1] || [];
+            const nextTags = {};
             card.querySelectorAll('[data-tag-field]').forEach((inputEl) => {
-              nextEdits.tags[inputEl.dataset.tagField] = (inputEl.value || '').trim();
+              const key = inputEl.dataset.tagField;
+              if (!key || isGroupedTag(key)) return;
+              nextTags[key] = (inputEl.value || '').trim();
             });
+            const nextExtra = {};
             card.querySelectorAll('[data-extra-header]').forEach((inputEl) => {
-              nextEdits.extra[inputEl.dataset.extraHeader] = (inputEl.value || '').trim();
+              const key = inputEl.dataset.extraHeader;
+              if (!key) return;
+              nextExtra[key] = (inputEl.value || '').trim();
             });
+
+            const baseByTag = {};
+            normalizeRowByTags(rawRow).cells.forEach((cell) => {
+              baseByTag[cell.title] = (cell.mergedValue || '').trim();
+            });
+            const baseByHeader = {};
+            headers.forEach((header, idx) => {
+              baseByHeader[header] = (rawRow[idx] ?? '').toString().trim();
+            });
+
+            const changedTags = {};
+            Object.entries(nextTags).forEach(([tag, value]) => {
+              if (value !== (baseByTag[tag] || '')) changedTags[tag] = value;
+            });
+            const changedExtra = {};
+            Object.entries(nextExtra).forEach(([header, value]) => {
+              if (value !== (baseByHeader[header] || '')) changedExtra[header] = value;
+            });
+
             const stageSelect = card.querySelector('[data-edit-stage]');
-            sequenceItems[index] = {
-              ...item,
-              stageStatus: stageSelect ? (stageSelect.value || null) : getParticipantStage(item),
-              editedFields: nextEdits,
-              isEditing: false,
-            };
-            queueSequenceSave();
-            renderPreview();
+            const nextStage = stageSelect ? (stageSelect.value || null) : getParticipantStage(item);
+            const stageChanged = nextStage !== getParticipantStage(item);
+            const hasDiff = Object.keys(changedTags).length > 0 || Object.keys(changedExtra).length > 0;
+            const rowRef = item.rowRef;
+
+            try {
+              if (hasDiff) {
+                await apiPostJson(`/api/tables/${tableId}/participant/${rowRef}/edit`, {
+                  changed_tags: changedTags,
+                  changed_extra: changedExtra,
+                });
+                participantEditsByRowRef[rowRef] = { tags: changedTags, extra: changedExtra };
+              } else if (participantEditsByRowRef[rowRef]) {
+                delete participantEditsByRowRef[rowRef];
+              }
+              sequenceItems[index] = {
+                ...item,
+                stageStatus: nextStage,
+                isEditing: false,
+              };
+              if (stageChanged) queueSequenceSave();
+              renderPreview();
+            } catch (e) {
+              setStatus(uploadStatusEl, `Не удалось сохранить участника: ${e.message}`, 'warning');
+            }
           });
           controls.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', () => setItemEditing(item.id, false));
           extra.appendChild(controls);
@@ -1153,7 +1222,7 @@ async function initDetailPage() {
 
   function renderMapping(fieldTags) {
     mappingListEl.innerHTML = '';
-    mappingFieldTags = fieldTags;
+    mappingFieldTags = Array.isArray(fieldTags) ? fieldTags : [];
     const usageByTag = {};
     Object.values(mappingByHeaderIdx).forEach((tag) => {
       if (!tag) return;
@@ -1180,7 +1249,7 @@ async function initDetailPage() {
 
       const select = document.createElement('select');
       select.className = 'mapping-select';
-      select.innerHTML = '<option value="">не выбрано</option>' + fieldTags.map((fieldTag) => {
+      select.innerHTML = '<option value="">не выбрано</option>' + mappingFieldTags.map((fieldTag) => {
         const usedCount = usageByTag[fieldTag] || 0;
         const externalCount = tag === fieldTag ? Math.max(usedCount - 1, 0) : usedCount;
         const usageSuffix = externalCount > 0 ? ` (используется ещё в ${externalCount})` : '';
@@ -1195,7 +1264,7 @@ async function initDetailPage() {
           collapsedMappingCards[headerIndex] = false;
         }
         setStatus(mappingStatusEl, 'Есть несохранённые изменения.', 'warning');
-        renderMapping(fieldTags);
+        renderMapping(mappingFieldTags);
       });
 
       const toggleBtn = document.createElement('button');
@@ -1205,7 +1274,7 @@ async function initDetailPage() {
       toggleBtn.textContent = isCollapsed ? '▼' : '▲';
       toggleBtn.addEventListener('click', () => {
         collapsedMappingCards[headerIndex] = !collapsedMappingCards[headerIndex];
-        renderMapping(fieldTags);
+        renderMapping(mappingFieldTags);
       });
 
       if (isCollapsed) {
@@ -1224,10 +1293,11 @@ async function initDetailPage() {
   }
 
   async function reload() {
-    const [table, preview, mapResp] = await Promise.all([
+    const [table, preview, mapResp, participantEditsResp] = await Promise.all([
       apiGet(`/api/tables/${tableId}`),
       apiGet(`/api/tables/${tableId}/excel_preview`),
       apiGet(`/api/tables/${tableId}/mapping`),
+      apiGet(`/api/tables/${tableId}/participant-edits`),
     ]);
     titleEl.textContent = table.title || `Таблица #${tableId}`;
     headers = preview.headers || [];
@@ -1237,7 +1307,9 @@ async function initDetailPage() {
       nextMappingByHeader[item.excel_column_index] = item.field_tag;
     });
     mappingByHeaderIdx = nextMappingByHeader;
+    mappingFieldTypes = mapResp.field_tag_types || {};
     previewRowsData = preview.rows || [];
+    applyParticipantEdits(participantEditsResp?.items || []);
     await loadSequenceState();
     renderMapping(mapResp.field_tags || []);
     previewMetaEl.textContent = `Показано ${preview.rows?.length || 0} из ${preview.total_rows || 0} строк`;
