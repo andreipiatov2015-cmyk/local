@@ -102,6 +102,28 @@
               <input id="docDefaultDurationMinutes" type="number" min="1" step="1" />
             </label>
           </div>
+          <details id="docAdvancedOptions" class="doc-advanced">
+            <summary>Дополнительно</summary>
+            <div class="doc-advanced-body">
+              <label class="doc-check-row">
+                <input id="docDistributeByNomination" type="checkbox" />
+                <span>Распределить по номинациям</span>
+              </label>
+              <label id="docNominationAutoRow" class="doc-check-row doc-check-subrow is-hidden">
+                <input id="docNominationAutoDistribute" type="checkbox" />
+                <span>Автораспределение</span>
+              </label>
+
+              <label class="doc-check-row">
+                <input id="docDistributeByAgeCategory" type="checkbox" />
+                <span>Распределить по возрастной категории</span>
+              </label>
+              <label id="docAgeAutoRow" class="doc-check-row doc-check-subrow is-hidden">
+                <input id="docAgeAutoDistribute" type="checkbox" />
+                <span>Автораспределение</span>
+              </label>
+            </div>
+          </details>
           <div class="row wrap">
             <button id="docBuildProgram" class="btn btn-primary" type="button">Сформировать программу</button>
             <span id="docProgramStatus" class="status status-muted">Ожидание.</span>

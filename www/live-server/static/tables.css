@@ -172,6 +172,41 @@
   margin-top: 12px;
 }
 
+.doc-advanced {
+  margin-top: 10px;
+  border: 1px solid #dbe2ea;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.doc-advanced summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.doc-advanced-body {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.doc-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f172a;
+}
+
+.doc-check-subrow {
+  margin-left: 26px;
+}
+
+.doc-check-subrow.is-hidden {
+  display: none;
+}
+
 .doc-preview-title {
   font-size: 20px;
   font-weight: 700;
@@ -194,6 +229,17 @@
 .doc-preview-nomination {
   margin-top: 2px;
   font-weight: 600;
+}
+
+.doc-preview-nomination-header {
+  margin-top: 4px;
+  text-decoration: underline;
+}
+
+.doc-preview-age-header {
+  margin-top: 4px;
+  font-weight: 700;
+  text-align: center;
 }
 
 .doc-preview-items {
