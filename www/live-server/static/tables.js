@@ -1150,8 +1150,7 @@ async function initDetailPage() {
         const team = getMappedValueByMatchers(row, ['название коллектива', 'коллектив']);
         const institutionResolved = getMappedValueByPreferredTag(
           row,
-          ['полное название учереждения', 'полное название учреждения'],
-          ['полное название учреждения', 'название учреждения', 'учреждение'],
+          ['полное название учередения', 'полное название учереждения', 'полное название учреждения'],
         );
         const fullInstitution = institutionResolved.value;
         const municipality = getMappedValueByMatchers(row, ['муниципалитет']);
