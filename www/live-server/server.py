@@ -3504,7 +3504,7 @@ def build_program_docx_bytes(document_title, program):
     spacing_after = int(8 * 20)
     font_size_half_points = 28
 
-    def run_props_xml(*flags):
+    def run_props_xml(*flags, color=None):
         parts = [
             "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/>",
             f"<w:sz w:val=\"{font_size_half_points}\"/>",
@@ -3516,7 +3516,17 @@ def build_program_docx_bytes(document_title, program):
             parts.append("<w:i/>")
         if "underline" in flags:
             parts.append("<w:u w:val=\"single\"/>")
+        if color:
+            parts.append(f"<w:color w:val=\"{xml_escape(color)}\"/>")
         return f"<w:rPr>{''.join(parts)}</w:rPr>"
+
+    def format_minutes_to_clock(value):
+        try:
+            mins = int(round(float(value)))
+        except Exception:
+            return ""
+        mins = ((mins % 1440) + 1440) % 1440
+        return f"{mins // 60:02d}:{mins % 60:02d}"
 
     def format_date_ru_long(value):
         text = str(value or "").strip()
@@ -3604,6 +3614,28 @@ def build_program_docx_bytes(document_title, program):
             paragraphs.append(
                 "<w:p>"
                 f"<w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
+                f"<w:r>{run_props_xml('bold')}<w:t>{xml_escape(text)}</w:t></w:r>"
+                "</w:p>"
+            )
+            continue
+
+        if block_type in ("service", "parallel_service"):
+            start_text = format_minutes_to_clock((block or {}).get("start"))
+            end_text = format_minutes_to_clock((block or {}).get("end"))
+            time_text = ""
+            if start_text and end_text:
+                time_text = f"{start_text}–{end_text}"
+            elif start_text:
+                time_text = start_text
+            time_run_xml = (
+                f"<w:r>{run_props_xml(color='808080')}<w:t xml:space=\"preserve\">{xml_escape(time_text)} </w:t></w:r>"
+                if time_text
+                else ""
+            )
+            paragraphs.append(
+                "<w:p>"
+                f"<w:pPr><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
+                f"{time_run_xml}"
                 f"<w:r>{run_props_xml('bold')}<w:t>{xml_escape(text)}</w:t></w:r>"
                 "</w:p>"
             )
