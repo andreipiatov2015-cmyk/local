@@ -23,7 +23,7 @@ from functools import wraps
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 import requests
 
@@ -3467,6 +3467,159 @@ def table_excel_data(table_id):
     return table_excel_preview(table_id)
 
 
+def cm_to_twips(value_cm):
+    return int(round(float(value_cm) * 1440 / 2.54))
+
+
+def xml_escape(value):
+    text = str(value or "")
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def sanitize_docx_filename(value, fallback="program"):
+    cleaned = sanitize_name(value).strip().strip(".")
+    if not cleaned:
+        cleaned = fallback
+    return cleaned
+
+
+def build_program_docx_bytes(document_title, program):
+    title = str(document_title or "Программа выступлений").strip() or "Программа выступлений"
+    blocks = program.get("blocks") if isinstance(program, dict) else []
+    blocks = blocks if isinstance(blocks, list) else []
+
+    top_margin = cm_to_twips(2.0)
+    left_margin = cm_to_twips(3.0)
+    bottom_margin = cm_to_twips(2.0)
+    right_margin = cm_to_twips(1.5)
+    list_indent_left = cm_to_twips(0.64)
+    list_indent_right = cm_to_twips(0)
+    spacing_before = 0
+    spacing_after = int(8 * 20)
+
+    paragraphs = []
+    paragraphs.append(
+        f"<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>{xml_escape(title)}</w:t></w:r></w:p>"
+    )
+    paragraphs.append("<w:p/>")
+
+    for block in blocks:
+        block_type = str((block or {}).get("type") or "").strip()
+        text = str((block or {}).get("text") or "").strip()
+        if not text:
+            continue
+
+        if block_type == "participant":
+            number_match = re.match(r"^\s*№?\s*(\d+)\.\s*«([^»]+)»(.*)$", text)
+            if number_match:
+                number = number_match.group(1)
+                title_part = number_match.group(2).strip()
+                tail = number_match.group(3) or ""
+                participant_xml = (
+                    "<w:p>"
+                    f"<w:pPr><w:ind w:left=\"{list_indent_left}\" w:right=\"{list_indent_right}\"/><w:spacing w:before=\"{spacing_before}\" w:after=\"{spacing_after}\"/></w:pPr>"
+                    f"<w:r><w:rPr><w:b/></w:rPr><w:t>{xml_escape(number)}.</w:t></w:r>"
+                    "<w:r><w:t xml:space=\"preserve\"> </w:t></w:r>"
+                    f"<w:r><w:rPr><w:b/></w:rPr><w:t>«{xml_escape(title_part)}»</w:t></w:r>"
+                    + (f"<w:r><w:t xml:space=\"preserve\">{xml_escape(tail)}</w:t></w:r>" if tail else "")
+                    + "</w:p>"
+                )
+                paragraphs.append(participant_xml)
+            else:
+                paragraphs.append(
+                    "<w:p>"
+                    f"<w:pPr><w:ind w:left=\"{list_indent_left}\" w:right=\"{list_indent_right}\"/><w:spacing w:before=\"{spacing_before}\" w:after=\"{spacing_after}\"/></w:pPr>"
+                    f"<w:r><w:t>{xml_escape(text)}</w:t></w:r>"
+                    "</w:p>"
+                )
+            continue
+
+        paragraphs.append(
+            "<w:p>"
+            f"<w:pPr><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
+            f"<w:r><w:t>{xml_escape(text)}</w:t></w:r>"
+            "</w:p>"
+        )
+
+    document_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<w:document xmlns:wpc=\"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas\" "
+        "xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" "
+        "xmlns:o=\"urn:schemas-microsoft-com:office:office\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+        "xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\" "
+        "xmlns:v=\"urn:schemas-microsoft-com:vml\" "
+        "xmlns:wp14=\"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing\" "
+        "xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" "
+        "xmlns:w10=\"urn:schemas-microsoft-com:office:word\" "
+        "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" "
+        "xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\" "
+        "xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\" "
+        "xmlns:wpi=\"http://schemas.microsoft.com/office/word/2010/wordprocessingInk\" "
+        "xmlns:wne=\"http://schemas.microsoft.com/office/word/2006/wordml\" "
+        "xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\" "
+        "mc:Ignorable=\"w14 wp14\">"
+        "<w:body>"
+        + "".join(paragraphs)
+        + (
+            "<w:sectPr>"
+            f"<w:pgMar w:top=\"{top_margin}\" w:right=\"{right_margin}\" w:bottom=\"{bottom_margin}\" w:left=\"{left_margin}\" "
+            "w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>"
+            "</w:sectPr>"
+        )
+        + "</w:body></w:document>"
+    )
+
+    content_types_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>"""
+    root_rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>"""
+    app_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>Live Server</Application>
+</Properties>"""
+    created = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    core_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" "
+        "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
+        "xmlns:dcterms=\"http://purl.org/dc/terms/\" "
+        "xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" "
+        "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">"
+        f"<dc:title>{xml_escape(title)}</dc:title>"
+        "<dc:creator>Live Server</dc:creator>"
+        f"<dcterms:created xsi:type=\"dcterms:W3CDTF\">{created}</dcterms:created>"
+        f"<dcterms:modified xsi:type=\"dcterms:W3CDTF\">{created}</dcterms:modified>"
+        "</cp:coreProperties>"
+    )
+
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("_rels/.rels", root_rels_xml)
+        zf.writestr("word/document.xml", document_xml)
+        zf.writestr("docProps/app.xml", app_xml)
+        zf.writestr("docProps/core.xml", core_xml)
+    mem.seek(0)
+    return mem
+
+
 @app.route("/api/tables/<int:table_id>/documentation/program", methods=["GET", "POST"])
 def table_documentation_program(table_id):
     user = table_user_from_request()
@@ -3543,6 +3696,42 @@ def table_card_sequence(table_id):
     )
     app.logger.info("[participant_edit] table_id=%s card-sequence update items=%s", table_id, len(items))
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/tables/<int:table_id>/documentation/program/docx", methods=["POST"])
+def table_documentation_program_docx(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db(
+        "SELECT id, title FROM import_tables WHERE id=? AND user_id=?",
+        (table_id, user["id"]),
+        one=True,
+    )
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    settings = payload.get("settings") if isinstance(payload, dict) else {}
+    program = payload.get("program") if isinstance(payload, dict) else {}
+    if not isinstance(settings, dict) or not isinstance(program, dict):
+        return jsonify({"detail": "Ожидаются объекты settings и program"}), 400
+    blocks = program.get("blocks")
+    if not isinstance(blocks, list) or not blocks:
+        return jsonify({"detail": "Программа выступлений пуста"}), 400
+
+    document_title = str((table.get("title") if isinstance(table, dict) else table["title"]) or "").strip() or "Программа выступлений"
+    docx_buf = build_program_docx_bytes(document_title, program)
+    safe_name = sanitize_docx_filename(document_title, fallback=f"table_{table_id}")
+    download_name = f"{safe_name}.docx"
+    response = send_file(
+        docx_buf,
+        as_attachment=True,
+        download_name=download_name,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(download_name)}"
+    return response
 
 
 def sanitize_participant_edits_payload(payload):
