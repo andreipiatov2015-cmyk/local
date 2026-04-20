@@ -23,6 +23,17 @@ async function apiPostJson(url, data) {
   return r.json();
 }
 
+async function apiPostBlob(url, data) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    credentials: 'same-origin',
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
+  return r;
+}
+
 async function apiDelete(url) {
   const r = await fetch(url, { method: 'DELETE', credentials: 'same-origin' });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);
@@ -247,7 +258,11 @@ async function initDetailPage() {
   const docDefaultDurationMinutesEl = document.getElementById('docDefaultDurationMinutes');
   const docBuildProgramBtn = document.getElementById('docBuildProgram');
   const docProgramStatusEl = document.getElementById('docProgramStatus');
-  const docProgramPreviewEl = document.getElementById('docProgramPreview');
+  const programDocCardEl = document.getElementById('programDocCard');
+  const programPreviewModalEl = document.getElementById('programPreviewModal');
+  const closeProgramPreviewModalEl = document.getElementById('closeProgramPreviewModal');
+  const programPreviewModalBodyEl = document.getElementById('programPreviewModalBody');
+  const downloadProgramDocxEl = document.getElementById('downloadProgramDocx');
 
   let headers = [];
   let mappingByHeaderIdx = {};
@@ -663,37 +678,30 @@ async function initDetailPage() {
         const numberCell = document.createElement('div');
         numberCell.className = 'preview-cell preview-cell-order';
         numberCell.dataset.noContext = '1';
-        if (isEditing) {
-          numberCell.innerHTML = `
-            <div class="preview-cell-title">Номер</div>
-            <div class="preview-order-controls">
-              <input class="preview-order-input" type="number" min="1" max="${totalParticipants}" value="${participantNumber}" />
-              <button type="button" class="btn btn-secondary btn-small preview-move-btn" title="Переместить участника">↕</button>
-            </div>
-          `;
-          const numberInput = numberCell.querySelector('.preview-order-input');
-          const moveBtn = numberCell.querySelector('.preview-move-btn');
-          const commitMove = () => {
-            const nextPos = Number(numberInput.value || participantNumber);
-            if (!Number.isInteger(nextPos) || nextPos < 1 || nextPos > totalParticipants) {
-              numberInput.value = participantNumber;
-              return;
-            }
-            moveParticipant(participantNumber, nextPos);
-          };
-          numberInput?.addEventListener('change', commitMove);
-          numberInput?.addEventListener('keydown', (event) => {
-            if (event.key !== 'Enter') return;
-            event.preventDefault();
-            commitMove();
-          });
-          moveBtn?.addEventListener('click', commitMove);
-        } else {
-          numberCell.innerHTML = `
-            <div class="preview-cell-title">Номер</div>
-            <div class="preview-cell-value">${participantNumber}</div>
-          `;
-        }
+        numberCell.innerHTML = `
+          <div class="preview-cell-title">Номер</div>
+          <div class="preview-order-controls">
+            <input class="preview-order-input" type="number" min="1" max="${totalParticipants}" value="${participantNumber}" />
+            <button type="button" class="btn btn-secondary btn-small preview-move-btn" title="Переместить участника">↕</button>
+          </div>
+        `;
+        const numberInput = numberCell.querySelector('.preview-order-input');
+        const moveBtn = numberCell.querySelector('.preview-move-btn');
+        const commitMove = () => {
+          const nextPos = Number(numberInput.value || participantNumber);
+          if (!Number.isInteger(nextPos) || nextPos < 1 || nextPos > totalParticipants) {
+            numberInput.value = participantNumber;
+            return;
+          }
+          moveParticipant(participantNumber, nextPos);
+        };
+        numberInput?.addEventListener('change', commitMove);
+        numberInput?.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          commitMove();
+        });
+        moveBtn?.addEventListener('click', commitMove);
         grid.appendChild(numberCell);
       }
 
@@ -1080,14 +1088,14 @@ async function initDetailPage() {
     return { title: 'Программа конкурса', date: settings.event_date || '', blocks };
   }
 
-  function renderDocumentationPreview(program) {
-    if (!docProgramPreviewEl) return;
+  function renderDocumentationPreview(program, containerEl) {
+    if (!containerEl) return;
     if (!program || !Array.isArray(program.blocks) || !program.blocks.length) {
-      docProgramPreviewEl.classList.add('is-empty');
-      docProgramPreviewEl.innerHTML = '<div>После формирования здесь появится предпросмотр программы.</div>';
+      containerEl.classList.add('is-empty');
+      containerEl.innerHTML = '<div>Программа пока не сформирована. Нажмите «Сформировать программу».</div>';
       return;
     }
-    docProgramPreviewEl.classList.remove('is-empty');
+    containerEl.classList.remove('is-empty');
     const parts = [
       `<div class="doc-preview-title">${esc(program.title || 'Программа конкурса')}</div>`,
       `<div class="doc-preview-date">Дата: ${esc(program.date || '—')}</div>`,
@@ -1101,7 +1109,54 @@ async function initDetailPage() {
         parts.push(`<div class="doc-preview-nomination">${esc(formatMinutesToClock(block.start))}–${esc(formatMinutesToClock(block.end))} ${esc(block.text)}</div>`);
       }
     });
-    docProgramPreviewEl.innerHTML = parts.join('');
+    containerEl.innerHTML = parts.join('');
+  }
+
+  function openProgramPreviewModal() {
+    if (!programPreviewModalEl) return;
+    const settings = readDocumentationSettingsFromForm();
+    const program = buildProgramPreviewData(settings);
+    documentationState = { settings, program };
+    renderDocumentationPreview(program, programPreviewModalBodyEl);
+    programPreviewModalEl.classList.add('visible');
+    programPreviewModalEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeProgramPreviewModal() {
+    if (!programPreviewModalEl) return;
+    programPreviewModalEl.classList.remove('visible');
+    programPreviewModalEl.setAttribute('aria-hidden', 'true');
+  }
+
+  async function downloadProgramDocx() {
+    if (!previewRowsData.length) {
+      setStatus(docProgramStatusEl, 'Нет данных таблицы для формирования программы.', 'warning');
+      return;
+    }
+    try {
+      const settings = readDocumentationSettingsFromForm();
+      const program = buildProgramPreviewData(settings);
+      const state = { settings, program };
+      documentationState = state;
+      await saveDocumentationState(state);
+      const response = await apiPostBlob(`/api/tables/${tableId}/documentation/program/docx`, state);
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+      const rawName = match ? decodeURIComponent(match[1].replace(/"/g, '').trim()) : 'program.docx';
+      const filename = rawName.endsWith('.docx') ? rawName : `${rawName}.docx`;
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setStatus(docProgramStatusEl, 'DOCX сформирован и скачан.', 'success');
+    } catch (e) {
+      setStatus(docProgramStatusEl, `Ошибка скачивания DOCX: ${e.message}`, 'error');
+    }
   }
 
   function openContextMenu(x, y, targetId) {
@@ -1210,7 +1265,7 @@ async function initDetailPage() {
       nomination_order: {},
     };
     applyDocumentationSettingsToForm(settings);
-    renderDocumentationPreview(documentationState.program);
+    renderDocumentationPreview(documentationState.program, programPreviewModalBodyEl);
   }
 
   function isAutoDetectedMapping(header, selectedTag) {
@@ -1369,26 +1424,36 @@ async function initDetailPage() {
     closeContextMenu();
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeContextMenu();
+    if (event.key === 'Escape') {
+      closeContextMenu();
+      closeProgramPreviewModal();
+    }
   });
 
   docBuildProgramBtn?.addEventListener('click', async () => {
     try {
       if (!previewRowsData.length) {
         setStatus(docProgramStatusEl, 'Нет данных таблицы для формирования программы.', 'warning');
-        renderDocumentationPreview(null);
+        renderDocumentationPreview(null, programPreviewModalBodyEl);
         return;
       }
       const settings = readDocumentationSettingsFromForm();
       const program = buildProgramPreviewData(settings);
       const state = { settings, program };
       documentationState = state;
-      renderDocumentationPreview(program);
+      renderDocumentationPreview(program, programPreviewModalBodyEl);
       await saveDocumentationState(state);
       setStatus(docProgramStatusEl, 'Программа сформирована и сохранена.', 'success');
     } catch (e) {
       setStatus(docProgramStatusEl, `Ошибка формирования: ${e.message}`, 'error');
     }
+  });
+
+  programDocCardEl?.addEventListener('click', openProgramPreviewModal);
+  closeProgramPreviewModalEl?.addEventListener('click', closeProgramPreviewModal);
+  downloadProgramDocxEl?.addEventListener('click', downloadProgramDocx);
+  programPreviewModalEl?.addEventListener('click', (event) => {
+    if (event.target === programPreviewModalEl) closeProgramPreviewModal();
   });
 
   try {

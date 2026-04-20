@@ -106,11 +106,37 @@
             <button id="docBuildProgram" class="btn btn-primary" type="button">Сформировать программу</button>
             <span id="docProgramStatus" class="status status-muted">Ожидание.</span>
           </div>
-          <div id="docProgramPreview" class="doc-program-preview"></div>
+          <button id="programDocCard" class="program-doc-card" type="button">
+            <span class="program-doc-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 64 64" role="img">
+                <path d="M16 4h24l12 12v44H16z" fill="#fff" stroke="#1e3a8a" stroke-width="2"/>
+                <path d="M40 4v14h14" fill="#dbeafe" stroke="#1e3a8a" stroke-width="2"/>
+                <rect x="10" y="20" width="22" height="30" rx="4" fill="#1d4ed8"/>
+                <text x="21" y="40" text-anchor="middle" font-size="17" font-weight="700" fill="#fff" font-family="Arial, sans-serif">W</text>
+              </svg>
+            </span>
+            <span class="program-doc-card-text">
+              <span class="program-doc-card-title">Программа выступлений</span>
+              <span class="program-doc-card-subtitle">DOCX · открыть предпросмотр и скачать файл</span>
+            </span>
+          </button>
         </div>
       </section>
     </section>
   </main>
+
+  <div id="programPreviewModal" class="modal" aria-hidden="true">
+    <div class="modal-content program-preview-modal-content">
+      <div class="vk-modal-header">
+        <h3>Предпросмотр программы выступлений</h3>
+        <button id="closeProgramPreviewModal" class="close-modal-btn" type="button">✕</button>
+      </div>
+      <div id="programPreviewModalBody" class="program-preview-modal-body"></div>
+      <div class="row wrap program-preview-modal-actions">
+        <button id="downloadProgramDocx" class="btn btn-primary" type="button">Скачать</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/layout.js"></script>
   <script src="/static/tables.js"></script>
