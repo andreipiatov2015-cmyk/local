@@ -216,7 +216,16 @@
 .doc-preview-date {
   font-family: "Times New Roman", Times, serif;
   font-size: 14pt;
-  color: #475569;
+  font-style: italic;
+  font-weight: 700;
+  text-align: left;
+}
+
+.doc-preview-rehearsal {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 14pt;
+  font-weight: 400;
+  text-align: left;
 }
 
 .doc-preview-time-block {
