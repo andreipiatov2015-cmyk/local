@@ -3502,10 +3502,23 @@ def build_program_docx_bytes(document_title, program):
     list_indent_right = cm_to_twips(0)
     spacing_before = 0
     spacing_after = int(8 * 20)
+    font_size_half_points = 28
+
+    def run_props_xml(*flags):
+        parts = [
+            "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/>",
+            f"<w:sz w:val=\"{font_size_half_points}\"/>",
+            f"<w:szCs w:val=\"{font_size_half_points}\"/>",
+        ]
+        if "bold" in flags:
+            parts.append("<w:b/>")
+        if "underline" in flags:
+            parts.append("<w:u w:val=\"single\"/>")
+        return f"<w:rPr>{''.join(parts)}</w:rPr>"
 
     paragraphs = []
     paragraphs.append(
-        f"<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>{xml_escape(title)}</w:t></w:r></w:p>"
+        f"<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r>{run_props_xml('bold')}<w:t>{xml_escape(title)}</w:t></w:r></w:p>"
     )
     paragraphs.append("<w:p/>")
 
@@ -3516,7 +3529,7 @@ def build_program_docx_bytes(document_title, program):
             continue
 
         if block_type == "participant":
-            number_match = re.match(r"^\s*№?\s*(\d+)\.\s*«([^»]+)»(.*)$", text)
+            number_match = re.match(r"^\s*№?\s*(\d+)\.\s*(«[^»]+»)(.*)$", text)
             if number_match:
                 number = number_match.group(1)
                 title_part = number_match.group(2).strip()
@@ -3524,10 +3537,10 @@ def build_program_docx_bytes(document_title, program):
                 participant_xml = (
                     "<w:p>"
                     f"<w:pPr><w:ind w:left=\"{list_indent_left}\" w:right=\"{list_indent_right}\"/><w:spacing w:before=\"{spacing_before}\" w:after=\"{spacing_after}\"/></w:pPr>"
-                    f"<w:r><w:rPr><w:b/></w:rPr><w:t>{xml_escape(number)}.</w:t></w:r>"
-                    "<w:r><w:t xml:space=\"preserve\"> </w:t></w:r>"
-                    f"<w:r><w:rPr><w:b/></w:rPr><w:t>«{xml_escape(title_part)}»</w:t></w:r>"
-                    + (f"<w:r><w:t xml:space=\"preserve\">{xml_escape(tail)}</w:t></w:r>" if tail else "")
+                    f"<w:r>{run_props_xml('bold')}<w:t>№{xml_escape(number)}.</w:t></w:r>"
+                    f"<w:r>{run_props_xml()}<w:t xml:space=\"preserve\"> </w:t></w:r>"
+                    f"<w:r>{run_props_xml('bold')}<w:t>{xml_escape(title_part)}</w:t></w:r>"
+                    + (f"<w:r>{run_props_xml()}<w:t xml:space=\"preserve\">{xml_escape(tail)}</w:t></w:r>" if tail else "")
                     + "</w:p>"
                 )
                 paragraphs.append(participant_xml)
@@ -3535,7 +3548,7 @@ def build_program_docx_bytes(document_title, program):
                 paragraphs.append(
                     "<w:p>"
                     f"<w:pPr><w:ind w:left=\"{list_indent_left}\" w:right=\"{list_indent_right}\"/><w:spacing w:before=\"{spacing_before}\" w:after=\"{spacing_after}\"/></w:pPr>"
-                    f"<w:r><w:t>{xml_escape(text)}</w:t></w:r>"
+                    f"<w:r>{run_props_xml()}<w:t>{xml_escape(text)}</w:t></w:r>"
                     "</w:p>"
                 )
             continue
@@ -3543,8 +3556,8 @@ def build_program_docx_bytes(document_title, program):
         if block_type == "nomination_header":
             paragraphs.append(
                 "<w:p>"
-                f"<w:pPr><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
-                f"<w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>{xml_escape(text)}</w:t></w:r>"
+                f"<w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
+                f"<w:r>{run_props_xml('underline')}<w:t>{xml_escape(text)}</w:t></w:r>"
                 "</w:p>"
             )
             continue
@@ -3553,7 +3566,7 @@ def build_program_docx_bytes(document_title, program):
             paragraphs.append(
                 "<w:p>"
                 f"<w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
-                f"<w:r><w:rPr><w:b/></w:rPr><w:t>{xml_escape(text)}</w:t></w:r>"
+                f"<w:r>{run_props_xml('bold')}<w:t>{xml_escape(text)}</w:t></w:r>"
                 "</w:p>"
             )
             continue
@@ -3561,7 +3574,7 @@ def build_program_docx_bytes(document_title, program):
         paragraphs.append(
             "<w:p>"
             f"<w:pPr><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
-            f"<w:r><w:t>{xml_escape(text)}</w:t></w:r>"
+            f"<w:r>{run_props_xml()}<w:t>{xml_escape(text)}</w:t></w:r>"
             "</w:p>"
         )
 

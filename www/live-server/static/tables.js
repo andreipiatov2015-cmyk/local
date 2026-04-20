@@ -1062,6 +1062,41 @@ async function initDetailPage() {
     return order.map((key) => ({ key, items: groups.get(key) || [] }));
   }
 
+  function normalizeSpacing(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function normalizeQuotes(value) {
+    const cleaned = normalizeSpacing(value).replace(/[«»„“”‟"']/g, '').trim();
+    return cleaned ? `«${cleaned}»` : '';
+  }
+
+  function toSimpleTitleCase(value) {
+    const normalized = normalizeSpacing(value);
+    if (!normalized) return '';
+    return normalized
+      .toLowerCase()
+      .replace(/(^|[\s\-–—()])([\p{L}])/gu, (match, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
+  }
+
+  function buildParticipantText(order, item) {
+    const quotedTitle = normalizeQuotes(item.numberTitle || 'Без названия номера') || '«Без названия номера»';
+    const performer = normalizeSpacing(item.performer || 'Участник');
+    const institution = toSimpleTitleCase(item.institution || 'Учреждение не указано') || 'Учреждение не указано';
+    const municipality = normalizeSpacing(item.municipality || 'Муниципалитет не указан') || 'Муниципалитет не указан';
+    return `№${order}. ${quotedTitle} - ${performer}, ${institution}, ${municipality}`;
+  }
+
+  function renderParticipantHtml(start, end, text) {
+    const timePart = `${esc(formatMinutesToClock(start))}–${esc(formatMinutesToClock(end))}`;
+    const match = String(text || '').match(/^\s*(№\s*\d+\.)\s*(«[^»]+»)(.*)$/);
+    if (!match) {
+      return `${timePart} ${esc(text || '')}`;
+    }
+    const tail = match[3] || '';
+    return `${timePart} <strong>${esc(match[1])}</strong> <strong>${esc(match[2])}</strong>${esc(tail)}`;
+  }
+
   function buildProgramPreviewData(settings) {
     const competitionStart = parseClockToMinutes(settings.competition_start) ?? 600;
     let cursor = competitionStart;
@@ -1075,19 +1110,23 @@ async function initDetailPage() {
         onsiteCounter += 1;
         const row = buildEffectiveRow(previewRowsData[item.rowRef - 1] || [], item);
         const numberTitle = getMappedValueByMatchers(row, ['название номера', 'навание номреа', 'номер']) || 'Без названия номера';
-        const fio = getMappedValueByMatchers(row, ['участник', 'фио']);
-        const team = getMappedValueByMatchers(row, ['коллектив']);
+        const fio = getMappedValueByMatchers(row, ['список участников', 'участник', 'фио']);
+        const team = getMappedValueByMatchers(row, ['название коллектива', 'коллектив']);
+        const fullInstitution = getMappedValueByMatchers(row, ['полное название учреждения', 'название учреждения', 'учреждение']);
+        const municipality = getMappedValueByMatchers(row, ['муниципалитет']);
         const nomination = getMappedValueByMatchers(row, ['номинация']) || 'Без номинации';
         const ageCategory = getMappedValueByMatchers(row, ['возрастная категория', 'возрастная кат', 'категория возраста', 'возраст']) || 'Без возрастной категории';
         const rawDuration = getMappedValueByMatchers(row, ['время исполнения', 'продолжительность']);
         const durationSeconds = parseDurationToSeconds(rawDuration, settings.default_duration_minutes);
-        const person = fio && team ? `${fio}, ${team}` : (fio || team || 'Участник');
+        const performer = fio || team || 'Участник';
         participants.push({
           type: 'participant',
           start: cursor,
           end: cursor + (durationSeconds / 60),
           numberTitle,
-          person,
+          performer,
+          institution: fullInstitution,
+          municipality,
           durationSeconds,
           nomination,
           ageCategory,
@@ -1165,7 +1204,7 @@ async function initDetailPage() {
       if (byNominationAuto && group.nomination) {
         participantBlocks.push({
           type: 'nomination_header',
-          text: `Номинация: "${group.nomination}"`,
+          text: `Номинация: ${normalizeQuotes(group.nomination) || '«Без номинации»'}`,
         });
       }
       groupItems.forEach((item) => {
@@ -1179,13 +1218,13 @@ async function initDetailPage() {
         if (byNomination && !byNominationAuto) {
           participantBlocks.push({
             type: 'nomination_header',
-            text: `Номинация: "${item.nomination}"`,
+            text: `Номинация: ${normalizeQuotes(item.nomination) || '«Без номинации»'}`,
           });
         }
         if (byAge && byNomination && byAgeAuto && !byNominationAuto) {
           participantBlocks.push({
             type: 'nomination_header',
-            text: `Номинация: "${item.nomination}"`,
+            text: `Номинация: ${normalizeQuotes(item.nomination) || '«Без номинации»'}`,
           });
         }
         docOrder += 1;
@@ -1194,7 +1233,7 @@ async function initDetailPage() {
           start: item.start,
           end: item.end,
           order: docOrder,
-          text: `№${docOrder}. «${item.numberTitle}» — ${item.person} (${formatDurationLabel(item.durationSeconds)})`,
+          text: buildParticipantText(docOrder, item),
         });
       });
     });
@@ -1225,7 +1264,7 @@ async function initDetailPage() {
         return;
       }
       if (block.type === 'participant') {
-        parts.push(`<div class="doc-preview-nomination">${esc(formatMinutesToClock(block.start))}–${esc(formatMinutesToClock(block.end))} ${esc(block.text)}</div>`);
+        parts.push(`<div class="doc-preview-nomination">${renderParticipantHtml(block.start, block.end, block.text)}</div>`);
         return;
       }
       if (block.type === 'nomination_header') {

@@ -208,11 +208,14 @@
 }
 
 .doc-preview-title {
-  font-size: 20px;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 14pt;
   font-weight: 700;
 }
 
 .doc-preview-date {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 14pt;
   color: #475569;
 }
 
@@ -227,16 +230,23 @@
 }
 
 .doc-preview-nomination {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 14pt;
   margin-top: 2px;
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .doc-preview-nomination-header {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 14pt;
   margin-top: 4px;
   text-decoration: underline;
+  text-align: center;
 }
 
 .doc-preview-age-header {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 14pt;
   margin-top: 4px;
   font-weight: 700;
   text-align: center;
@@ -254,6 +264,8 @@
 }
 
 .doc-preview-service {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 14pt;
   color: #334155;
   font-style: italic;
 }
