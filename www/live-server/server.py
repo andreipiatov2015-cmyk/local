@@ -3540,6 +3540,24 @@ def build_program_docx_bytes(document_title, program):
                 )
             continue
 
+        if block_type == "nomination_header":
+            paragraphs.append(
+                "<w:p>"
+                f"<w:pPr><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
+                f"<w:r><w:rPr><w:u w:val=\"single\"/></w:rPr><w:t>{xml_escape(text)}</w:t></w:r>"
+                "</w:p>"
+            )
+            continue
+
+        if block_type == "age_header":
+            paragraphs.append(
+                "<w:p>"
+                f"<w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
+                f"<w:r><w:rPr><w:b/></w:rPr><w:t>{xml_escape(text)}</w:t></w:r>"
+                "</w:p>"
+            )
+            continue
+
         paragraphs.append(
             "<w:p>"
             f"<w:pPr><w:spacing w:before=\"0\" w:after=\"120\"/></w:pPr>"
