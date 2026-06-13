@@ -237,9 +237,13 @@ class DeployTab(QWidget):
         status_layout.addWidget(QLabel("Состояние:"), 0, 0)
         status_layout.addWidget(self.status_label, 0, 1)
         
+        self.site_path_label = QLabel("-")
+        status_layout.addWidget(QLabel("Путь к сайту:"), 1, 0)
+        status_layout.addWidget(self.site_path_label, 1, 1)
+        
         self.install_btn = QPushButton("🖥️ Установить сайт")
         self.install_btn.clicked.connect(self.start_install)
-        status_layout.addWidget(self.install_btn, 1, 0, 1, 2)
+        status_layout.addWidget(self.install_btn, 2, 0, 1, 2)
         
         status_group.setLayout(status_layout)
         layout.addWidget(status_group)
@@ -286,8 +290,12 @@ class DeployTab(QWidget):
         """Проверить статус"""
         status = self.deployer.get_deploy_status()
         
-        if status['ready']:
-            self.status_label.setText("✓ Сайт установлен")
+        # Показываем найденный путь
+        site_path = status.get('site_path', 'Не найден')
+        self.site_path_label.setText(site_path if site_path else "Не найден")
+        
+        if status['site_files']:
+            self.status_label.setText("✓ Сайт обнаружен")
             self.status_label.setStyleSheet("color: green; font-weight: bold;")
             self.install_btn.setText("🔄 Переустановить сайт")
         else:

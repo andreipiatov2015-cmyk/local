@@ -56,12 +56,59 @@ class UpdateResult:
 class GitUpdater:
     """Класс для управления обновлениями через git"""
     
-    def __init__(self, repo_path: str, remote: str = "origin", branch: str = "main"):
+    # Возможные пути к сайту
+    POSSIBLE_SITE_PATHS = [
+        "/var/www",
+        "/var/www/www",
+        "/home/www",
+        "/srv/www",
+        "/opt/www",
+    ]
+    
+    def __init__(self, repo_path: str = None, remote: str = "origin", branch: str = "main"):
+        # Автоматически ищем репозиторий
+        if repo_path is None:
+            repo_path = self._find_repo_path()
+        
         self.repo_path = repo_path
         self.remote = remote
         self.branch = branch
         self.www_path = os.path.join(repo_path, "www")
+    
+    def _find_repo_path(self) -> str:
+        """Автоматически найти путь к git репозиторию сайта"""
+        # Проверяем стандартные пути
+        for path in self.POSSIBLE_SITE_PATHS:
+            # Проверяем сам путь
+            if os.path.exists(os.path.join(path, '.git')):
+                return path
+            # Проверяем вложенные папки (live-server, reboot, www)
+            if os.path.exists(path):
+                for item in os.listdir(path):
+                    subpath = os.path.join(path, item)
+                    if os.path.isdir(subpath) and os.path.exists(os.path.join(subpath, '.git')):
+                        return subpath
         
+        # Ищем в домашней директории
+        home_paths = [
+            os.path.expanduser("~/www"),
+            os.path.expanduser("~/site"),
+            os.path.expanduser("~/Desktop/www"),
+            os.path.expanduser("~/Desktop/local"),
+            os.path.expanduser("~/Desktop/local-main"),
+        ]
+        
+        for path in home_paths:
+            if os.path.exists(os.path.join(path, '.git')):
+                return path
+            # Проверяем www внутри
+            www_path = os.path.join(path, 'www')
+            if os.path.exists(os.path.join(www_path, '.git')):
+                return www_path
+        
+        # Возвращаем /var/www по умолчанию
+        return "/var/www"
+    
     def _run_git(self, args: List[str], timeout: int = 30) -> subprocess.CompletedProcess:
         """Выполнить git команду"""
         cmd = ['git'] + args
@@ -75,8 +122,21 @@ class GitUpdater:
     
     def is_git_repo(self) -> bool:
         """Проверить является ли папка git репозиторием"""
-        git_dir = os.path.join(self.repo_path, '.git')
-        return os.path.isdir(git_dir)
+        # Проверяем основной путь
+        if os.path.exists(os.path.join(self.repo_path, '.git')):
+            return True
+        
+        # Проверяем www подпапку
+        www_git = os.path.join(self.repo_path, 'www', '.git')
+        if os.path.exists(www_git):
+            return True
+        
+        # Проверяем live-server подпапку
+        live_git = os.path.join(self.repo_path, 'live-server', '.git')
+        if os.path.exists(live_git):
+            return True
+        
+        return False
     
     def init_repo(self) -> bool:
         """Инициализировать git репозиторий"""
