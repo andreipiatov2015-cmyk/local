@@ -16,13 +16,19 @@ from PyQt5.QtWidgets import (
     QProgressBar, QTextEdit, QSplitter, QGroupBox, QGridLayout,
     QStatusBar, QMessageBox, QDialog, QLineEdit, QCheckBox,
     QSpinBox, QComboBox, QProgressDialog, QApplication, QStyle,
-    QToolButton, QFrame, QScrollArea, QSizePolicy, QSpacerItem
+    QToolButton, QFrame, QScrollArea, QSizePolicy, QSpacerItem,
+    QWizard, QWizardPage, QTextBrowser, QListWidget, QListWidgetItem,
+    QStackedWidget, QFormLayout, QDoubleSpinBox, QFileDialog
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor
 
-from src.core import SystemMonitor, SiteMonitor, GitUpdater, UpdateStatus
+from src.core import (
+    SystemMonitor, SiteMonitor, GitUpdater, UpdateStatus,
+    SiteDeployer, DeployStatus, ServiceManager, ServiceState
+)
 from src.core.git_updater import UpdateResult
+from src.core.deployer import DeployResult
 
 import threading
 import time
@@ -46,6 +52,436 @@ class WorkerThread(QThread):
             self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))
+
+
+class DeployWizard(QWizard):
+    """Мастер развёртывания сайта"""
+    
+    def __init__(self, deployer: SiteDeployer, parent=None):
+        super().__init__(parent)
+        self.deployer = deployer
+        self.setWindowTitle("Мастер установки сайта")
+        self.setMinimumWidth(700)
+        self.setMinimumHeight(500)
+        
+        # Страницы
+        self.addPage(self.createIntroPage())
+        self.addPage(self.createRequirementsPage())
+        self.addPage(self.createDeployPage())
+        self.addPage(self.createFinishPage())
+        
+        self.deploy_result = None
+    
+    def createIntroPage(self) -> QWizardPage:
+        """Вводная страница"""
+        page = QWizardPage()
+        page.setTitle("Добро пожаловать в мастер установки")
+        page.setSubTitle("Этот мастер поможет установить и настроить сайт на сервере.")
+        
+        layout = QVBoxLayout()
+        
+        text = QTextBrowser()
+        text.setHtml("""
+        <h3>Что будет установлено:</h3>
+        <ul>
+            <li><b>Nginx</b> - веб-сервер для обработки HTTP запросов</li>
+            <li><b>Python приложения</b> - Flask серверы для работы сайта</li>
+            <li><b>RTMP сервер</b> - для потокового видео</li>
+            <li><b>Systemd сервисы</b> - для автозапуска приложений</li>
+            <li><b>Файлы сайта</b> - все компоненты веб-приложения</li>
+        </ul>
+        
+        <h3>Требования:</h3>
+        <ul>
+            <li>Права суперпользователя (root)</li>
+            <li>Ubuntu/Debian или Astra Linux</li>
+            <li>Подключение к интернету</li>
+        </ul>
+        
+        <p><b>Внимание:</b> Установка может занять 10-15 минут.</p>
+        """)
+        layout.addWidget(text)
+        
+        page.setLayout(layout)
+        return page
+    
+    def createRequirementsPage(self) -> QWizardPage:
+        """Проверка требований"""
+        page = QWizardPage()
+        page.setTitle("Проверка системы")
+        page.setSubTitle("Проверка системных требований...")
+        
+        layout = QVBoxLayout()
+        
+        self.requirements_label = QLabel("Проверка...")
+        layout.addWidget(self.requirements_label)
+        
+        self.requirements_table = QTableWidget()
+        self.requirements_table.setColumnCount(2)
+        self.requirements_table.setHorizontalHeaderLabels(["Компонент", "Статус"])
+        self.requirements_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        layout.addWidget(self.requirements_table)
+        
+        page.setLayout(layout)
+        
+        # Проверяем при показе страницы
+        page.enterId = self.checkRequirements
+        
+        return page
+    
+    def checkRequirements(self):
+        """Проверить требования"""
+        can_deploy, info = self.deployer.check_system()
+        
+        self.requirements_table.setRowCount(5)
+        checks = [
+            ("Операционная система", "✓ " + info['os'] if info['is_root'] else "✗"),
+            ("Права root", "✓ Доступны" if info['is_root'] else "✗ Требуются"),
+            ("Python", info['python_version']),
+            ("Отсутствующие пакеты", str(len(info['missing_packages'])) if info['missing_packages'] else "Нет"),
+            ("Готов к установке", "✓ Да" if can_deploy else "✗ Нет"),
+        ]
+        
+        for i, (comp, status) in enumerate(checks):
+            self.requirements_table.setItem(i, 0, QTableWidgetItem(comp))
+            item = QTableWidgetItem(status)
+            if "✗" in status:
+                item.setBackground(QColor(255, 182, 193))
+            elif "✓" in status:
+                item.setBackground(QColor(144, 238, 144))
+            self.requirements_table.setItem(i, 1, item)
+        
+        self.requirements_label.setText(
+            "Система готова к установке!" if can_deploy 
+            else "Для продолжения необходимо устранить проблемы"
+        )
+        
+        return can_deploy
+    
+    def createDeployPage(self) -> QWizardPage:
+        """Страница развёртывания"""
+        page = QWizardPage()
+        page.setTitle("Установка")
+        page.setSubTitle("Идёт установка сайта...")
+        
+        layout = QVBoxLayout()
+        
+        self.deploy_progress = QProgressBar()
+        self.deploy_progress.setRange(0, 100)
+        layout.addWidget(self.deploy_progress)
+        
+        self.deploy_log = QTextEdit()
+        self.deploy_log.setReadOnly(True)
+        self.deploy_log.setMaximumHeight(200)
+        layout.addWidget(self.deploy_log)
+        
+        self.deploy_status_label = QLabel("Готов к установке")
+        layout.addWidget(self.deploy_status_label)
+        
+        page.setLayout(layout)
+        return page
+    
+    def createFinishPage(self) -> QWizardPage:
+        """Финальная страница"""
+        page = QWizardPage()
+        page.setTitle("Установка завершена")
+        page.setSubTitle("Результат установки")
+        
+        layout = QVBoxLayout()
+        
+        self.finish_label = QLabel("")
+        self.finish_label.setWordWrap(True)
+        layout.addWidget(self.finish_label)
+        
+        page.setLayout(layout)
+        return page
+    
+    def runDeployment(self):
+        """Запустить развёртывание"""
+        self.deployer.progress_callback = self.onDeployProgress
+        self.deploy_result = self.deployer.deploy()
+        
+        if self.deploy_result.success:
+            self.deployer.start_services()
+        
+        return self.deploy_result
+    
+    def onDeployProgress(self, message: str, step: str = None):
+        """Обработчик прогресса"""
+        self.deploy_log.append(message)
+        
+        # Обновляем прогресс бар
+        if step:
+            steps = ['dependencies', 'directories', 'files', 'nginx', 'nginx_rtmp']
+            if step in steps:
+                progress = (steps.index(step) + 1) * 15
+                self.deploy_progress.setValue(progress)
+
+
+class DeployTab(QWidget):
+    """Вкладка установки сайта"""
+    
+    def __init__(self, deployer: SiteDeployer):
+        super().__init__()
+        self.deployer = deployer
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Статус
+        status_group = QGroupBox("Статус развёртывания")
+        status_layout = QGridLayout()
+        
+        self.status_label = QLabel("Проверка...")
+        status_layout.addWidget(QLabel("Состояние:"), 0, 0)
+        status_layout.addWidget(self.status_label, 0, 1)
+        
+        self.install_btn = QPushButton("🖥️ Установить сайт")
+        self.install_btn.clicked.connect(self.start_install)
+        status_layout.addWidget(self.install_btn, 1, 0, 1, 2)
+        
+        status_group.setLayout(status_layout)
+        layout.addWidget(status_group)
+        
+        # Детали
+        details_group = QGroupBox("Компоненты для установки")
+        details_layout = QVBoxLayout()
+        
+        components = [
+            ("📦", "Системные пакеты", "Nginx, Python, ffmpeg и др."),
+            ("📁", "Директории", "/var/www, /var/log, /var/mount_point"),
+            ("📋", "Файлы сайта", "Flask приложения, статика, конфиги"),
+            ("🌐", "Nginx", "Веб-сервер с proxy на Flask"),
+            ("📺", "Nginx RTMP", "Сервер потокового видео"),
+            ("⚙️", "Systemd сервисы", "Автозапуск приложений"),
+        ]
+        
+        for icon, name, desc in components:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(icon))
+            row.addWidget(QLabel(f"<b>{name}</b>"))
+            row.addWidget(QLabel(desc))
+            row.addStretch()
+            details_layout.addLayout(row)
+        
+        details_group.setLayout(details_layout)
+        layout.addWidget(details_group)
+        
+        # Лог
+        log_group = QGroupBox("Лог установки")
+        log_layout = QVBoxLayout()
+        
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(150)
+        log_layout.addWidget(self.log_text)
+        
+        log_group.setLayout(log_layout)
+        layout.addWidget(log_group)
+        
+        layout.addStretch()
+    
+    def check_status(self):
+        """Проверить статус"""
+        status = self.deployer.get_deploy_status()
+        
+        if status['ready']:
+            self.status_label.setText("✓ Сайт установлен")
+            self.status_label.setStyleSheet("color: green; font-weight: bold;")
+            self.install_btn.setText("🔄 Переустановить сайт")
+        else:
+            self.status_label.setText("○ Сайт не установлен")
+            self.status_label.setStyleSheet("")
+            self.install_btn.setText("🖥️ Установить сайт")
+    
+    def start_install(self):
+        """Начать установку"""
+        reply = QMessageBox.question(
+            self, 'Подтверждение',
+            'Начать установку сайта? Это может занять 10-15 минут.',
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.install_btn.setEnabled(False)
+            self.log_text.clear()
+            
+            self.thread = WorkerThread(self._install_worker)
+            self.thread.finished.connect(self._on_install_finished)
+            self.thread.error.connect(self._on_install_error)
+            self.thread.start()
+    
+    def _install_worker(self) -> DeployResult:
+        return self.deployer.deploy()
+    
+    def _on_install_finished(self, result: DeployResult):
+        self.install_btn.setEnabled(True)
+        
+        if result.success:
+            self.log_text.append("\n=== Запуск сервисов ===")
+            success, errors = self.deployer.start_services()
+            
+            QMessageBox.information(
+                self, "Успех",
+                "Сайт успешно установлен и запущен!"
+            )
+        else:
+            QMessageBox.warning(
+                self, "Ошибки",
+                f"Установка завершена с ошибками:\n{result.message}"
+            )
+        
+        self.check_status()
+    
+    def _on_install_error(self, error: str):
+        self.install_btn.setEnabled(True)
+        self.log_text.append(f"Ошибка: {error}")
+        QMessageBox.critical(self, "Ошибка", f"Критическая ошибка: {error}")
+
+
+class ServiceTab(QWidget):
+    """Вкладка управления сервисами"""
+    
+    def __init__(self, service_manager: ServiceManager):
+        super().__init__()
+        self.manager = service_manager
+        self.init_ui()
+        
+        # Таймер обновления
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.refresh_data)
+        self.timer.start(3000)
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Сводка
+        summary_group = QGroupBox("Сводка")
+        summary_layout = QGridLayout()
+        
+        self.total_label = QLabel("-")
+        self.running_label = QLabel("-")
+        self.stopped_label = QLabel("-")
+        
+        summary_layout.addWidget(QLabel("Всего сервисов:"), 0, 0)
+        summary_layout.addWidget(self.total_label, 0, 1)
+        summary_layout.addWidget(QLabel("Работает:"), 0, 2)
+        summary_layout.addWidget(self.running_label, 0, 3)
+        summary_layout.addWidget(QLabel("Остановлено:"), 0, 4)
+        summary_layout.addWidget(self.stopped_label, 0, 5)
+        
+        summary_group.setLayout(summary_layout)
+        layout.addWidget(summary_group)
+        
+        # Таблица сервисов
+        table_group = QGroupBox("Сервисы")
+        table_layout = QVBoxLayout()
+        
+        self.services_table = QTableWidget()
+        self.services_table.setColumnCount(6)
+        self.services_table.setHorizontalHeaderLabels([
+            "Сервис", "Описание", "Статус", "PID", "Порт", "Uptime"
+        ])
+        self.services_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self.services_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.services_table.setColumnWidth(0, 120)
+        
+        table_layout.addWidget(self.services_table)
+        table_group.setLayout(table_layout)
+        layout.addWidget(table_group)
+        
+        # Кнопки управления
+        btn_layout = QHBoxLayout()
+        
+        start_all_btn = QPushButton("▶ Запустить все")
+        start_all_btn.clicked.connect(self.start_all)
+        
+        stop_all_btn = QPushButton("⏹ Остановить все")
+        stop_all_btn.clicked.connect(self.stop_all)
+        
+        restart_all_btn = QPushButton("🔄 Перезапустить все")
+        restart_all_btn.clicked.connect(self.restart_all)
+        
+        refresh_btn = QPushButton("🔍 Обновить")
+        refresh_btn.clicked.connect(self.refresh_data)
+        
+        btn_layout.addWidget(start_all_btn)
+        btn_layout.addWidget(stop_all_btn)
+        btn_layout.addWidget(restart_all_btn)
+        btn_layout.addWidget(refresh_btn)
+        btn_layout.addStretch()
+        
+        layout.addLayout(btn_layout)
+    
+    def refresh_data(self):
+        """Обновить данные"""
+        try:
+            summary = self.manager.get_site_status_summary()
+            
+            self.total_label.setText(str(summary['total']))
+            
+            running = summary['running']
+            self.running_label.setText(f"<span style='color: green'>{running}</span>")
+            
+            stopped = summary['stopped']
+            self.stopped_label.setText(f"<span style='color: red'>{stopped}</span>")
+            
+            # Таблица
+            self.services_table.setRowCount(len(summary['services']))
+            for i, svc in enumerate(summary['services']):
+                self.services_table.setItem(i, 0, QTableWidgetItem(svc['display_name']))
+                self.services_table.setItem(i, 1, QTableWidgetItem(svc['description']))
+                
+                state_item = QTableWidgetItem(svc['state'].upper())
+                if svc['state'] == 'running':
+                    state_item.setBackground(QColor(144, 238, 144))
+                elif svc['state'] == 'stopped':
+                    state_item.setBackground(QColor(255, 182, 193))
+                self.services_table.setItem(i, 2, state_item)
+                
+                self.services_table.setItem(i, 3, QTableWidgetItem(
+                    str(svc['pid']) if svc['pid'] else "-"
+                ))
+                self.services_table.setItem(i, 4, QTableWidgetItem(
+                    str(svc['port']) if svc['port'] else "-"
+                ))
+                self.services_table.setItem(i, 5, QTableWidgetItem(svc['uptime'] or "-"))
+                
+        except Exception as e:
+            print(f"Ошибка обновления сервисов: {e}")
+    
+    def start_all(self):
+        """Запустить все сервисы"""
+        self.thread = WorkerThread(self.manager.start_all_site_services)
+        self.thread.finished.connect(lambda r: self._on_action_finished(r, "Запуск"))
+        self.thread.start()
+    
+    def stop_all(self):
+        """Остановить все сервисы"""
+        reply = QMessageBox.question(
+            self, 'Подтверждение',
+            'Остановить все сервисы сайта?',
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.thread = WorkerThread(self.manager.stop_all_site_services)
+            self.thread.finished.connect(lambda r: self._on_action_finished(r, "Остановка"))
+            self.thread.start()
+    
+    def restart_all(self):
+        """Перезапустить все сервисы"""
+        self.thread = WorkerThread(self.manager.restart_all_site_services)
+        self.thread.finished.connect(lambda r: self._on_action_finished(r, "Перезапуск"))
+        self.thread.start()
+    
+    def _on_action_finished(self, result, action):
+        success, errors = result
+        if success:
+            QMessageBox.information(self, "Успех", f"{action} завершён!")
+        else:
+            QMessageBox.warning(self, "Внимание", f"{action} завершён с ошибками: {errors}")
+        self.refresh_data()
 
 
 class SystemTab(QWidget):
@@ -678,17 +1114,19 @@ class MainWindow(QMainWindow):
         self.site_path = "/var/www"
         self.update_interval = 5
         
-        # Инициализация мониторов
+        # Инициализация мониторов и управляющих модулей
         self.system_monitor = SystemMonitor()
         self.site_monitor = SiteMonitor(self.site_path)
         self.git_updater = GitUpdater(self.site_path)
+        self.deployer = SiteDeployer(self.site_path)
+        self.service_manager = ServiceManager()
         
         self.init_ui()
         self.setStyleSheet(self._get_stylesheet())
     
     def init_ui(self):
-        self.setWindowTitle("Astra Monitor - Управление сайтом")
-        self.setMinimumSize(1000, 700)
+        self.setWindowTitle("Astra Monitor - Панель управления сайтом")
+        self.setMinimumSize(1100, 750)
         
         # Центральный виджет
         central = QWidget()
@@ -698,15 +1136,23 @@ class MainWindow(QMainWindow):
         # Табы
         self.tabs = QTabWidget()
         
-        # Вкладка системы
+        # 1. Вкладка установки
+        self.deploy_tab = DeployTab(self.deployer)
+        self.tabs.addTab(self.deploy_tab, "🚀 Установка")
+        
+        # 2. Вкладка управления сервисами
+        self.service_tab = ServiceTab(self.service_manager)
+        self.tabs.addTab(self.service_tab, "⚙️ Сервисы")
+        
+        # 3. Вкладка мониторинга
         self.system_tab = SystemTab(self.system_monitor)
         self.tabs.addTab(self.system_tab, "💻 Система")
         
-        # Вкладка сайта
+        # 4. Вкладка сайта
         self.site_tab = SiteTab(self.site_monitor)
         self.tabs.addTab(self.site_tab, "🌐 Сайт")
         
-        # Вкладка обновлений
+        # 5. Вкладка обновлений
         self.update_tab = UpdateTab(self.site_path)
         self.tabs.addTab(self.update_tab, "🔄 Обновления")
         
@@ -719,48 +1165,76 @@ class MainWindow(QMainWindow):
         
         # Меню
         self._create_menu()
+        
+        # Начальная проверка статуса
+        QTimer.singleShot(500, self.deploy_tab.check_status)
     
     def _create_menu(self):
         menubar = self.menuBar()
         
         # Файл
-        file_menu = menubar.addMenu("Файл")
+        file_menu = menubar.addMenu("📁 Файл")
         
-        refresh_action = file_menu.addAction("Обновить все")
+        refresh_action = file_menu.addAction("🔄 Обновить все")
         refresh_action.triggered.connect(self.refresh_all)
+        
+        wizard_action = file_menu.addAction("🚀 Мастер установки...")
+        wizard_action.triggered.connect(self.show_install_wizard)
         
         file_menu.addSeparator()
         
-        settings_action = file_menu.addAction("Настройки...")
+        settings_action = file_menu.addAction("⚙️ Настройки...")
         settings_action.triggered.connect(self.show_settings)
         
         file_menu.addSeparator()
         
-        exit_action = file_menu.addAction("Выход")
+        exit_action = file_menu.addAction("🚪 Выход")
         exit_action.triggered.connect(self.close)
         
+        # Управление
+        control_menu = menubar.addMenu("⚡ Управление")
+        
+        start_all_action = control_menu.addAction("▶ Запустить все сервисы")
+        start_all_action.triggered.connect(lambda: self.service_tab.start_all())
+        
+        stop_all_action = control_menu.addAction("⏹ Остановить все сервисы")
+        stop_all_action.triggered.connect(lambda: self.service_tab.stop_all())
+        
+        restart_all_action = control_menu.addAction("🔄 Перезапустить все сервисы")
+        restart_all_action.triggered.connect(lambda: self.service_tab.restart_all())
+        
         # Вид
-        view_menu = menubar.addMenu("Вид")
+        view_menu = menubar.addMenu("👁 Вид")
         
-        system_action = view_menu.addAction("Система")
-        system_action.triggered.connect(lambda: self.tabs.setCurrentIndex(0))
+        tabs = [
+            ("🚀 Установка", 0),
+            ("⚙️ Сервисы", 1),
+            ("💻 Система", 2),
+            ("🌐 Сайт", 3),
+            ("🔄 Обновления", 4),
+        ]
         
-        site_action = view_menu.addAction("Сайт")
-        site_action.triggered.connect(lambda: self.tabs.setCurrentIndex(1))
-        
-        update_action = view_menu.addAction("Обновления")
-        update_action.triggered.connect(lambda: self.tabs.setCurrentIndex(2))
+        for name, idx in tabs:
+            action = view_menu.addAction(name)
+            action.triggered.connect(lambda _, i=idx: self.tabs.setCurrentIndex(i))
         
         # Справка
-        help_menu = menubar.addMenu("Справка")
+        help_menu = menubar.addMenu("❓ Справка")
         
-        about_action = help_menu.addAction("О программе")
+        about_action = help_menu.addAction("ℹ️ О программе")
         about_action.triggered.connect(self.show_about)
+    
+    def show_install_wizard(self):
+        """Показать мастер установки"""
+        wizard = DeployWizard(self.deployer, self)
+        wizard.exec_()
     
     def refresh_all(self):
         """Обновить все данные"""
         self.status_bar.showMessage("Обновление...")
         try:
+            self.deploy_tab.check_status()
+            self.service_tab.refresh_data()
             self.system_tab.refresh_data()
             self.site_tab.refresh_data()
             self.update_tab.refresh_data()
