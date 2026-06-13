@@ -237,9 +237,13 @@ class DeployTab(QWidget):
         status_layout.addWidget(QLabel("Состояние:"), 0, 0)
         status_layout.addWidget(self.status_label, 0, 1)
         
+        self.site_path_label = QLabel("-")
+        status_layout.addWidget(QLabel("Путь к сайту:"), 1, 0)
+        status_layout.addWidget(self.site_path_label, 1, 1)
+        
         self.install_btn = QPushButton("🖥️ Установить сайт")
         self.install_btn.clicked.connect(self.start_install)
-        status_layout.addWidget(self.install_btn, 1, 0, 1, 2)
+        status_layout.addWidget(self.install_btn, 2, 0, 1, 2)
         
         status_group.setLayout(status_layout)
         layout.addWidget(status_group)
@@ -286,8 +290,12 @@ class DeployTab(QWidget):
         """Проверить статус"""
         status = self.deployer.get_deploy_status()
         
-        if status['ready']:
-            self.status_label.setText("✓ Сайт установлен")
+        # Показываем найденный путь
+        site_path = status.get('site_path', 'Не найден')
+        self.site_path_label.setText(site_path if site_path else "Не найден")
+        
+        if status['site_files']:
+            self.status_label.setText("✓ Сайт обнаружен")
             self.status_label.setStyleSheet("color: green; font-weight: bold;")
             self.install_btn.setText("🔄 Переустановить сайт")
         else:
@@ -909,19 +917,25 @@ class UpdateTab(QWidget):
         control_group = QGroupBox("Управление обновлениями")
         control_layout = QHBoxLayout()
         
-        self.check_btn = QPushButton("Проверить обновления")
+        self.check_btn = QPushButton("🔍 Проверить обновления")
         self.check_btn.clicked.connect(self.check_updates)
         
-        self.update_btn = QPushButton("Обновить сайт")
+        self.update_btn = QPushButton("⬇️ Обновить сайт")
         self.update_btn.clicked.connect(self.do_update)
         self.update_btn.setEnabled(False)
         
-        self.pull_btn = QPushButton("Pull изменения")
+        self.pull_btn = QPushButton("↻ Pull изменения")
         self.pull_btn.clicked.connect(self.do_pull)
+        
+        self.github_btn = QPushButton("🐙 Скачать с GitHub")
+        self.github_btn.clicked.connect(self.download_from_github)
+        self.github_btn.setStyleSheet("background-color: #2ea44f; color: white;")
         
         control_layout.addWidget(self.check_btn)
         control_layout.addWidget(self.update_btn)
         control_layout.addWidget(self.pull_btn)
+        control_layout.addWidget(self.github_btn)
+        control_layout.addStretch()
         
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
@@ -964,6 +978,7 @@ class UpdateTab(QWidget):
         """Обновить данные о репозитории"""
         if not self.updater.is_git_repo():
             self.log_message("Папка не является git репозиторием")
+            self.log_message("Используйте 'Скачать с GitHub' для клонирования")
             return
         
         info = self.updater.get_repo_info()
@@ -1062,6 +1077,81 @@ class UpdateTab(QWidget):
             self.log_message(f"Ошибка pull: {result.stderr}")
         
         self.pull_btn.setEnabled(True)
+        self.refresh_data()
+    
+    def download_from_github(self):
+        """Скачать репозиторий с GitHub"""
+        self.log_message("=" * 50)
+        self.log_message("Начинаю скачивание с GitHub...")
+        
+        # Проверяем SSH ключ
+        self.log_message("Проверка SSH ключа...")
+        has_key, key_path = self.updater.check_ssh_key()
+        
+        if not has_key:
+            self.log_message("SSH ключ не найден!")
+            self.log_message("Генерирую новый SSH ключ...")
+            success, result = self.updater.generate_ssh_key()
+            
+            if success:
+                self.log_message("✓ SSH ключ сгенерирован!")
+                self.log_message("")
+                self.log_message("=" * 50)
+                self.log_message("⚠️  ВАЖНО: Добавьте ключ в GitHub!")
+                self.log_message("=" * 50)
+                self.log_message("")
+                self.log_message("1. Скопируйте публичный ключ ниже:")
+                self.log_message("-" * 40)
+                for line in result.split('\n'):
+                    self.log_message(line)
+                self.log_message("-" * 40)
+                self.log_message("")
+                self.log_message("2. Откройте: https://github.com/settings/keys")
+                self.log_message("3. Нажмите 'New SSH key'")
+                self.log_message("4. Вставьте ключ в поле 'Key'")
+                self.log_message("5. Нажмите 'Add SSH key'")
+                self.log_message("")
+                self.log_message("После добавления ключа нажмите 'Скачать с GitHub' ещё раз")
+                
+                # Сохраняем ключ для повторного использования
+                self._pending_ssh_key = result
+            else:
+                self.log_message(f"✗ Ошибка генерации ключа: {result}")
+                return
+        
+        # Проверяем соединение
+        self.log_message("Проверка соединения с GitHub...")
+        connected, msg = self.updater.test_github_connection()
+        
+        if not connected:
+            self.log_message(f"✗ Не удалось подключиться: {msg}")
+            self.log_message("Проверьте что SSH ключ добавлен в GitHub")
+            return
+        
+        self.log_message("✓ Соединение успешно!")
+        
+        # Синхронизируемся
+        self.github_btn.setEnabled(False)
+        self.log_message("Синхронизация с GitHub...")
+        
+        self.thread = WorkerThread(self._github_sync_worker)
+        self.thread.finished.connect(self._on_github_sync_finished)
+        self.thread.start()
+    
+    def _github_sync_worker(self):
+        return self.updater.sync_with_github()
+    
+    def _on_github_sync_finished(self, result):
+        self.github_btn.setEnabled(True)
+        
+        if result.status == UpdateStatus.SUCCESS:
+            self.log_message("✓ Репозиторий синхронизирован!")
+            self.log_message(result.message)
+        else:
+            self.log_message(f"✗ Ошибка: {result.message}")
+            if result.error:
+                self.log_message(f"Детали: {result.error}")
+        
         self.refresh_data()
 
 

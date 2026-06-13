@@ -55,6 +55,25 @@ class SiteDeployer:
     NGINX_ENABLED = "/etc/nginx/sites-enabled"
     SYSTEMD_DIR = "/etc/systemd/system"
     
+    # Возможные пути к сайту
+    POSSIBLE_SITE_PATHS = [
+        "/var/www",
+        "/var/www/www",
+        "/home/www",
+        "/srv/www",
+        "/opt/www",
+    ]
+    
+    # Признаки установленного сайта
+    SITE_MARKERS = [
+        "live-server",
+        "reboot",
+        "server.py",
+        "app.py",
+        "flask_app",
+        "www",
+    ]
+    
     REQUIRED_PACKAGES = [
         'nginx',
         'python3',
@@ -76,9 +95,64 @@ class SiteDeployer:
     ]
     
     def __init__(self, site_source: str = None, progress_callback: Callable = None):
-        self.site_source = site_source or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.site_source = site_source
         self.progress_callback = progress_callback
         self.steps_history = []
+        self._site_path = None  # Кэш найденного пути
+    
+    def find_site_path(self) -> Optional[str]:
+        """Найти путь к установленному сайту автоматически"""
+        if self._site_path:
+            return self._site_path
+        
+        # Проверяем все возможные пути
+        for path in self.POSSIBLE_SITE_PATHS:
+            if self._is_site_path(path):
+                self._site_path = path
+                return path
+        
+        # Ищем в домашних директориях
+        home_paths = [
+            os.path.expanduser("~/www"),
+            os.path.expanduser("~/site"),
+            os.path.expanduser("~/website"),
+            os.path.expanduser("~/Desktop/www"),
+            os.path.expanduser("~/Desktop/site"),
+        ]
+        
+        for path in home_paths:
+            if self._is_site_path(path):
+                self._site_path = path
+                return path
+        
+        return None
+    
+    def _is_site_path(self, path: str) -> bool:
+        """Проверить является ли путь директорией сайта"""
+        if not os.path.exists(path):
+            return False
+        
+        # Проверяем наличие признаков сайта
+        for marker in self.SITE_MARKERS:
+            if marker in os.listdir(path):
+                return True
+        
+        # Проверяем наличие Python файлов
+        for root, dirs, files in os.walk(path):
+            for f in files:
+                if f.endswith('.py'):
+                    return True
+                if f == 'package.json':
+                    return True
+        
+        return False
+    
+    def get_site_path(self) -> str:
+        """Получить путь к сайту (найденный или заданный)"""
+        if self.site_source:
+            return self.site_source
+        found = self.find_site_path()
+        return found or self.SITE_DIR
     
     def _report(self, message: str, step: str = None):
         """Сообщить о прогрессе"""
@@ -622,14 +696,16 @@ WantedBy=multi-user.target
     
     def get_deploy_status(self) -> Dict:
         """Получить статус развёртывания"""
+        # Автоматически ищем путь к сайту
+        site_path = self.find_site_path()
+        
         status = {
-            'deployed': os.path.exists(self.SITE_DIR),
-            'site_files': os.path.exists(self.SITE_FILES_DIR),
+            'deployed': site_path is not None,
+            'site_path': site_path,
+            'site_files': site_path is not None and os.path.exists(os.path.join(site_path, 'live-server')),
             'nginx_configured': os.path.exists(os.path.join(self.NGINX_DIR, 'contest-site')),
             'services_exist': os.path.exists(os.path.join(self.SYSTEMD_DIR, 'live-server.service')),
-            'directories_ready': all(
-                os.path.exists(d) for d in [self.SITE_DIR, '/var/www/hls', '/var/log/live-server']
-            )
+            'directories_ready': os.path.exists(self.SITE_DIR),
         }
         status['ready'] = all(status.values())
         return status
