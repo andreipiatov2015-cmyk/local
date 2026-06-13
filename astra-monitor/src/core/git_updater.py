@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Модуль обновления - управление обновлениями сайта из git-репозитория
+Модуль обновления - управление обновлениями сайта из git-репозитория GitHub
 """
 
 import os
@@ -54,7 +54,10 @@ class UpdateResult:
 
 
 class GitUpdater:
-    """Класс для управления обновлениями через git"""
+    """Класс для управления обновлениями через git из GitHub"""
+    
+    # GitHub SSH URL
+    GITHUB_SSH_URL = "git@github.com:andreipiatov2015-cmyk/local.git"
     
     # Возможные пути к сайту
     POSSIBLE_SITE_PATHS = [
@@ -119,6 +122,189 @@ class GitUpdater:
             text=True,
             timeout=timeout
         )
+    
+    def check_ssh_key(self) -> tuple:
+        """Проверить наличие SSH ключа для GitHub"""
+        ssh_dir = os.path.expanduser("~/.ssh")
+        key_paths = [
+            os.path.join(ssh_dir, "id_ed25519"),
+            os.path.join(ssh_dir, "id_rsa"),
+            os.path.join(ssh_dir, "github_ed25519"),
+            os.path.join(ssh_dir, "github_rsa"),
+        ]
+        
+        for key_path in key_paths:
+            if os.path.exists(key_path):
+                return True, key_path
+        
+        return False, None
+    
+    def generate_ssh_key(self) -> tuple:
+        """Сгенерировать SSH ключ для GitHub"""
+        ssh_dir = os.path.expanduser("~/.ssh")
+        key_path = os.path.join(ssh_dir, "github_ed25519")
+        
+        try:
+            os.makedirs(ssh_dir, exist_ok=True)
+            
+            # Генерируем ключ
+            result = subprocess.run(
+                ['ssh-keygen', '-t', 'ed25519', '-C', 'astra-monitor@local', '-f', key_path, '-N', ''],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                # Устанавливаем права
+                os.chmod(key_path, 0o600)
+                os.chmod(key_path + '.pub', 0o644)
+                
+                # Получаем публичный ключ
+                with open(key_path + '.pub', 'r') as f:
+                    pub_key = f.read().strip()
+                
+                return True, pub_key
+            
+            return False, result.stderr
+        
+        except Exception as e:
+            return False, str(e)
+    
+    def test_github_connection(self) -> tuple:
+        """Проверить соединение с GitHub по SSH"""
+        try:
+            result = subprocess.run(
+                ['ssh', '-T', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10', 'git@github.com'],
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            
+            output = result.stdout + result.stderr
+            
+            if 'successfully authenticated' in output.lower() or 'hi ' in output.lower():
+                return True, "Подключение успешно"
+            elif 'permission denied' in output.lower():
+                return False, "Доступ запрещён. Проверьте SSH ключ в настройках GitHub."
+            else:
+                return False, output[:200]
+        
+        except subprocess.TimeoutExpired:
+            return False, "Таймаут подключения"
+        except Exception as e:
+            return False, str(e)
+    
+    def configure_git_remote(self) -> tuple:
+        """Настроить remote на GitHub SSH URL"""
+        if not self.is_git_repo():
+            return False, "Не является git репозиторием"
+        
+        # Проверяем текущий remote
+        result = self._run_git(['remote', '-v'])
+        current_url = ""
+        
+        for line in result.stdout.split('\n'):
+            if line.startswith('origin '):
+                parts = line.split()
+                if len(parts) >= 2:
+                    current_url = parts[1]
+                    break
+        
+        # Если уже настроен на GitHub, не меняем
+        if 'github.com' in current_url and current_url.endswith('.git'):
+            return True, f"Remote уже настроен: {current_url}"
+        
+        # Устанавливаем remote
+        result = self._run_git(['remote', 'set-url', 'origin', self.GITHUB_SSH_URL])
+        
+        if result.returncode == 0:
+            return True, f"Remote настроен: {self.GITHUB_SSH_URL}"
+        
+        # Если remote не существует, создаём
+        result = self._run_git(['remote', 'add', 'origin', self.GITHUB_SSH_URL])
+        
+        if result.returncode == 0:
+            return True, f"Remote создан: {self.GITHUB_SSH_URL}"
+        
+        return False, result.stderr
+    
+    def clone_from_github(self, target_path: str = None) -> tuple:
+        """Клонировать репозиторий с GitHub по SSH"""
+        if target_path is None:
+            target_path = self.repo_path
+        
+        # Если папка уже существует
+        if os.path.exists(target_path):
+            if os.path.exists(os.path.join(target_path, '.git')):
+                # Уже есть репозиторий, просто настраиваем remote
+                old_path = self.repo_path
+                self.repo_path = target_path
+                result = self.configure_git_remote()
+                self.repo_path = old_path
+                return result
+        
+        try:
+            os.makedirs(target_path, exist_ok=True)
+            
+            result = subprocess.run(
+                ['git', 'clone', self.GITHUB_SSH_URL, target_path],
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            
+            if result.returncode == 0:
+                self.repo_path = target_path
+                return True, f"Репозиторий клонирован в {target_path}"
+            
+            return False, result.stderr[:500]
+        
+        except subprocess.TimeoutExpired:
+            return False, "Таймаут клонирования"
+        except Exception as e:
+            return False, str(e)
+    
+    def sync_with_github(self) -> UpdateResult:
+        """Синхронизировать с GitHub (clone если нет, pull если есть)"""
+        # Проверяем SSH
+        has_key, key_path = self.check_ssh_key()
+        if not has_key:
+            return UpdateResult(
+                status=UpdateStatus.FAILED,
+                message="SSH ключ не найден",
+                error="no_ssh_key"
+            )
+        
+        # Проверяем соединение
+        connected, conn_msg = self.test_github_connection()
+        if not connected:
+            return UpdateResult(
+                status=UpdateStatus.FAILED,
+                message=f"Не удалось подключиться к GitHub: {conn_msg}",
+                error="connection_failed"
+            )
+        
+        # Если репозитория нет - клонируем
+        if not self.is_git_repo():
+            success, msg = self.clone_from_github()
+            if success:
+                return UpdateResult(
+                    status=UpdateStatus.SUCCESS,
+                    message=f"Репозиторий склонирован с GitHub: {msg}"
+                )
+            else:
+                return UpdateResult(
+                    status=UpdateStatus.FAILED,
+                    message="Не удалось клонировать репозиторий",
+                    error=msg
+                )
+        
+        # Настраиваем remote на GitHub если нужно
+        self.configure_git_remote()
+        
+        # Pull изменения
+        return self.pull_changes()
     
     def is_git_repo(self) -> bool:
         """Проверить является ли папка git репозиторием"""
