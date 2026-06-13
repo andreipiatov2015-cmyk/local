@@ -24,11 +24,9 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt5.QtGui import QFont, QIcon, QPalette, QColor
 
 from src.core import (
-    SystemMonitor, SiteMonitor, GitUpdater, UpdateStatus,
-    SiteDeployer, DeployStatus, ServiceManager, ServiceState
+    SystemMonitor, SiteMonitor, ServiceManager, ServiceState,
+    SafeUpdater, UpdateStatus, UpdateResult
 )
-from src.core.git_updater import UpdateResult
-from src.core.deployer import DeployResult
 
 import threading
 import time
@@ -883,62 +881,67 @@ class SiteTab(QWidget):
 
 
 class UpdateTab(QWidget):
-    """Вкладка обновления"""
+    """Вкладка обновления приложения"""
     
-    def __init__(self, repo_path: str = "/var/www"):
+    def __init__(self, app_install_dir: str = "/opt/astra-monitor"):
         super().__init__()
-        self.repo_path = repo_path
-        self.updater = GitUpdater(repo_path)
+        self.app_install_dir = app_install_dir
+        self.updater = SafeUpdater(log_callback=self.log_message)
         self.init_ui()
         self.refresh_data()
     
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        # --- Информация о репозитории ---
-        repo_group = QGroupBox("Информация о репозитории")
-        repo_layout = QGridLayout()
+        # --- Информация о версии ---
+        version_group = QGroupBox("Версия приложения")
+        version_layout = QGridLayout()
         
-        self.branch_label = QLabel("Ветка: -")
-        self.commit_label = QLabel("Коммит: -")
-        self.update_status_label = QLabel("Статус обновлений: -")
+        self.current_version_label = QLabel("-")
+        self.new_version_label = QLabel("-")
+        self.update_available_label = QLabel("-")
         
-        repo_layout.addWidget(QLabel("Текущая ветка:"), 0, 0)
-        repo_layout.addWidget(self.branch_label, 0, 1)
-        repo_layout.addWidget(QLabel("Текущий коммит:"), 1, 0)
-        repo_layout.addWidget(self.commit_label, 1, 1)
-        repo_layout.addWidget(QLabel("Обновления:"), 2, 0)
-        repo_layout.addWidget(self.update_status_label, 2, 1)
+        version_layout.addWidget(QLabel("Текущая версия:"), 0, 0)
+        version_layout.addWidget(self.current_version_label, 0, 1)
+        version_layout.addWidget(QLabel("Новая версия:"), 1, 0)
+        version_layout.addWidget(self.new_version_label, 1, 1)
+        version_layout.addWidget(QLabel("Статус:"), 2, 0)
+        version_layout.addWidget(self.update_available_label, 2, 1)
         
-        repo_group.setLayout(repo_layout)
-        layout.addWidget(repo_group)
+        version_group.setLayout(version_layout)
+        layout.addWidget(version_group)
         
         # --- Управление ---
-        control_group = QGroupBox("Управление обновлениями")
+        control_group = QGroupBox("Обновление")
         control_layout = QHBoxLayout()
         
-        self.check_btn = QPushButton("🔍 Проверить обновления")
+        self.check_btn = QPushButton("Проверить обновления")
         self.check_btn.clicked.connect(self.check_updates)
         
-        self.update_btn = QPushButton("⬇️ Обновить сайт")
+        self.update_btn = QPushButton("Обновить приложение")
         self.update_btn.clicked.connect(self.do_update)
         self.update_btn.setEnabled(False)
         
-        self.pull_btn = QPushButton("↻ Pull изменения")
-        self.pull_btn.clicked.connect(self.do_pull)
-        
-        self.github_btn = QPushButton("🐙 Скачать с GitHub")
-        self.github_btn.clicked.connect(self.download_from_github)
-        self.github_btn.setStyleSheet("background-color: #2ea44f; color: white;")
-        
         control_layout.addWidget(self.check_btn)
         control_layout.addWidget(self.update_btn)
-        control_layout.addWidget(self.pull_btn)
-        control_layout.addWidget(self.github_btn)
         control_layout.addStretch()
         
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
+        
+        # --- Безопасность ---
+        security_group = QGroupBox("Безопасность")
+        security_layout = QVBoxLayout()
+        
+        security_info = QLabel(
+            "Обновление выполняется через временную директорию.<br>"
+            "Nginx, FFmpeg, Chromium и системные компоненты НЕ затрагиваются."
+        )
+        security_info.setStyleSheet("color: #666; font-style: italic;")
+        security_layout.addWidget(security_info)
+        
+        security_group.setLayout(security_layout)
+        layout.addWidget(security_group)
         
         # --- Лог ---
         log_group = QGroupBox("Лог операций")
@@ -952,73 +955,49 @@ class UpdateTab(QWidget):
         log_group.setLayout(log_layout)
         layout.addWidget(log_group)
         
-        # --- История коммитов ---
-        commits_group = QGroupBox("Последние коммиты")
-        commits_layout = QVBoxLayout()
-        
-        self.commits_table = QTableWidget()
-        self.commits_table.setColumnCount(4)
-        self.commits_table.setHorizontalHeaderLabels(["Хеш", "Автор", "Дата", "Сообщение"])
-        self.commits_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.commits_table.setMaximumHeight(150)
-        
-        commits_layout.addWidget(self.commits_table)
-        commits_group.setLayout(commits_layout)
-        layout.addWidget(commits_group)
-        
         layout.addStretch()
     
     def log_message(self, msg: str):
         """Добавить сообщение в лог"""
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.append(f"[{timestamp}] {msg}")
+        self.log_text.append(msg)
     
     def refresh_data(self):
-        """Обновить данные о репозитории"""
-        if not self.updater.is_git_repo():
-            self.log_message("Папка не является git репозиторием")
-            self.log_message("Используйте 'Скачать с GitHub' для клонирования")
-            return
+        """Обновить информацию о версии"""
+        current = self.updater.get_current_version()
+        self.current_version_label.setText(current)
         
-        info = self.updater.get_repo_info()
-        
-        self.branch_label.setText(info.get('branch', '-'))
-        self.commit_label.setText(info.get('head', '-'))
-        
-        if info.get('has_update'):
-            self.update_status_label.setText(f"Есть обновления!")
-            self.update_status_label.setStyleSheet("color: green; font-weight: bold;")
-            self.update_btn.setEnabled(True)
+        new = self.updater.get_new_version()
+        if new:
+            self.new_version_label.setText(new.version)
         else:
-            self.update_status_label.setText("Обновлений нет")
-            self.update_status_label.setStyleSheet("")
-            self.update_btn.setEnabled(False)
-        
-        # Коммиты
-        commits = self.updater.get_commits(10)
-        self.commits_table.setRowCount(len(commits))
-        for i, commit in enumerate(commits):
-            self.commits_table.setItem(i, 0, QTableWidgetItem(commit.short_hash))
-            self.commits_table.setItem(i, 1, QTableWidgetItem(commit.author))
-            self.commits_table.setItem(i, 2, QTableWidgetItem(commit.date[:10]))
-            self.commits_table.setItem(i, 3, QTableWidgetItem(commit.message[:60]))
+            self.new_version_label.setText("-")
     
     def check_updates(self):
         """Проверить обновления"""
+        self.log_message("=" * 50)
         self.log_message("Проверка обновлений...")
         self.check_btn.setEnabled(False)
         
-        self.thread = WorkerThread(self._check_updates_worker)
+        self.thread = WorkerThread(self._check_worker)
         self.thread.finished.connect(self._on_check_finished)
         self.thread.start()
     
-    def _check_updates_worker(self):
+    def _check_worker(self):
         return self.updater.check_for_updates()
     
     def _on_check_finished(self, result):
-        has_update, message, remote = result
+        has_update, message, version_info = result
         self.log_message(message)
+        
+        if has_update:
+            self.update_available_label.setText("Доступно!")
+            self.update_available_label.setStyleSheet("color: green; font-weight: bold;")
+            self.update_btn.setEnabled(True)
+        else:
+            self.update_available_label.setText("Обновлений нет")
+            self.update_available_label.setStyleSheet("")
+            self.update_btn.setEnabled(False)
+        
         self.check_btn.setEnabled(True)
         self.refresh_data()
     
@@ -1026,133 +1005,54 @@ class UpdateTab(QWidget):
         """Выполнить обновление"""
         reply = QMessageBox.question(
             self, 'Подтверждение',
-            'Обновить сайт до последней версии из репозитория?',
+            'Обновить приложение Astra Monitor?<br><br>'
+            'Nginx, FFmpeg, Chromium НЕ будут затронуты.<br>'
+            'Системные настройки будут сохранены.',
             QMessageBox.Yes | QMessageBox.No
         )
         
         if reply == QMessageBox.Yes:
-            self.log_message("Начинаю обновление...")
+            self.log_message("=" * 50)
+            self.log_message("НАЧАЛО ОБНОВЛЕНИЯ")
+            self.log_message("=" * 50)
             self.update_btn.setEnabled(False)
+            self.check_btn.setEnabled(False)
             
             self.thread = WorkerThread(self._update_worker)
             self.thread.finished.connect(self._on_update_finished)
             self.thread.error.connect(self._on_update_error)
             self.thread.start()
     
-    def _update_worker(self) -> UpdateResult:
-        return self.updater.pull_changes()
+    def _update_worker(self):
+        return self.updater.apply_update()
     
     def _on_update_finished(self, result: UpdateResult):
-        self.log_message(result.message)
-        if result.status == UpdateStatus.SUCCESS:
-            self.log_message(f"Было: {result.old_version} -> Стало: {result.new_version}")
-            if result.files_updated:
-                self.log_message(f"Обновлено файлов: {len(result.files_updated)}")
+        self.update_btn.setEnabled(True)
+        self.check_btn.setEnabled(True)
+        
+        if result.success:
+            self.log_message(result.message)
+            self.log_message("=" * 50)
+            self.log_message("ОБНОВЛЕНИЕ ЗАВЕРШЕНО!")
+            self.log_message("=" * 50)
+            
+            QMessageBox.information(
+                self, "Успех",
+                f"Приложение обновлено!<br>{result.message}"
+            )
         else:
             self.log_message(f"Ошибка: {result.error}")
+            QMessageBox.warning(
+                self, "Ошибка",
+                f"Обновление не удалось:<br>{result.error}"
+            )
         
-        self.update_btn.setEnabled(True)
         self.refresh_data()
     
     def _on_update_error(self, error: str):
         self.log_message(f"Критическая ошибка: {error}")
         self.update_btn.setEnabled(True)
-    
-    def do_pull(self):
-        """Выполнить git pull"""
-        self.log_message("Выполняю git pull...")
-        self.pull_btn.setEnabled(False)
-        
-        self.thread = WorkerThread(self._pull_worker)
-        self.thread.finished.connect(self._on_pull_finished)
-        self.thread.start()
-    
-    def _pull_worker(self):
-        return self.updater._run_git(['pull'])
-    
-    def _on_pull_finished(self, result):
-        if result.returncode == 0:
-            self.log_message("Pull выполнен успешно")
-        else:
-            self.log_message(f"Ошибка pull: {result.stderr}")
-        
-        self.pull_btn.setEnabled(True)
-        self.refresh_data()
-    
-    def download_from_github(self):
-        """Скачать репозиторий с GitHub"""
-        self.log_message("=" * 50)
-        self.log_message("Начинаю скачивание с GitHub...")
-        
-        # Проверяем SSH ключ
-        self.log_message("Проверка SSH ключа...")
-        has_key, key_path = self.updater.check_ssh_key()
-        
-        if not has_key:
-            self.log_message("SSH ключ не найден!")
-            self.log_message("Генерирую новый SSH ключ...")
-            success, result = self.updater.generate_ssh_key()
-            
-            if success:
-                self.log_message("✓ SSH ключ сгенерирован!")
-                self.log_message("")
-                self.log_message("=" * 50)
-                self.log_message("⚠️  ВАЖНО: Добавьте ключ в GitHub!")
-                self.log_message("=" * 50)
-                self.log_message("")
-                self.log_message("1. Скопируйте публичный ключ ниже:")
-                self.log_message("-" * 40)
-                for line in result.split('\n'):
-                    self.log_message(line)
-                self.log_message("-" * 40)
-                self.log_message("")
-                self.log_message("2. Откройте: https://github.com/settings/keys")
-                self.log_message("3. Нажмите 'New SSH key'")
-                self.log_message("4. Вставьте ключ в поле 'Key'")
-                self.log_message("5. Нажмите 'Add SSH key'")
-                self.log_message("")
-                self.log_message("После добавления ключа нажмите 'Скачать с GitHub' ещё раз")
-                
-                # Сохраняем ключ для повторного использования
-                self._pending_ssh_key = result
-            else:
-                self.log_message(f"✗ Ошибка генерации ключа: {result}")
-                return
-        
-        # Проверяем соединение
-        self.log_message("Проверка соединения с GitHub...")
-        connected, msg = self.updater.test_github_connection()
-        
-        if not connected:
-            self.log_message(f"✗ Не удалось подключиться: {msg}")
-            self.log_message("Проверьте что SSH ключ добавлен в GitHub")
-            return
-        
-        self.log_message("✓ Соединение успешно!")
-        
-        # Синхронизируемся
-        self.github_btn.setEnabled(False)
-        self.log_message("Синхронизация с GitHub...")
-        
-        self.thread = WorkerThread(self._github_sync_worker)
-        self.thread.finished.connect(self._on_github_sync_finished)
-        self.thread.start()
-    
-    def _github_sync_worker(self):
-        return self.updater.sync_with_github()
-    
-    def _on_github_sync_finished(self, result):
-        self.github_btn.setEnabled(True)
-        
-        if result.status == UpdateStatus.SUCCESS:
-            self.log_message("✓ Репозиторий синхронизирован!")
-            self.log_message(result.message)
-        else:
-            self.log_message(f"✗ Ошибка: {result.message}")
-            if result.error:
-                self.log_message(f"Детали: {result.error}")
-        
-        self.refresh_data()
+        self.check_btn.setEnabled(True)
 
 
 class SettingsDialog(QDialog):
@@ -1202,13 +1102,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         
         self.site_path = "/var/www"
-        self.update_interval = 5
+        self.app_install_dir = "/opt/astra-monitor"
         
         # Инициализация мониторов и управляющих модулей
         self.system_monitor = SystemMonitor()
         self.site_monitor = SiteMonitor(self.site_path)
-        self.git_updater = GitUpdater(self.site_path)
-        self.deployer = SiteDeployer(self.site_path)
         self.service_manager = ServiceManager()
         
         self.init_ui()
@@ -1226,9 +1124,10 @@ class MainWindow(QMainWindow):
         # Табы
         self.tabs = QTabWidget()
         
-        # 1. Вкладка установки
-        self.deploy_tab = DeployTab(self.deployer)
-        self.tabs.addTab(self.deploy_tab, "🚀 Установка")
+        # 1. Вкладка статуса
+        self.status_tab = QWidget()
+        self._init_status_tab()
+        self.tabs.addTab(self.status_tab, "🏠 Статус")
         
         # 2. Вкладка управления сервисами
         self.service_tab = ServiceTab(self.service_manager)
@@ -1243,7 +1142,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.site_tab, "🌐 Сайт")
         
         # 5. Вкладка обновлений
-        self.update_tab = UpdateTab(self.site_path)
+        self.update_tab = UpdateTab(self.app_install_dir)
         self.tabs.addTab(self.update_tab, "🔄 Обновления")
         
         layout.addWidget(self.tabs)
@@ -1255,53 +1154,83 @@ class MainWindow(QMainWindow):
         
         # Меню
         self._create_menu()
+    
+    def _init_status_tab(self):
+        """Инициализация вкладки статуса"""
+        layout = QVBoxLayout(self.status_tab)
         
-        # Начальная проверка статуса
-        QTimer.singleShot(500, self.deploy_tab.check_status)
+        # Приветствие
+        welcome = QLabel(
+            "<h1>Astra Monitor</h1>"
+            "<p>Панель управления сайтом для Astra Linux</p>"
+        )
+        welcome.setAlignment(Qt.AlignCenter)
+        layout.addWidget(welcome)
+        
+        # Информация
+        info_group = QGroupBox("Информация о системе")
+        info_layout = QGridLayout()
+        
+        info_layout.addWidget(QLabel("Версия приложения:"), 0, 0)
+        info_layout.addWidget(QLabel("-"), 0, 1)
+        info_layout.addWidget(QLabel("Путь к сайту:"), 1, 0)
+        info_layout.addWidget(QLabel(self.site_path), 1, 1)
+        info_layout.addWidget(QLabel("Путь к приложению:"), 2, 0)
+        info_layout.addWidget(QLabel(self.app_install_dir), 2, 1)
+        
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
+        
+        # Важное предупреждение
+        warning = QLabel(
+            "<b>Важно:</b> Это приложение НЕ устанавливает системные пакеты.<br>"
+            "Оно только управляет уже установленными сервисами."
+        )
+        warning.setStyleSheet("color: #0066cc; background: #e6f3ff; padding: 10px; border-radius: 5px;")
+        layout.addWidget(warning)
+        
+        layout.addStretch()
     
     def _create_menu(self):
         menubar = self.menuBar()
         
         # Файл
-        file_menu = menubar.addMenu("📁 Файл")
+        file_menu = menubar.addMenu("Файл")
         
-        refresh_action = file_menu.addAction("🔄 Обновить все")
+        refresh_action = file_menu.addAction("Обновить все")
         refresh_action.triggered.connect(self.refresh_all)
-        
-        wizard_action = file_menu.addAction("🚀 Мастер установки...")
-        wizard_action.triggered.connect(self.show_install_wizard)
         
         file_menu.addSeparator()
         
-        settings_action = file_menu.addAction("⚙️ Настройки...")
+        settings_action = file_menu.addAction("Настройки...")
         settings_action.triggered.connect(self.show_settings)
         
         file_menu.addSeparator()
         
-        exit_action = file_menu.addAction("🚪 Выход")
+        exit_action = file_menu.addAction("Выход")
         exit_action.triggered.connect(self.close)
         
         # Управление
-        control_menu = menubar.addMenu("⚡ Управление")
+        control_menu = menubar.addMenu("Управление")
         
-        start_all_action = control_menu.addAction("▶ Запустить все сервисы")
+        start_all_action = control_menu.addAction("Запустить все сервисы")
         start_all_action.triggered.connect(lambda: self.service_tab.start_all())
         
-        stop_all_action = control_menu.addAction("⏹ Остановить все сервисы")
+        stop_all_action = control_menu.addAction("Остановить все сервисы")
         stop_all_action.triggered.connect(lambda: self.service_tab.stop_all())
         
-        restart_all_action = control_menu.addAction("🔄 Перезапустить все сервисы")
+        restart_all_action = control_menu.addAction("Перезапустить все сервисы")
         restart_all_action.triggered.connect(lambda: self.service_tab.restart_all())
         
         # Вид
-        view_menu = menubar.addMenu("👁 Вид")
+        view_menu = menubar.addMenu("Вид")
         
         tabs = [
-            ("🚀 Установка", 0),
-            ("⚙️ Сервисы", 1),
-            ("💻 Система", 2),
-            ("🌐 Сайт", 3),
-            ("🔄 Обновления", 4),
+            ("Статус", 0),
+            ("Сервисы", 1),
+            ("Система", 2),
+            ("Сайт", 3),
+            ("Обновления", 4),
         ]
         
         for name, idx in tabs:
@@ -1309,25 +1238,18 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _, i=idx: self.tabs.setCurrentIndex(i))
         
         # Справка
-        help_menu = menubar.addMenu("❓ Справка")
+        help_menu = menubar.addMenu("Справка")
         
-        about_action = help_menu.addAction("ℹ️ О программе")
+        about_action = help_menu.addAction("О программе")
         about_action.triggered.connect(self.show_about)
-    
-    def show_install_wizard(self):
-        """Показать мастер установки"""
-        wizard = DeployWizard(self.deployer, self)
-        wizard.exec_()
     
     def refresh_all(self):
         """Обновить все данные"""
         self.status_bar.showMessage("Обновление...")
         try:
-            self.deploy_tab.check_status()
             self.service_tab.refresh_data()
             self.system_tab.refresh_data()
             self.site_tab.refresh_data()
-            self.update_tab.refresh_data()
             self.status_bar.showMessage("Готово", 3000)
         except Exception as e:
             self.status_bar.showMessage(f"Ошибка: {e}")
