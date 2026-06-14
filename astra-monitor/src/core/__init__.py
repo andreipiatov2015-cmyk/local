@@ -8,6 +8,7 @@ from .system_monitor import SystemMonitor, SystemStats, PortInfo, ProcessInfo, S
 from .site_monitor import SiteMonitor, SiteComponent, SiteStats
 from .service_manager import ServiceManager, ServiceState, ServiceInfo
 from .safe_updater import SafeUpdater, UpdateStatus, UpdateResult, VersionInfo
+from .deployer import SiteDeployer
 
 __all__ = [
     # System monitoring
@@ -18,4 +19,6 @@ __all__ = [
     'ServiceManager', 'ServiceState', 'ServiceInfo',
     # Safe updater
     'SafeUpdater', 'UpdateStatus', 'UpdateResult', 'VersionInfo',
+    # Deployer
+    'SiteDeployer',
 ]
