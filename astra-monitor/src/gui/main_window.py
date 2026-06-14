@@ -25,7 +25,7 @@ from PyQt5.QtGui import QFont, QIcon, QPalette, QColor
 
 from src.core import (
     SystemMonitor, SiteMonitor, ServiceManager, ServiceState,
-    SafeUpdater, UpdateStatus, UpdateResult, SiteDeployer
+    SafeUpdater, UpdateStatus, UpdateResult, SiteDeployer, DeployResult
 )
 
 import threading
