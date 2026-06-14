@@ -255,6 +255,21 @@ install_configs() {
     log "Конфигурации установлены"
 }
 
+install_app() {
+    log_step "[5.5/8] Установка приложения Astra Monitor"
+    
+    log "Копирование файлов приложения..."
+    mkdir -p "$INSTALL_DIR"
+    cp "$SCRIPT_DIR/../astra_monitor.py" "$INSTALL_DIR/"
+    cp -r "$SCRIPT_DIR/../src" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/../VERSION" "$INSTALL_DIR/"
+    
+    log "Установка PyQt5..."
+    pip install PyQt5
+    
+    log "Приложение установлено"
+}
+
 install_services() {
     log_step "[6/8] Установка systemd сервисов"
     
@@ -422,6 +437,7 @@ main() {
     install_python_deps
     create_directories
     install_configs
+    install_app
     install_services
     install_vnc_stack
     start_services
