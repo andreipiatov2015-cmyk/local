@@ -234,6 +234,10 @@ create_directories() {
     mkdir -p /usr/local/nginx/conf/sites-available
     mkdir -p /usr/local/nginx/conf/sites-enabled
     
+    # Копирование серверных файлов
+    cp "$SCRIPT_DIR/../runtime/live-server/server.py" /var/www/live-server/
+    cp "$SCRIPT_DIR/../runtime/reboot/server.py" /var/www/reboot/
+    
     # Права доступа
     chown -R www-data:www-data /var/www 2>/dev/null || true
     
