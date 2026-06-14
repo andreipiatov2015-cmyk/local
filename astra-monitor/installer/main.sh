@@ -336,6 +336,10 @@ EOF
 start_services() {
     log_step "[8/8] Запуск сервисов"
     
+    log "Остановка старого Nginx..."
+    /usr/local/nginx/sbin/nginx -s stop 2>/dev/null || pkill -f "nginx.*master" 2>/dev/null || true
+    sleep 1
+    
     log "Запуск Nginx..."
     /usr/local/nginx/sbin/nginx
     
