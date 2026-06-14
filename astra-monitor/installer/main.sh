@@ -49,6 +49,14 @@ log_step() {
 }
 
 #==============================================================================
+# Проверка существования пакета
+#==============================================================================
+
+check_package() {
+    apt-cache show "$1" >/dev/null 2>&1
+}
+
+#==============================================================================
 # Проверки
 #==============================================================================
 
@@ -84,25 +92,39 @@ install_base_packages() {
     apt update
     
     log "Установка системных пакетов..."
-    apt install -y \
-        python3 \
-        python3-pip \
-        python3-venv \
-        git \
-        curl \
-        wget \
-        unzip \
-        build-essential \
-        libpcre3 \
-        libpcre3-dev \
-        zlib1g \
-        zlib1g-dev \
-        libssl-dev \
-        ffmpeg \
-        supervisor \
-        htop \
-        net-tools \
-        systemctl
+    
+    # Сборка пакетов с проверкой существования
+    PACKAGES=(
+        python3
+        python3-pip
+        python3-venv
+        git
+        curl
+        wget
+        unzip
+        build-essential
+        libpcre3
+        libpcre3-dev
+        zlib1g
+        zlib1g-dev
+        libssl-dev
+        ffmpeg
+        htop
+        net-tools
+    )
+    
+    INSTALL_LIST=""
+    for pkg in "${PACKAGES[@]}"; do
+        if check_package "$pkg"; then
+            INSTALL_LIST="$INSTALL_LIST $pkg"
+        else
+            log_warn "Пропуск: $pkg не найден в репозитории"
+        fi
+    done
+    
+    if [ -n "$INSTALL_LIST" ]; then
+        apt install -y $INSTALL_LIST
+    fi
         
     log "Базовые пакеты установлены"
 }
@@ -211,7 +233,6 @@ create_directories() {
     mkdir -p /var/run/contest_vnc
     mkdir -p /usr/local/nginx/conf/sites-available
     mkdir -p /usr/local/nginx/conf/sites-enabled
-    mkdir -p /etc/supervisor/conf.d
     
     # Права доступа
     chown -R www-data:www-data /var/www 2>/dev/null || true
@@ -248,7 +269,6 @@ install_services() {
     
     log "Включение автозапуска сервисов..."
     systemctl enable nginx-custom.service 2>/dev/null || true
-    systemctl enable supervisor.service 2>/dev/null || true
     
     log "Systemd сервисы установлены"
 }
@@ -257,14 +277,22 @@ install_vnc_stack() {
     log_step "[7/8] Установка VNC стека"
     
     log "Установка VNC пакетов..."
-    apt install -y \
-        xvfb \
-        openbox \
-        x11vnc \
-        novnc \
-        websockify \
-        chromium \
-        chromium-sandbox 2>/dev/null || true
+    
+    # Базовые VNC пакеты
+    VNC_PACKAGES="xvfb openbox x11vnc novnc websockify"
+    
+    # Chromium
+    VNC_PACKAGES="$VNC_PACKAGES chromium"
+    
+    # Chromium-sandbox если доступен
+    if check_package "chromium-sandbox"; then
+        VNC_PACKAGES="$VNC_PACKAGES chromium-sandbox"
+        log "chromium-sandbox доступен"
+    else
+        log_warn "chromium-sandbox не найден в репозитории - пропуск"
+    fi
+    
+    apt install -y $VNC_PACKAGES
     
     log "Копирование VNC скриптов..."
     cp "$SCRIPT_DIR/configs/scripts/start_vnc.sh" /var/www/start_vnc.sh
@@ -298,14 +326,6 @@ start_services() {
     
     log "Запуск Nginx..."
     /usr/local/nginx/sbin/nginx
-    
-    log "Запуск Supervisor..."
-    systemctl start supervisor 2>/dev/null || true
-    systemctl enable supervisor 2>/dev/null || true
-    
-    log "Применение конфигурации Supervisor..."
-    supervisorctl reread 2>/dev/null || true
-    supervisorctl update 2>/dev/null || true
     
     log "Сервисы запущены"
 }

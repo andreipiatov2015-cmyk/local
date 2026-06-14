@@ -27,9 +27,6 @@ mkdir -p /var/log/nginx
 # Каталоги для VNC
 mkdir -p /var/run/contest_vnc
 
-# Каталоги для Supervisor
-mkdir -p /etc/supervisor/conf.d
-
 # Права доступа
 chown -R www-data:www-data /var/www 2>/dev/null || true
 

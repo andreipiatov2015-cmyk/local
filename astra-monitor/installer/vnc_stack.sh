@@ -12,21 +12,26 @@ fi
 
 echo "Установка VNC стека..."
 
-# Установка пакетов
-apt install -y \
-    xvfb \
-    openbox \
-    x11vnc \
-    novnc \
-    websockify \
-    chromium \
-    chromium-sandbox 2>/dev/null || \
-apt install -y \
-    xvfb \
-    openbox \
-    x11vnc \
-    novnc \
-    websockify
+# Проверка существования пакета
+check_package() {
+    apt-cache show "$1" >/dev/null 2>&1
+}
+
+# Установка базовых VNC пакетов
+VNC_PACKAGES="xvfb openbox x11vnc novnc websockify"
+
+# Добавить chromium
+VNC_PACKAGES="$VNC_PACKAGES chromium"
+
+# Добавить chromium-sandbox если доступен
+if check_package "chromium-sandbox"; then
+    VNC_PACKAGES="$VNC_PACKAGES chromium-sandbox"
+    echo "chromium-sandbox доступен - будет установлен"
+else
+    echo "chromium-sandbox не найден - пропуск"
+fi
+
+apt install -y $VNC_PACKAGES
 
 # Копирование скрипта запуска
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
