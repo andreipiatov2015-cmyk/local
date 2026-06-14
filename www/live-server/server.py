@@ -4836,7 +4836,7 @@ def vk_preview_visibility():
 
 def _start_vk_process(stream_name):
     cmd = ["/usr/bin/python3", START_VK_SCRIPT, stream_name]
-    run_as_nobody = bool(os.environ.get("VK_START_AS_NOBODY", "1") == "1")
+    run_as_nobody = bool(os.environ.get("VK_START_AS_NOBODY", "0") == "1")
     if run_as_nobody:
         cmd = ["sudo", "-u", "nobody", *cmd]
 
