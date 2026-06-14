@@ -234,16 +234,16 @@ create_directories() {
     mkdir -p /usr/local/nginx/conf/sites-available
     mkdir -p /usr/local/nginx/conf/sites-enabled
     
-    # Копирование серверных файлов из www/
+    # Копирование серверных файлов из www/ (на уровне с astra-monitor)
     log "Копирование live-server..."
-    cp -r "$SCRIPT_DIR/../www/live-server/"* /var/www/live-server/
+    cp -r "$SCRIPT_DIR/../../www/live-server/"* /var/www/live-server/
     rm -f /var/www/live-server/ffmpeg.log /var/www/live-server/start_vk.log
     rm -rf /var/www/live-server/__pycache__
     rm -rf /var/www/live-server/_notes
     rm -rf /var/www/live-server/logs/_notes
     
     log "Копирование reboot-server..."
-    cp -r "$SCRIPT_DIR/../www/reboot/"* /var/www/reboot/
+    cp -r "$SCRIPT_DIR/../../www/reboot/"* /var/www/reboot/
     rm -rf /var/www/reboot/_notes
     
     # Права доступа
