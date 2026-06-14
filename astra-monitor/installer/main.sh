@@ -265,7 +265,7 @@ install_app() {
     cp "$SCRIPT_DIR/../VERSION" "$INSTALL_DIR/"
     
     log "Установка PyQt5..."
-    pip install PyQt5
+    pip install --break-system-packages PyQt5
     
     log "Приложение установлено"
 }
