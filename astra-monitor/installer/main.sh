@@ -245,7 +245,6 @@ install_configs() {
     
     log "Копирование конфигурации Nginx..."
     cp "$SCRIPT_DIR/configs/nginx/nginx.conf" /usr/local/nginx/conf/nginx.conf
-    cp "$SCRIPT_DIR/configs/nginx/nginx-rtmp.conf" /usr/local/nginx/conf/nginx-rtmp.conf
     
     log "Копирование скриптов..."
     cp "$SCRIPT_DIR/configs/scripts/restart_astra.sh" /var/www/restart_astra.sh
@@ -253,7 +252,6 @@ install_configs() {
     
     # Создание символических ссылок для конфигов
     ln -sf /usr/local/nginx/conf/nginx.conf /etc/nginx-custom.conf
-    ln -sf /usr/local/nginx/conf/nginx-rtmp.conf /etc/nginx-rtmp.conf
     
     log "Конфигурации установлены"
 }
