@@ -169,8 +169,7 @@ restore_nginx() {
 restore_nginx_config() {
     log_step "Восстановление конфигурации Nginx"
     cp "$INSTALLER_DIR/configs/nginx/nginx.conf" /usr/local/nginx/conf/nginx.conf
-    cp "$INSTALLER_DIR/configs/nginx/nginx-rtmp.conf" /usr/local/nginx/conf/nginx-rtmp.conf
-    log "Конфигурации скопированы"
+    log "Конфигурация скопирована"
 }
 
 restore_ffmpeg() {
