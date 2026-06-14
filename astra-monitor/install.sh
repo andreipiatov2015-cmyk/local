@@ -1,5 +1,7 @@
 #!/bin/bash
-# Скрипт установки Astra Monitor на Astra Linux
+# Astra Monitor - Установщик (только для локальных файлов)
+# Не использует apt, не загружает из интернета
+# Не трогает системные зависимости
 
 set -e
 
@@ -18,48 +20,43 @@ fi
 # Определение директории скрипта
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="/opt/astra-monitor"
+PANEL_SOURCE="$SCRIPT_DIR/src"
 
-# Проверка - сайт уже установлен?
-SITE_INSTALLED=false
-if [ -d "/var/www/live-server" ] && [ -f "/var/www/live-server/server.py" ]; then
-    SITE_INSTALLED=true
-    echo "✓ Обнаружен установленный сайт в /var/www"
+# Проверка наличия файлов
+if [ ! -d "$PANEL_SOURCE" ]; then
+    echo "Ошибка: папка src не найдена в $SCRIPT_DIR"
+    exit 1
 fi
 
-# Проверка - панель уже установлена?
-PANEL_INSTALLED=false
-if [ -f "/opt/astra-monitor/astra_monitor.py" ]; then
-    PANEL_INSTALLED=true
-    echo "✓ Панель управления уже установлена"
-fi
+echo "[1/4] Проверка установленных компонентов..."
 
-echo ""
+# Проверяем что НЕ переустанавливаем системные компоненты
+echo "  * Nginx - пропуск (не изменяется)"
+echo "  * FFmpeg - пропуск (не изменяется)"
+echo "  * Chromium - пропуск (не изменяется)"
 
-# Если сайт уже установлен - пропускаем установку зависимостей
-if [ "$SITE_INSTALLED" = true ]; then
-    echo "[*] Сайт уже установлен. Будут установлены только компоненты панели."
-else
-    echo "[1/6] Установка системных зависимостей..."
-    apt update
-    apt install -y python3-pip python3-pyqt5 python3-psutil python3-gi gir1.2-gtk-3.0
-    
-    echo "[2/6] Установка Python пакетов..."
-    pip3 install --break-system-packages psutil requests 2>/dev/null || pip3 install --user psutil requests 2>/dev/null || true
-fi
-
-echo "[3/6] Создание директорий..."
+echo "[2/4] Создание директорий..."
 mkdir -p "$INSTALL_DIR"
 mkdir -p /usr/bin
 mkdir -p /usr/share/applications
 
-echo "[4/6] Копирование файлов панели..."
+echo "[3/4] Копирование файлов приложения..."
+# Копируем только файлы приложения (НЕ системные пакеты)
 cp -r "$SCRIPT_DIR/src" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/astra_monitor.py" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/setup.py" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/README.md" "$INSTALL_DIR/" 2>/dev/null || true
+cp "$SCRIPT_DIR/Makefile" "$INSTALL_DIR/" 2>/dev/null || true
+
+# Создаем пакеты если есть
+if [ -d "$SCRIPT_DIR/installer/packages" ]; then
+    mkdir -p "$INSTALL_DIR/installer/packages"
+    cp -r "$SCRIPT_DIR/installer/packages/"* "$INSTALL_DIR/installer/packages/" 2>/dev/null || true
+fi
+
 chmod +x "$INSTALL_DIR/astra_monitor.py"
 
-echo "[5/6] Создание ссылок и ярлыков..."
+echo "[4/4] Создание ссылок и ярлыков..."
 # Символическая ссылка
 ln -sf "$INSTALL_DIR/astra_monitor.py" /usr/bin/astra-monitor
 
@@ -80,8 +77,6 @@ StartupNotify=true
 DESKTOP
 
 chmod +x /usr/share/applications/astra-monitor.desktop
-
-echo "[6/6] Обновление кэша рабочего стола..."
 update-desktop-database /usr/share/applications 2>/dev/null || true
 
 echo ""
@@ -89,8 +84,13 @@ echo "========================================"
 echo "  Установка завершена!"
 echo "========================================"
 echo ""
-echo "Запуск приложения:"
-echo "  astra-monitor"
+echo "Установленные компоненты:"
+echo "  - Панель управления: $INSTALL_DIR"
+echo "  - Команда: astra-monitor"
 echo ""
-echo "Или через меню: Приложения → Система → Astra Monitor"
+echo "Системные компоненты НЕ изменены:"
+echo "  - Nginx, FFmpeg, Chromium - сохранены как есть"
+echo ""
+echo "Запуск:"
+echo "  astra-monitor"
 echo ""

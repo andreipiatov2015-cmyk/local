@@ -59,6 +59,9 @@ class GitUpdater:
     # GitHub SSH URL
     GITHUB_SSH_URL = "git@github.com:andreipiatov2015-cmyk/local.git"
     
+    # Папка для клонирования репозитория
+    REPO_CLONE_DIR = os.path.expanduser("~/.astra-monitor/repo")
+    
     # Возможные пути к сайту
     POSSIBLE_SITE_PATHS = [
         "/var/www",
@@ -122,6 +125,16 @@ class GitUpdater:
             text=True,
             timeout=timeout
         )
+    
+    def set_log_callback(self, callback):
+        """Установить callback для логирования"""
+        self._log_callback = callback
+    
+    def log_message(self, msg: str):
+        """Вывести сообщение в лог"""
+        print(f"[GitUpdater] {msg}")
+        if hasattr(self, '_log_callback') and self._log_callback:
+            self._log_callback(msg)
     
     def check_ssh_key(self) -> tuple:
         """Проверить наличие SSH ключа для GitHub"""
@@ -230,19 +243,27 @@ class GitUpdater:
         return False, result.stderr
     
     def clone_from_github(self, target_path: str = None) -> tuple:
-        """Клонировать репозиторий с GitHub по SSH"""
+        """Клонировать репозиторий с GitHub в отдельную папку"""
         if target_path is None:
-            target_path = self.repo_path
+            target_path = self.REPO_CLONE_DIR
         
-        # Если папка уже существует
+        self.log_message(f"Целевая папка: {target_path}")
+        
+        # Если папка уже существует как репозиторий - обновляем
+        if os.path.exists(target_path) and os.path.exists(os.path.join(target_path, '.git')):
+            old_path = self.repo_path
+            self.repo_path = target_path
+            result = self.configure_git_remote()
+            self.repo_path = old_path
+            return True, f"Репо уже существует, remote настроен: {target_path}"
+        
+        # Если папка существует но не репозиторий - удаляем
         if os.path.exists(target_path):
-            if os.path.exists(os.path.join(target_path, '.git')):
-                # Уже есть репозиторий, просто настраиваем remote
-                old_path = self.repo_path
-                self.repo_path = target_path
-                result = self.configure_git_remote()
-                self.repo_path = old_path
-                return result
+            self.log_message(f"Очищаю существующую папку: {target_path}")
+            try:
+                shutil.rmtree(target_path)
+            except Exception as e:
+                return False, f"Не удалось очистить папку: {e}"
         
         try:
             os.makedirs(target_path, exist_ok=True)
@@ -256,6 +277,8 @@ class GitUpdater:
             
             if result.returncode == 0:
                 self.repo_path = target_path
+                # Синхронизируем www папку
+                self._sync_www_from_clone()
                 return True, f"Репозиторий клонирован в {target_path}"
             
             return False, result.stderr[:500]
@@ -265,8 +288,24 @@ class GitUpdater:
         except Exception as e:
             return False, str(e)
     
+    def _sync_www_from_clone(self):
+        """Синхронизировать www папку из клона в рабочую директорию"""
+        clone_www = os.path.join(self.REPO_CLONE_DIR, "www")
+        site_www = os.path.join("/var/www", "www")
+        
+        # Если www уже есть - не трогаем
+        if os.path.exists(site_www):
+            return
+        
+        # Если есть www в клоне - создаём ссылку
+        if os.path.exists(clone_www):
+            try:
+                os.symlink(clone_www, site_www)
+            except:
+                pass
+    
     def sync_with_github(self) -> UpdateResult:
-        """Синхронизировать с GitHub (clone если нет, pull если есть)"""
+        """Синхронизировать с GitHub"""
         # Проверяем SSH
         has_key, key_path = self.check_ssh_key()
         if not has_key:
