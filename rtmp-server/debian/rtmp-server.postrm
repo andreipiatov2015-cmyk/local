@@ -5,6 +5,18 @@
 set -e
 
 case "$1" in
+  remove|purge)
+    rm -f /etc/systemd/system/rtmp-server-gui.service
+    rm -f /etc/sudoers.d/rtmp-server
+    rm -f /etc/xdg/autostart/rtmp-server.desktop
+    rm -f /etc/skel/Desktop/rtmp-server.desktop
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    # Ярлыки в ~/Desktop существующих пользователей намеренно НЕ трогаем —
+    # это их файлы, пусть удаляют сами, если захотят.
+    ;;
+esac
+
+case "$1" in
   purge)
     rm -rf /opt/rtmp-server
     rm -rf /var/log/rtmp-server
