@@ -5,6 +5,7 @@ debian/local/bin/rtmp-server-ctl usr/bin/
 debian/local/rtmp-server.desktop usr/share/applications/
 debian/local/rtmp-server-autostart.desktop opt/rtmp-server/skel/
 debian/local/rtmp-server.sudoers opt/rtmp-server/skel/
+debian/local/lib/check_nginx_running.sh opt/rtmp-server/lib/
 debian/local/units/nginx-rtmp.service opt/rtmp-server/systemd-units/
 debian/local/units/live-server.service opt/rtmp-server/systemd-units/
 debian/local/units/reboot-server.service opt/rtmp-server/systemd-units/
