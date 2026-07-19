@@ -84,4 +84,12 @@ def apply_update(release: ReleaseInfo, download_dir: Path = Path("/tmp/rtmp-serv
         logger.error("dpkg -i упал: %s", result.stderr)
         return UpdateResult(applied=False, message=f"dpkg -i завершился с ошибкой: {result.stderr[:500]}")
 
-    return UpdateResult(applied=True, message=f"RTMP-server обновлён до {release.version}")
+    return UpdateResult(
+        applied=True,
+        message=(
+            f"RTMP-server обновлён до {release.version}. "
+            "Закройте и снова откройте приложение (или systemctl restart "
+            "rtmp-server-gui.service), чтобы увидеть новую версию — "
+            "текущее окно продолжает работать со старым кодом в памяти."
+        ),
+    )
