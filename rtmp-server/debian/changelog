@@ -1,3 +1,14 @@
+rtmp-server (1.0.3-1) stable; urgency=high
+
+  * Критический баг самообновления: prerm безусловно останавливал
+    rtmp-server-gui.service при ЛЮБОМ вызове, включая upgrade — то есть
+    dpkg -i при самообновлении из уже запущенного GUI убивал сам себя
+    посреди установки ("нажал установить — ничего не произошло"). Теперь
+    сервис останавливается только при настоящем remove. Добавлен
+    поведенческий тест (tests/test_prerm.py) на этот случай.
+
+ -- RTMP-server maintainers <support@rtmp-server.local>  Sun, 19 Jul 2026 14:05:00 +0000
+
 rtmp-server (1.0.2-1) stable; urgency=medium
 
   * Починена сборка релиза в CI: build-essential не был установлен на

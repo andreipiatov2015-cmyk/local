@@ -1,11 +1,24 @@
 #!/bin/sh
-# Останавливает только то, что принадлежит самому RTMP-server
-# (rtmp-server-gui.service — автозапуск GUI). Юниты сайта
-# (nginx-rtmp/live-server/reboot-server) НИКОГДА не трогаются здесь —
-# они принадлежат сайту, а не этому пакету, и должны пережить его удаление.
+# Останавливает rtmp-server-gui.service только при полном УДАЛЕНИИ пакета.
+#
+# БАГ, который здесь был: скрипт останавливал юнит безусловно, при ЛЮБОМ
+# вызове prerm — а dpkg вызывает prerm не только при remove, но и перед
+# upgrade (в том числе при самообновлении через dpkg -i изнутри самого
+# GUI). В итоге апгрейд убивал сам себя посреди установки — окно просто
+# исчезало, ничего не сообщив. Юниты сайта (nginx-rtmp/live-server/
+# reboot-server) по-прежнему никогда не трогаются здесь.
 set -e
 
-systemctl stop rtmp-server-gui.service >/dev/null 2>&1 || true
-systemctl disable rtmp-server-gui.service >/dev/null 2>&1 || true
+case "$1" in
+  remove)
+    systemctl stop rtmp-server-gui.service >/dev/null 2>&1 || true
+    systemctl disable rtmp-server-gui.service >/dev/null 2>&1 || true
+    ;;
+  upgrade|failed-upgrade|deconfigure)
+    # Ничего не делаем — новые файлы просто ложатся поверх старых,
+    # процесс продолжает работать со старым кодом в памяти до
+    # следующего перезапуска (см. postinst: пишет об этом в конце).
+    ;;
+esac
 
 exit 0

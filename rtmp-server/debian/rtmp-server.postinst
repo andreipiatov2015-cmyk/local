@@ -133,6 +133,11 @@ case "$1" in
     echo " GUI:      rtmp-server"
     echo " Консоль:  rtmp-server-ctl status"
     echo " Лог установки шагов выше — при необходимости повторите вручную."
+    if systemctl is-active rtmp-server-gui.service >/dev/null 2>&1; then
+        echo " Приложение уже запущено (systemd) — новый код применится"
+        echo " после перезапуска: systemctl restart rtmp-server-gui.service"
+        echo " (или просто закройте и снова откройте окно вручную)."
+    fi
     echo "=================================================================="
     ;;
 esac
