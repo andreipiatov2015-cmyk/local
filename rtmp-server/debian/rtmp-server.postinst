@@ -91,10 +91,27 @@ case "$1" in
     cp "$UNITS_SRC/rtmp-server-gui.service" "$UNITS_DST/rtmp-server-gui.service"
 
     systemctl daemon-reload >/dev/null 2>&1 || true
-    for unit in nginx-rtmp.service live-server.service reboot-server.service rtmp-server-gui.service; do
+    for unit in live-server.service reboot-server.service rtmp-server-gui.service; do
         systemctl enable "$unit" >/dev/null 2>&1 || true
     done
     systemctl start rtmp-server-gui.service >/dev/null 2>&1 || true
+
+    # --- nginx-rtmp.service: НЕ включаем и не стартуем, если nginx уже
+    # запущен вне systemd (например, старым restart_astra.sh на боте) —
+    # иначе на следующей перезагрузке два запуска одного nginx подерутся
+    # за порты 1936/8082 и оба упадут в restart-loop. Юнит всё равно
+    # устанавливается, просто ждёт, пока оператор осознанно включит его сам.
+    if [ "$(sh "$APP_DIR/lib/check_nginx_running.sh")" = "true" ]; then
+        echo "nginx уже запущен вне systemd (старым способом) — юнит nginx-rtmp.service"
+        echo "  установлен, но НЕ включён и НЕ запущен, чтобы не конфликтовать по портам"
+        echo "  1936/8082 на следующей перезагрузке. Уже работающий процесс не тронут."
+        echo "  Когда решите переключиться на управление через systemd:"
+        echo "    systemctl disable restart_astra.service   # если он у вас запускает nginx на старте"
+        echo "    systemctl enable --now nginx-rtmp.service"
+    else
+        systemctl enable nginx-rtmp.service >/dev/null 2>&1 || true
+        systemctl start nginx-rtmp.service >/dev/null 2>&1 || true
+    fi
 
     # --- Беспарольный запуск от root для ярлыка/автозапуска ---
     # Проверяем синтаксис ПЕРЕД установкой в /etc/sudoers.d — битый файл
