@@ -36,11 +36,31 @@ SITE_ROOT = "/var/www"
 LIVE_SERVER_DIR = f"{SITE_ROOT}/live-server"
 REBOOT_SERVER_DIR = f"{SITE_ROOT}/reboot"
 HLS_DIR = f"{SITE_ROOT}/hls"
-SITE_VENV = f"{SITE_ROOT}/.venv"
 
 LIVE_SERVER_SCRIPT = f"{LIVE_SERVER_DIR}/server.py"
 REBOOT_SERVER_SCRIPT = f"{REBOOT_SERVER_DIR}/server.py"
 VK_PUSHER_SCRIPT = f"{LIVE_SERVER_DIR}/start_vk.py"
+
+# Подтверждено владельцем: отдельного venv на продакшене НЕТ, сайт запускается
+# системным Python напрямую (см. restart_astra.sh: PYTHON_BIN=/usr/bin/python3).
+# Юниты и постинст используют ИМЕННО это, а не venv, который был неверным
+# предположением в первой версии этого файла.
+SYSTEM_PYTHON_BIN = "/usr/bin/python3"
+
+# Рабочие данные лежат в корне сайта, а не внутри live-server/ — site_updater.py
+# их не трогает уже просто потому, что синхронизирует только LIVE_SERVER_DIR и
+# REBOOT_SERVER_DIR, но держим пути здесь как справочные (для будущей работы
+# над самим сайтом и для site_monitor).
+SITE_DB_FILE = f"{SITE_ROOT}/app.db"
+SITE_ENTRIES_JSON = f"{SITE_ROOT}/entries.json"
+SITE_PRESETS_JSON = f"{SITE_ROOT}/presets.json"
+LEGACY_RESTART_SCRIPT = f"{SITE_ROOT}/restart_astra.sh"
+LEGACY_NGINX_RTMP_INSTALL_SCRIPT = f"{SITE_ROOT}/install-nginx-rtmp.sh"
+
+# Логи (подтверждённые реальные пути — НЕ /var/www/logs, как предполагалось
+# в первой версии этого файла).
+LIVE_SERVER_LOG = "/var/log/live-server.log"
+REBOOT_SERVER_LOG = "/var/log/reboot-server.log"
 
 # ---------------------------------------------------------------------------
 # Кастомная сборка nginx (Astra не поставляет nginx с RTMP-модулем)
@@ -50,6 +70,8 @@ NGINX_PREFIX = "/usr/local/nginx"
 NGINX_BIN = f"{NGINX_PREFIX}/sbin/nginx"
 NGINX_CONF = f"{NGINX_PREFIX}/conf/nginx.conf"
 NGINX_PID_FILE = f"{NGINX_PREFIX}/logs/nginx.pid"
+NGINX_ACCESS_LOG = f"{NGINX_PREFIX}/logs/access.log"
+NGINX_ERROR_LOG = f"{NGINX_PREFIX}/logs/error.log"
 NGINX_VERSION_MARKER = f"{NGINX_PREFIX}/.rtmp-server-installed-version"
 
 # ---------------------------------------------------------------------------
@@ -62,9 +84,13 @@ APP_LOG_DIR = "/var/log/rtmp-server"
 APP_STAGING_DIR = "/opt/rtmp-server/.staging"
 APP_STATE_FILE = "/var/lib/rtmp-server/state.json"
 
-# Старая установка (astra-monitor) — используется только adopt.py при миграции,
-# новый код на неё нигде больше не ссылается.
+# Старая установка (astra-monitor) — используется только adopt.py, который
+# при установке RTMP-server находит и заменяет её автоматически (см. п.2
+# запроса владельца — старое приложение не должно оставаться рядом).
 LEGACY_APP_INSTALL_DIR = "/opt/astra-monitor"
+LEGACY_APP_BINARY = "/usr/bin/astra-monitor"
+LEGACY_APP_DESKTOP_FILE = "/usr/share/applications/astra-monitor.desktop"
+LEGACY_APP_PROCESS_PATTERN = "astra_monitor.py"
 
 # ---------------------------------------------------------------------------
 # systemd-юниты
