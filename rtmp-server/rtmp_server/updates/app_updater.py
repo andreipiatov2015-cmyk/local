@@ -31,6 +31,7 @@ logger = logging.getLogger("rtmp_server.updates.app")
 class ReleaseInfo:
     tag: str
     version: str
+    deb_asset_name: str
     deb_asset_url: str
     checksums_url: str
 
@@ -58,6 +59,7 @@ def check_for_update() -> ReleaseInfo | None:
     return ReleaseInfo(
         tag=tag,
         version=version,
+        deb_asset_name=deb_name,
         deb_asset_url=assets[deb_name],
         checksums_url=assets[C.CHECKSUMS_ASSET_NAME],
     )
@@ -65,7 +67,12 @@ def check_for_update() -> ReleaseInfo | None:
 
 def apply_update(release: ReleaseInfo, download_dir: Path = Path("/tmp/rtmp-server-update")) -> UpdateResult:
     download_dir.mkdir(parents=True, exist_ok=True)
-    deb_path = download_dir / f"rtmp-server-{release.version}.deb"
+    # Имя файла ДОЛЖНО совпадать с реальным именем ассета — именно под этим
+    # именем оно ищется в SHA256SUMS. Раньше здесь реконструировали имя как
+    # f"rtmp-server-{version}.deb", а настоящий ассет называется
+    # rtmp-server_{version}-1_all.deb — несовпадение имён давало ложное
+    # "чексумма не совпадает" (ключ просто не находился в словаре).
+    deb_path = download_dir / release.deb_asset_name
     checksums_path = download_dir / C.CHECKSUMS_ASSET_NAME
 
     try:
