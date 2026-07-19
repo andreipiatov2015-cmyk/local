@@ -12,7 +12,6 @@ STATE_DIR=/var/lib/rtmp-server
 UNITS_SRC="$APP_DIR/systemd-units"
 UNITS_DST=/etc/systemd/system
 REPO=andreipiatov2015-cmyk/local
-SITE_VENV=/var/www/.venv
 
 case "$1" in
   configure)
@@ -52,17 +51,19 @@ case "$1" in
         rm -rf "$TMP"
     fi
 
-    # --- Python-окружение сайта (быстрая зависимость — ставим на месте, интернет есть) ---
-    if [ ! -x "$SITE_VENV/bin/python3" ]; then
-        echo "Создаю venv сайта в $SITE_VENV..."
-        mkdir -p /var/www
-        if python3 -m venv "$SITE_VENV" 2>/dev/null; then
-            "$SITE_VENV/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
-            "$SITE_VENV/bin/pip" install flask flask-cors requests openpyxl pandas schedule pillow websockets gunicorn waitress >/dev/null 2>&1 \
-                && echo "Python-зависимости сайта установлены." \
-                || echo "ВНИМАНИЕ: pip install зависимостей сайта завершился с ошибкой — проверьте вручную." >&2
+    # --- Python-зависимости сайта: подтверждено владельцем, что отдельного
+    # venv на продакшене НЕТ — restart_astra.sh запускает сайт системным
+    # /usr/bin/python3 напрямую (PYTHON_BIN=/usr/bin/python3). Ставим туда же,
+    # а не в venv, которого реально не существует.
+    if python3 -c "import flask" >/dev/null 2>&1; then
+        echo "Python-зависимости сайта уже установлены — пропускаю."
+    else
+        echo "Устанавливаю Python-зависимости сайта в системный python3..."
+        if pip3 install --break-system-packages flask flask-cors requests openpyxl pandas schedule pillow websockets gunicorn waitress >/dev/null 2>&1 \
+            || pip3 install flask flask-cors requests openpyxl pandas schedule pillow websockets gunicorn waitress >/dev/null 2>&1; then
+            echo "Python-зависимости сайта установлены."
         else
-            echo "ВНИМАНИЕ: не удалось создать venv сайта." >&2
+            echo "ВНИМАНИЕ: pip3 install зависимостей сайта завершился с ошибкой — проверьте вручную." >&2
         fi
     fi
 

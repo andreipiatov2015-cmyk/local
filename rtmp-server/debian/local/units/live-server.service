@@ -4,9 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=www-data
+# Без User= (root) — так же, как сейчас реально запускает restart_astra.sh
+# (у него самого нет User=, юнит restart_astra.service тоже без него).
+# Понижение привилегий до www-data — отдельная задача для фазы работы
+# над безопасностью самого сайта, не делаем это здесь неявно.
 WorkingDirectory=/var/www/live-server
-ExecStart=/var/www/.venv/bin/python3 /var/www/live-server/server.py
+ExecStart=/usr/bin/python3 /var/www/live-server/server.py
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:/var/log/live-server.log

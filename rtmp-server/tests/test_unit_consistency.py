@@ -25,15 +25,19 @@ class UnitFileConsistencyTests(unittest.TestCase):
 
     def test_live_server_unit_matches_constants(self):
         text = (UNITS_DIR / "live-server.service").read_text()
-        self.assertIn(C.SITE_VENV, text)
+        self.assertIn(C.SYSTEM_PYTHON_BIN, text)
         self.assertIn(C.LIVE_SERVER_SCRIPT, text)
         self.assertIn(C.LIVE_SERVER_DIR, text)
+        self.assertIn(C.LIVE_SERVER_LOG, text)
+        self.assertNotIn(".venv", text)  # подтверждено владельцем: venv на сайте нет
 
     def test_reboot_server_unit_matches_constants(self):
         text = (UNITS_DIR / "reboot-server.service").read_text()
-        self.assertIn(C.SITE_VENV, text)
+        self.assertIn(C.SYSTEM_PYTHON_BIN, text)
         self.assertIn(C.REBOOT_SERVER_SCRIPT, text)
         self.assertIn(C.REBOOT_SERVER_DIR, text)
+        self.assertIn(C.REBOOT_SERVER_LOG, text)
+        self.assertNotIn(".venv", text)
 
     def test_postinst_references_same_unit_names_as_constants(self):
         text = (UNITS_DIR.parent.parent / "rtmp-server.postinst").read_text()
