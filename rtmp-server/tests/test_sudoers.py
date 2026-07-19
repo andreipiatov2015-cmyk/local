@@ -24,6 +24,12 @@ class SudoersSyntaxTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_requiretty_disabled_for_our_command(self):
+        """Без этого клик по ярлыку из графической оболочки (без tty)
+        молча ничего не делает — sudo просто отказывается выполнять команду."""
+        text = SUDOERS_FILE.read_text()
+        self.assertIn("!requiretty", text)
+
 
 if __name__ == "__main__":
     unittest.main()
