@@ -23,7 +23,17 @@ case "$1" in
 
     # --- nginx+RTMP: тяжёлая зависимость, берём готовую сборку из GitHub Release ---
     NGINX_MARKER=/usr/local/nginx/.rtmp-server-installed-version
-    if [ -x /usr/local/nginx/sbin/nginx ] && [ -f "$NGINX_MARKER" ] && [ "$(cat "$NGINX_MARKER")" = "$VERSION" ]; then
+    NGINX_ALREADY_RUNNING=$(sh "$APP_DIR/lib/check_nginx_running.sh")
+
+    if [ "$NGINX_ALREADY_RUNNING" = "true" ]; then
+        # nginx живой прямо сейчас (не важно, кем и когда запущенный) —
+        # НЕ трогаем ни бинарник, ни conf/nginx.conf вообще. Раньше здесь
+        # смотрели только на файл-метку версии, а не на реально работающий
+        # процесс — если бы скачивание когда-нибудь прошло успешно, tar -xzf
+        # затёр бы рабочий конфиг дефолтным из чистой сборки.
+        echo "nginx уже запущен — не трогаю установленные файлы/конфиг в /usr/local/nginx."
+        echo "$VERSION" > "$NGINX_MARKER" 2>/dev/null || true
+    elif [ -x /usr/local/nginx/sbin/nginx ] && [ -f "$NGINX_MARKER" ] && [ "$(cat "$NGINX_MARKER")" = "$VERSION" ]; then
         echo "nginx+RTMP уже установлен (версия $VERSION) — пропускаю."
     else
         ASSET="nginx-rtmp-$VERSION.tar.gz"
@@ -31,7 +41,11 @@ case "$1" in
         SUMS_URL="https://github.com/$REPO/releases/download/v$VERSION/SHA256SUMS"
         TMP=$(mktemp -d)
         echo "Скачивание $ASSET из GitHub Release ($REPO)..."
-        if curl -fsSL -o "$TMP/$ASSET" "$URL" 2>/dev/null && curl -fsSL -o "$TMP/SHA256SUMS" "$SUMS_URL" 2>/dev/null; then
+        # Таймауты обязательны: без них зависшее соединение вешает весь
+        # apt install/dpkg --configure намертво, без единого шанса прервать
+        # штатно (баг, из-за которого владелец застрял на реальной установке).
+        CURL_OPTS="--connect-timeout 10 --max-time 90 --retry 2 --retry-delay 3"
+        if curl -fsSL $CURL_OPTS -o "$TMP/$ASSET" "$URL" 2>/dev/null && curl -fsSL $CURL_OPTS -o "$TMP/SHA256SUMS" "$SUMS_URL" 2>/dev/null; then
             EXPECTED=$(grep " $ASSET\$" "$TMP/SHA256SUMS" | awk '{print $1}')
             ACTUAL=$(sha256sum "$TMP/$ASSET" | awk '{print $1}')
             if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ]; then
@@ -45,7 +59,7 @@ case "$1" in
                 echo "  Повторить можно вручную: rtmp-server-ctl (или мастер первого запуска GUI)." >&2
             fi
         else
-            echo "ВНИМАНИЕ: не удалось скачать $ASSET (нет сети или релиз ещё не опубликован)." >&2
+            echo "ВНИМАНИЕ: не удалось скачать $ASSET за отведённое время (нет сети или релиз ещё не опубликован)." >&2
             echo "  nginx+RTMP не установлен. Сайт продолжит работать на уже развёрнутой версии, если она есть." >&2
         fi
         rm -rf "$TMP"
