@@ -1,0 +1,2 @@
+#!/bin/sh
+exec env PYTHONPATH=/opt/rtmp-server:"$PYTHONPATH" python3 -m rtmp_server.gui.main_window "$@"

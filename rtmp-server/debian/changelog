@@ -1,0 +1,6 @@
+rtmp-server (1.0.0-1) stable; urgency=medium
+
+  * Полный рерайт astra-monitor: единая модель сервисов без VNC-стека,
+    единый движок обновлений (сайт + приложение), рабочая .deb-упаковка.
+
+ -- RTMP-server maintainers <support@rtmp-server.local>  Sun, 19 Jul 2026 08:00:00 +0000

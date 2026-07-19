@@ -1,0 +1,16 @@
+[Unit]
+Description=live-server (Flask, порт 8083) — контестный сайт
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/live-server
+ExecStart=/var/www/.venv/bin/python3 /var/www/live-server/server.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/live-server.log
+StandardError=append:/var/log/live-server.log
+
+[Install]
+WantedBy=multi-user.target

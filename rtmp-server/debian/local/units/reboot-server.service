@@ -1,0 +1,16 @@
+[Unit]
+Description=reboot-server (Flask, порт 8084) — вспомогательный сервис
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/reboot
+ExecStart=/var/www/.venv/bin/python3 /var/www/reboot/server.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/reboot-server.log
+StandardError=append:/var/log/reboot-server.log
+
+[Install]
+WantedBy=multi-user.target
