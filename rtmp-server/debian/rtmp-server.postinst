@@ -84,10 +84,48 @@ case "$1" in
             echo "Установлен юнит $unit."
         fi
     done
+
+    # --- Юнит самого RTMP-server (GUI, автозапуск при старте сервера) ---
+    # В отличие от юнитов сайта выше — этот принадлежит пакету, поэтому
+    # обновляем его безусловно при каждой установке/обновлении.
+    cp "$UNITS_SRC/rtmp-server-gui.service" "$UNITS_DST/rtmp-server-gui.service"
+
     systemctl daemon-reload >/dev/null 2>&1 || true
-    for unit in nginx-rtmp.service live-server.service reboot-server.service; do
+    for unit in nginx-rtmp.service live-server.service reboot-server.service rtmp-server-gui.service; do
         systemctl enable "$unit" >/dev/null 2>&1 || true
     done
+    systemctl start rtmp-server-gui.service >/dev/null 2>&1 || true
+
+    # --- Беспарольный запуск от root для ярлыка/автозапуска ---
+    # Проверяем синтаксис ПЕРЕД установкой в /etc/sudoers.d — битый файл
+    # там может сломать sudo для всей системы.
+    SUDOERS_SRC="$APP_DIR/skel/rtmp-server.sudoers"
+    if visudo -c -f "$SUDOERS_SRC" >/dev/null 2>&1; then
+        install -m 0440 -o root -g root "$SUDOERS_SRC" /etc/sudoers.d/rtmp-server
+        echo "Беспарольный запуск rtmp-server через sudo настроен."
+    else
+        echo "ВНИМАНИЕ: файл sudoers не прошёл проверку синтаксиса — беспарольный запуск НЕ настроен." >&2
+        echo "  Ярлыки будут спрашивать пароль sudo. Проверьте $SUDOERS_SRC вручную." >&2
+    fi
+
+    # --- Автозапуск ярлыка при входе в графическую сессию (любой пользователь) ---
+    mkdir -p /etc/xdg/autostart
+    cp "$APP_DIR/skel/rtmp-server-autostart.desktop" /etc/xdg/autostart/rtmp-server.desktop
+
+    # --- Ярлык на рабочем столе: новым пользователям (/etc/skel) и всем существующим ---
+    mkdir -p /etc/skel/Desktop
+    cp /usr/share/applications/rtmp-server.desktop /etc/skel/Desktop/rtmp-server.desktop
+    chmod +x /etc/skel/Desktop/rtmp-server.desktop
+
+    for home in /root /home/*; do
+        [ -d "$home" ] || continue
+        mkdir -p "$home/Desktop"
+        cp /usr/share/applications/rtmp-server.desktop "$home/Desktop/rtmp-server.desktop"
+        chmod +x "$home/Desktop/rtmp-server.desktop"
+        owner=$(stat -c '%U:%G' "$home" 2>/dev/null || echo root:root)
+        chown "$owner" "$home/Desktop/rtmp-server.desktop" 2>/dev/null || true
+    done
+    echo "Ярлык добавлен на рабочий стол всем существующим пользователям и в /etc/skel для новых."
 
     echo ""
     echo "=================================================================="

@@ -1,7 +1,11 @@
 #!/bin/sh
-# RTMP-server не имеет собственного systemd-юнита (это GUI-приложение,
-# запускаемое вручную) — здесь нечего останавливать. Юниты сайта
+# Останавливает только то, что принадлежит самому RTMP-server
+# (rtmp-server-gui.service — автозапуск GUI). Юниты сайта
 # (nginx-rtmp/live-server/reboot-server) НИКОГДА не трогаются здесь —
 # они принадлежат сайту, а не этому пакету, и должны пережить его удаление.
 set -e
+
+systemctl stop rtmp-server-gui.service >/dev/null 2>&1 || true
+systemctl disable rtmp-server-gui.service >/dev/null 2>&1 || true
+
 exit 0
