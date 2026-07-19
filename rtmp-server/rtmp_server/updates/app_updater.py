@@ -18,6 +18,7 @@ from pathlib import Path
 from rtmp_server import __version__ as CURRENT_VERSION
 from rtmp_server.config import constants as C
 from rtmp_server.updates.staging import (
+    DownloadTimeoutError,
     UpdateResult,
     download_file,
     parse_sha256sums,
@@ -78,6 +79,8 @@ def apply_update(release: ReleaseInfo, download_dir: Path = Path("/tmp/rtmp-serv
     try:
         download_file(release.deb_asset_url, deb_path)
         download_file(release.checksums_url, checksums_path)
+    except DownloadTimeoutError as exc:
+        return UpdateResult(applied=False, message=f"Скачивание зависло и было прервано: {exc}")
     except OSError as exc:
         return UpdateResult(applied=False, message=f"Не удалось скачать релиз: {exc}")
 

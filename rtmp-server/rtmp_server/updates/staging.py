@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import shutil
+import time
 import tarfile
 import urllib.request
 from dataclasses import dataclass, field
@@ -22,8 +23,14 @@ from typing import Callable
 
 logger = logging.getLogger("rtmp_server.updates")
 
+DOWNLOAD_CHUNK_SIZE = 65536
+
 
 class UpdateError(Exception):
+    pass
+
+
+class DownloadTimeoutError(UpdateError):
     pass
 
 
@@ -35,11 +42,27 @@ class UpdateResult:
 
 
 def download_file(url: str, dest: Path, timeout: float = 60.0) -> Path:
+    """Скачивает url в dest с жёстким ОБЩИМ дедлайном на всю передачу.
+
+    urllib.request.urlopen(timeout=...) ограничивает только каждую отдельную
+    операцию на сокете — если сервер отдаёт данные "по капле" (медленнее
+    таймаута, но без явных пауз), каждое отдельное чтение укладывается в
+    лимит, а суммарное время может растянуться на сколько угодно. Именно
+    так самообновление зависало без вообще какой-либо обратной связи в GUI:
+    воркер-поток просто никогда не завершался. Здесь дедлайн проверяется
+    между чанками независимо от поведения отдельных чтений."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Скачивание %s -> %s", url, dest)
+    deadline = time.monotonic() + timeout
     request = urllib.request.Request(url, headers={"User-Agent": "rtmp-server-updater"})
     with urllib.request.urlopen(request, timeout=timeout) as response, open(dest, "wb") as fh:
-        shutil.copyfileobj(response, fh)
+        while True:
+            if time.monotonic() > deadline:
+                raise DownloadTimeoutError(f"Скачивание {url} не уложилось в {timeout:.0f} сек.")
+            chunk = response.read(DOWNLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            fh.write(chunk)
     return dest
 
 
