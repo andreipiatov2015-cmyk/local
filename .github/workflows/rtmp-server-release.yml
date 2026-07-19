@@ -20,6 +20,15 @@ jobs:
 
       - name: Install build deps
         run: |
+          set -e
+          # buster (Debian 10) — уже EOL и снят с обычных зеркал deb.debian.org
+          # (отдаёт 404), поэтому переключаемся на archive.debian.org.
+          # check-valid-until=no — у архивных Release-файлов просрочен Valid-Until,
+          # без этого флага apt откажется их использовать.
+          cat > /etc/apt/sources.list <<'EOF'
+          deb [check-valid-until=no] http://archive.debian.org/debian buster main
+          deb [check-valid-until=no] http://archive.debian.org/debian-security buster/updates main
+          EOF
           apt-get update
           apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev git wget ca-certificates
 
@@ -60,9 +69,12 @@ jobs:
       - name: Install packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y devscripts debhelper lintian
+          sudo apt-get install -y build-essential devscripts debhelper lintian
 
       - name: Sync changelog version with VERSION file
+        env:
+          DEBEMAIL: support@rtmp-server.local
+          DEBFULLNAME: RTMP-server CI
         run: |
           cd rtmp-server
           NEW_VERSION=$(cat VERSION)
