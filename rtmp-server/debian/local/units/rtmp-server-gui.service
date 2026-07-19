@@ -1,0 +1,22 @@
+[Unit]
+Description=RTMP-server GUI (автозапуск при старте сервера)
+After=graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+# ВНИМАНИЕ: предполагается локальная X-сессия на дисплее :0 с автологином
+# (типичная настройка для "киоск"-машин с монитором). Если у вас другой
+# display manager/автологин — поправьте DISPLAY/XAUTHORITY под свою систему,
+# иначе юнит будет падать с ошибкой "cannot connect to X server".
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/root/.Xauthority
+ExecStart=/usr/bin/rtmp-server
+Restart=on-failure
+RestartSec=10
+# Защита от повторного запуска — сам rtmp-server проверяет lock-файл
+# (см. rtmp_server/gui/single_instance.py), поэтому конфликт с ярлыком
+# на рабочем столе исключён.
+
+[Install]
+WantedBy=graphical.target

@@ -7,6 +7,7 @@ from rtmp_server.gui.tabs.services_tab import ServicesTab
 from rtmp_server.gui.tabs.status_tab import StatusTab
 from rtmp_server.gui.tabs.system_tab import SystemTab
 from rtmp_server.gui.tabs.updates_tab import UpdatesTab
+from rtmp_server.gui.tabs.users_tab import UsersTab
 
 
 class MainWindow(QMainWindow):
@@ -19,6 +20,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(StatusTab(), "Обзор")
         tabs.addTab(ServicesTab(), "Сервисы")
         tabs.addTab(SystemTab(), "Система")
+        tabs.addTab(UsersTab(), "Пользователи сайта")
         tabs.addTab(UpdatesTab(), "Обновления")
         self.setCentralWidget(tabs)
 
@@ -26,12 +28,25 @@ class MainWindow(QMainWindow):
 def main() -> int:
     import sys
 
-    from PyQt5.QtWidgets import QApplication
+    from PyQt5.QtWidgets import QApplication, QMessageBox
+
+    from rtmp_server.gui import single_instance
 
     app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    return app.exec_()
+
+    if not single_instance.acquire_or_none():
+        QMessageBox.information(
+            None, "RTMP-server уже запущен",
+            "RTMP-server уже открыт (автозапуск при старте сервера или другой ярлык).",
+        )
+        return 0
+
+    try:
+        window = MainWindow()
+        window.show()
+        return app.exec_()
+    finally:
+        single_instance.release()
 
 
 if __name__ == "__main__":

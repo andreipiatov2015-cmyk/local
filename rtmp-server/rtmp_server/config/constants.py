@@ -84,6 +84,16 @@ APP_LOG_DIR = "/var/log/rtmp-server"
 APP_STAGING_DIR = "/opt/rtmp-server/.staging"
 APP_STATE_FILE = "/var/lib/rtmp-server/state.json"
 
+# GUI-юнит самого RTMP-server (автозапуск при старте графической сессии) —
+# в отличие от ALL_MANAGED_UNITS (сервисы САЙТА), этот юнит принадлежит
+# самому пакету и останавливается/выключается при удалении RTMP-server.
+UNIT_APP_GUI = "rtmp-server-gui.service"
+
+# Беспарольный запуск ярлыка/автозапуска от root (см. запрос владельца).
+APP_SUDOERS_FILE = "/etc/sudoers.d/rtmp-server"
+APP_DESKTOP_AUTOSTART_FILE = "/etc/xdg/autostart/rtmp-server.desktop"
+APP_DESKTOP_MENU_FILE = "/usr/share/applications/rtmp-server.desktop"
+
 # Старая установка (astra-monitor) — используется только adopt.py, который
 # при установке RTMP-server находит и заменяет её автоматически (см. п.2
 # запроса владельца — старое приложение не должно оставаться рядом).

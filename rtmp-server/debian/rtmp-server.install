@@ -3,6 +3,9 @@ rtmp_server opt/rtmp-server/
 debian/local/bin/rtmp-server usr/bin/
 debian/local/bin/rtmp-server-ctl usr/bin/
 debian/local/rtmp-server.desktop usr/share/applications/
+debian/local/rtmp-server-autostart.desktop opt/rtmp-server/skel/
+debian/local/rtmp-server.sudoers opt/rtmp-server/skel/
 debian/local/units/nginx-rtmp.service opt/rtmp-server/systemd-units/
 debian/local/units/live-server.service opt/rtmp-server/systemd-units/
 debian/local/units/reboot-server.service opt/rtmp-server/systemd-units/
+debian/local/units/rtmp-server-gui.service opt/rtmp-server/systemd-units/
