@@ -1,0 +1,15 @@
+#!/bin/sh
+# Удаляет только то, что принадлежит самому RTMP-server. НИКОГДА не трогает
+# /var/www (сайт) и не отключает/удаляет systemd-юниты сайта — они должны
+# продолжать работать даже после удаления admin-приложения.
+set -e
+
+case "$1" in
+  purge)
+    rm -rf /opt/rtmp-server
+    rm -rf /var/log/rtmp-server
+    rm -rf /var/lib/rtmp-server
+    ;;
+esac
+
+exit 0

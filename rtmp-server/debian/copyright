@@ -1,0 +1,8 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: rtmp-server
+Source: https://github.com/andreipiatov2015-cmyk/local
+
+Files: *
+Copyright: 2026 RTMP-server maintainers
+License: proprietary
+ Внутренний инструмент, распространяется только внутри локальной сети.

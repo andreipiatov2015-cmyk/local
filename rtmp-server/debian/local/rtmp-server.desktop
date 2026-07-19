@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RTMP-server
+Comment=Панель управления локальным сайтом трансляций
+Exec=/usr/bin/rtmp-server
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;Monitor;

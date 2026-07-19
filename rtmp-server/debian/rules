@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# нет отдельного шага сборки — чистый Python, копируется как есть
+	true
+
+override_dh_auto_test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile $$(find rtmp_server -name '*.py')
+
+override_dh_install:
+	dh_install
+	find debian/rtmp-server -name '__pycache__' -type d -exec rm -rf {} +

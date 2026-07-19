@@ -1,0 +1,101 @@
+#!/bin/sh
+# postinst для rtmp-server.
+#
+# Идемпотентно (безопасно перезапускать): каждый тяжёлый шаг проверяет
+# маркер/существование перед тем, как что-то качать или менять. Никогда
+# не считает машину чистой — сначала adopt.py сообщает, что уже развёрнуто.
+set -e
+
+APP_DIR=/opt/rtmp-server
+LOG_DIR=/var/log/rtmp-server
+STATE_DIR=/var/lib/rtmp-server
+UNITS_SRC="$APP_DIR/systemd-units"
+UNITS_DST=/etc/systemd/system
+REPO=andreipiatov2015-cmyk/local
+SITE_VENV=/var/www/.venv
+
+case "$1" in
+  configure)
+    mkdir -p "$LOG_DIR" "$STATE_DIR"
+
+    VERSION=$(cat "$APP_DIR/VERSION")
+    echo "RTMP-server $VERSION: проверка окружения..."
+    PYTHONPATH="$APP_DIR" python3 -m rtmp_server.setup.adopt || true
+
+    # --- nginx+RTMP: тяжёлая зависимость, берём готовую сборку из GitHub Release ---
+    NGINX_MARKER=/usr/local/nginx/.rtmp-server-installed-version
+    if [ -x /usr/local/nginx/sbin/nginx ] && [ -f "$NGINX_MARKER" ] && [ "$(cat "$NGINX_MARKER")" = "$VERSION" ]; then
+        echo "nginx+RTMP уже установлен (версия $VERSION) — пропускаю."
+    else
+        ASSET="nginx-rtmp-$VERSION.tar.gz"
+        URL="https://github.com/$REPO/releases/download/v$VERSION/$ASSET"
+        SUMS_URL="https://github.com/$REPO/releases/download/v$VERSION/SHA256SUMS"
+        TMP=$(mktemp -d)
+        echo "Скачивание $ASSET из GitHub Release ($REPO)..."
+        if curl -fsSL -o "$TMP/$ASSET" "$URL" 2>/dev/null && curl -fsSL -o "$TMP/SHA256SUMS" "$SUMS_URL" 2>/dev/null; then
+            EXPECTED=$(grep " $ASSET\$" "$TMP/SHA256SUMS" | awk '{print $1}')
+            ACTUAL=$(sha256sum "$TMP/$ASSET" | awk '{print $1}')
+            if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ]; then
+                mkdir -p /usr/local/nginx
+                tar -xzf "$TMP/$ASSET" -C /usr/local/nginx
+                echo "$VERSION" > "$NGINX_MARKER"
+                id -u nginx >/dev/null 2>&1 || useradd -r -s /sbin/nologin nginx
+                echo "nginx+RTMP установлен в /usr/local/nginx."
+            else
+                echo "ВНИМАНИЕ: чексумма $ASSET не совпала — установка nginx+RTMP пропущена." >&2
+                echo "  Повторить можно вручную: rtmp-server-ctl (или мастер первого запуска GUI)." >&2
+            fi
+        else
+            echo "ВНИМАНИЕ: не удалось скачать $ASSET (нет сети или релиз ещё не опубликован)." >&2
+            echo "  nginx+RTMP не установлен. Сайт продолжит работать на уже развёрнутой версии, если она есть." >&2
+        fi
+        rm -rf "$TMP"
+    fi
+
+    # --- Python-окружение сайта (быстрая зависимость — ставим на месте, интернет есть) ---
+    if [ ! -x "$SITE_VENV/bin/python3" ]; then
+        echo "Создаю venv сайта в $SITE_VENV..."
+        mkdir -p /var/www
+        if python3 -m venv "$SITE_VENV" 2>/dev/null; then
+            "$SITE_VENV/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
+            "$SITE_VENV/bin/pip" install flask flask-cors requests openpyxl pandas schedule pillow websockets gunicorn waitress >/dev/null 2>&1 \
+                && echo "Python-зависимости сайта установлены." \
+                || echo "ВНИМАНИЕ: pip install зависимостей сайта завершился с ошибкой — проверьте вручную." >&2
+        else
+            echo "ВНИМАНИЕ: не удалось создать venv сайта." >&2
+        fi
+    fi
+
+    # ffmpeg нужен для трансляции в VK/OK — best-effort, не блокирует установку
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+        apt-get install -y --no-install-recommends ffmpeg >/dev/null 2>&1 \
+            && echo "ffmpeg установлен." \
+            || echo "ВНИМАНИЕ: не удалось установить ffmpeg через apt — установите вручную." >&2
+    fi
+
+    # --- systemd-юниты сайта: никогда не перезаписываем существующие молча ---
+    mkdir -p "$UNITS_DST"
+    for unit in nginx-rtmp.service live-server.service reboot-server.service; do
+        if [ -f "$UNITS_DST/$unit" ]; then
+            echo "Юнит $unit уже существует — оставляю как есть."
+        else
+            cp "$UNITS_SRC/$unit" "$UNITS_DST/$unit"
+            echo "Установлен юнит $unit."
+        fi
+    done
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    for unit in nginx-rtmp.service live-server.service reboot-server.service; do
+        systemctl enable "$unit" >/dev/null 2>&1 || true
+    done
+
+    echo ""
+    echo "=================================================================="
+    echo " RTMP-server $VERSION установлен."
+    echo " GUI:      rtmp-server"
+    echo " Консоль:  rtmp-server-ctl status"
+    echo " Лог установки шагов выше — при необходимости повторите вручную."
+    echo "=================================================================="
+    ;;
+esac
+
+exit 0

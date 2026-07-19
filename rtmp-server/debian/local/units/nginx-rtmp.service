@@ -1,0 +1,16 @@
+[Unit]
+Description=nginx (custom build with RTMP module) for the local streaming site
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/usr/local/nginx/logs/nginx.pid
+ExecStart=/usr/local/nginx/sbin/nginx
+ExecReload=/usr/local/nginx/sbin/nginx -s reload
+ExecStop=/usr/local/nginx/sbin/nginx -s stop
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -18,14 +18,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Sync repository www/ to /var/www
-        run: |
-          rsync -av \
-            --exclude ".git/" \
-            --exclude ".github/" \
-            "$GITHUB_WORKSPACE"/www/ /var/www/
-
-      - name: Fix modes
-        run: |
-          find /var/www -type d -exec chmod 775 {} \;
-          find /var/www -type f -exec chmod 664 {} \;
+      # Раньше здесь был голый `rsync www/ -> /var/www` без проверки, без
+      # рестарта сервисов и без отката при поломке — если новый код не
+      # поднимался, никто об этом не узнавал. Теперь копирование, бэкап,
+      # рестарт live-server/reboot-server и health-check с автооткатом
+      # делает единый движок обновлений RTMP-server (rtmp_server/updates/).
+      # Требование: на этом self-hosted раннере должен быть установлен
+      # пакет rtmp-server (postinst кладёт rtmp-server-ctl в /usr/bin).
+      - name: Apply site update via RTMP-server
+        run: rtmp-server-ctl site-update apply --source "$GITHUB_WORKSPACE/www"

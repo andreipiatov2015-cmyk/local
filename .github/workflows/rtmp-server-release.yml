@@ -1,0 +1,105 @@
+name: Release RTMP-server
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-nginx-rtmp:
+    runs-on: ubuntu-latest
+    # debian:10 ближе к базе Astra Linux 1.8, чем ubuntu-latest — снижает
+    # риск несовместимости glibc/openssl между собранным бинарником и целью.
+    container: debian:10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          apt-get update
+          apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev git wget ca-certificates
+
+      - name: Build nginx + RTMP module
+        run: |
+          set -e
+          VERSION=$(cat rtmp-server/VERSION)
+          NGINX_VERSION=1.26.0
+          WORK=/tmp/nginx-build
+          rm -rf "$WORK" && mkdir -p "$WORK" && cd "$WORK"
+          git clone --depth=1 https://github.com/arut/nginx-rtmp-module.git
+          wget -q "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz"
+          tar -xzf "nginx-${NGINX_VERSION}.tar.gz"
+          cd "nginx-${NGINX_VERSION}"
+          ./configure \
+            --prefix=/usr/local/nginx \
+            --with-http_ssl_module \
+            --with-http_v2_module \
+            --with-http_flv_module \
+            --with-http_mp4_module \
+            --with-http_gzip_static_module \
+            --add-module=../nginx-rtmp-module
+          make -j"$(nproc)"
+          make install DESTDIR=/tmp/nginx-out
+          cd /tmp/nginx-out/usr/local/nginx
+          tar -czf "/tmp/nginx-rtmp-${VERSION}.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nginx-rtmp-tarball
+          path: /tmp/nginx-rtmp-*.tar.gz
+
+  build-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y devscripts debhelper lintian
+
+      - name: Sync changelog version with VERSION file
+        run: |
+          cd rtmp-server
+          NEW_VERSION=$(cat VERSION)
+          dch --newversion "${NEW_VERSION}-1" --distribution stable "Automated release ${NEW_VERSION}"
+
+      - name: Build .deb
+        run: |
+          cd rtmp-server
+          dpkg-buildpackage -us -uc -b
+
+      - name: Lintian check (non-blocking)
+        run: lintian ./rtmp-server_*.deb || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: rtmp-server_*.deb
+
+  publish-release:
+    needs: [build-nginx-rtmp, build-deb]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd artifacts
+          sha256sum *.deb *.tar.gz > SHA256SUMS
+          ls -la
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.deb
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS
