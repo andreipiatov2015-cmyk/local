@@ -9,3 +9,9 @@
 # root (см. rtmp_server/site_admin/root_auth.py) — но сам запуск приложения
 # уже происходит с правами root.
 ALL ALL=(root) NOPASSWD: /usr/bin/rtmp-server
+
+# Клик по ярлыку из графической оболочки не даёт sudo контролирующий
+# терминал — по умолчанию (requiretty) sudo в этом случае просто молча
+# ничего не делает вместо запуска. Отключаем это требование только для
+# нашей команды, не трогая requiretty глобально для остальной системы.
+Defaults!/usr/bin/rtmp-server !requiretty

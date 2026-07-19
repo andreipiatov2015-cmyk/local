@@ -144,19 +144,29 @@ case "$1" in
     cp "$APP_DIR/skel/rtmp-server-autostart.desktop" /etc/xdg/autostart/rtmp-server.desktop
 
     # --- Ярлык на рабочем столе: новым пользователям (/etc/skel) и всем существующим ---
+    # gio set ... trusted true — best-effort: некоторые файловые менеджеры
+    # (GNOME/MATE Caja-семейство) считают .desktop-файл "непроверенным" и
+    # отказываются его запускать по клику, даже с выставленным +x, пока
+    # пользователь явно не разрешит через "Allow Launching". Пытаемся
+    # проставить доверие заранее; если gio недоступен — просто игнорируем.
     mkdir -p /etc/skel/Desktop
     cp /usr/share/applications/rtmp-server.desktop /etc/skel/Desktop/rtmp-server.desktop
     chmod +x /etc/skel/Desktop/rtmp-server.desktop
+    command -v gio >/dev/null 2>&1 && gio set /etc/skel/Desktop/rtmp-server.desktop metadata::trusted true 2>/dev/null || true
 
     for home in /root /home/*; do
         [ -d "$home" ] || continue
         mkdir -p "$home/Desktop"
         cp /usr/share/applications/rtmp-server.desktop "$home/Desktop/rtmp-server.desktop"
         chmod +x "$home/Desktop/rtmp-server.desktop"
+        command -v gio >/dev/null 2>&1 && gio set "$home/Desktop/rtmp-server.desktop" metadata::trusted true 2>/dev/null || true
         owner=$(stat -c '%U:%G' "$home" 2>/dev/null || echo root:root)
         chown "$owner" "$home/Desktop/rtmp-server.desktop" 2>/dev/null || true
     done
     echo "Ярлык добавлен на рабочий стол всем существующим пользователям и в /etc/skel для новых."
+    echo "Если ярлык всё равно не запускается кликом — попробуйте правой кнопкой"
+    echo "по нему -> 'Разрешить запуск' (или аналог в вашем файловом менеджере),"
+    echo "либо запустите вручную: sudo /usr/bin/rtmp-server"
 
     echo ""
     echo "=================================================================="
