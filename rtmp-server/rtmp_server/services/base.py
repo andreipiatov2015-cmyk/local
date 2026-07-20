@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import abc
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -30,11 +30,6 @@ class ServiceStatus:
     port: int | None = None
     uptime_seconds: int | None = None
     detail: str = ""
-    extra: dict = field(default_factory=dict)
-
-    @property
-    def is_running(self) -> bool:
-        return self.state == ServiceState.RUNNING
 
 
 class ServiceHandle(abc.ABC):

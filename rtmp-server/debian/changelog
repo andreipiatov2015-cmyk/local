@@ -1,3 +1,36 @@
+rtmp-server (1.0.11-1) stable; urgency=medium
+
+  * Полный аудит кода по прямому запросу владельца — найденные и
+    исправленные баги/мёртвый код:
+    - vk_pusher (ProcessService) имел общий start_argv без обязательного
+      аргумента stream_name — кнопка "Запустить"/"Перезапустить" на
+      вкладке "Сервисы" (и `rtmp-server-ctl start/restart vk_pusher`)
+      молча ничего не делала: start_vk.py сразу завершался с ошибкой,
+      но Popen этого не замечает. Теперь start_argv=None и явная ошибка
+      с указанием, что нужно использовать вкладку "Трансляция" — она
+      знает имя реально активного потока (site_admin/stream_info.py
+      это уже умел, просто не был единственным путём).
+    - Из-за предыдущего фикса `rtmp-server-ctl start all`/`restart all`
+      мог упасть необработанным traceback'ом, наткнувшись на эту новую
+      ошибку у vk_pusher — cmd_service_action теперь ловит ошибку
+      конкретного сервиса, печатает её и продолжает остальные.
+    - CI-релиз (`rtmp-server-release.yml`) на каждый тег безусловно
+      прогонял `dch --newversion`, что затирало/задваивало вручную
+      написанные записи в debian/changelog (этот проект пишет их для
+      каждой версии ДО тега) — теперь пропускается, если версия наверху
+      changelog уже совпадает с VERSION.
+    - Неточный docstring в constants.py утверждал, что bash-шаблоны
+      debian/* рендерятся автоматически из этого файла — такого шага
+      никогда не было, значения сверяются вручную и проверяются
+      tests/test_unit_consistency.py. Docstring исправлен.
+    - Мёртвый код удалён: ServiceStatus.extra и ServiceHandle.is_running
+      (нигде не читались/не вызывались), system_monitor.get_top_processes()
+      (нигде не использовалась).
+    - CLI: добавлена недостающая `rtmp-server-ctl stream targets edit`
+      (в GUI такое редактирование уже было, в CLI — нет).
+
+ -- RTMP-server maintainers <support@rtmp-server.local>  Mon, 20 Jul 2026 13:15:00 +0000
+
 rtmp-server (1.0.10-1) stable; urgency=high
 
   * Критический баг: обновление сайта падало на КАЖДОМ пуше в main с
