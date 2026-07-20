@@ -2,61 +2,23 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>Admin</title>
+  <title>Участники очного этапа</title>
   <link rel="stylesheet" href="../static/admin.css">
   <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 
 <body>
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <span class="logo">🎥 Live Admin</span>
-      <button id="collapseSidebar" aria-label="Свернуть меню">❮</button>
-    </div>
-
-    <nav class="sidebar-menu">
-      <a class="menu-item active" href="/admin">
-        <span class="icon">✏️</span>
-        <span class="text">Редактор</span>
-      </a>
-
-      <a class="menu-item" href="#" id="autoAddLink">
-        <span class="icon">📥</span>
-        <span class="text">Автодобавление</span>
-      </a>
-
-      <a class="menu-item" href="/competition">
-        <span class="icon">🏆</span>
-        <span class="text">Конкурс</span>
-      </a>
-
-      <a class="menu-item" href="/broadcast">
-        <span class="icon">📺</span>
-        <span class="text">Трансляция</span>
-      </a>
-
-      <a class="menu-item" href="/staff">
-        <span class="icon">👥</span>
-        <span class="text">Сотрудники</span>
-      </a>
-
-      <a class="menu-item" href="/tables">
-        <span class="icon">📋</span>
-        <span class="text">Таблицы заявок</span>
-      </a>
-    </nav>
-
-    <div class="sidebar-footer">
-      <button id="vkStreamButton" class="vk-btn">⚙️ Настройка трансляции</button>
-
-      <a href="/logout" class="menu-item logout">
-        <span class="icon">🚪</span>
-        <span class="text">Выход</span>
-      </a>
-    </div>
-  </aside>
+  {% import "_sidebar.html" as nav %}
+  {% call nav.render_sidebar("participants") %}
+    <button id="vkStreamButton" class="vk-btn">⚙️ Настройка трансляции</button>
+  {% endcall %}
 
   <div class="content">
+    <div class="vk-tabs participants-view-toggle">
+      <button id="viewManualBtn" class="vk-tab active" type="button">Добавить вручную</button>
+      <button id="viewAutoAddBtn" class="vk-tab" type="button">Автодобавление (Excel)</button>
+    </div>
+
     <div id="preview">
       <h2>Предпросмотр участника</h2>
 

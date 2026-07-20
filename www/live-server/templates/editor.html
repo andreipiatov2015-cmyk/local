@@ -2,48 +2,16 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Редактор мероприятий</title>
+    <title>Мероприятия</title>
     <link rel="stylesheet" href="../static/admin.css">
 </head>
 <body>
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <span class="logo">🎥 Live Admin</span>
-            <button id="collapseSidebar">❮</button>
-        </div>
-        <nav class="sidebar-menu">
-            <a class="menu-item active" href="/editor">
-                <span class="icon">✏️</span>
-                <span class="text">Редактор</span>
-            </a>
-            <a class="menu-item" href="/admin">
-                <span class="icon">📥</span>
-                <span class="text">Автодобавление</span>
-            </a>
-            <a class="menu-item" href="/competition">
-                <span class="icon">🏆</span>
-                <span class="text">Конкурс</span>
-            </a>
-            <a class="menu-item" href="/broadcast">
-                <span class="icon">📺</span>
-                <span class="text">Трансляция</span>
-            </a>
-            <a class="menu-item" href="/staff">
-                <span class="icon">👥</span>
-                <span class="text">Сотрудники</span>
-            </a>
-        </nav>
-        <div class="sidebar-footer">
-            <a href="/logout" class="menu-item logout">
-                <span class="icon">🚪</span>
-                <span class="text">Выход</span>
-            </a>
-        </div>
-    </aside>
+    {% import "_sidebar.html" as nav %}
+    {{ nav.render_sidebar("events") }}
 
     <main class="content">
         <div class="card" style="width:100%;max-width:1100px;">
-            <h1 class="page-title">Редактор мероприятий</h1>
+            <h1 class="page-title">Мероприятия</h1>
             <button id="openModal" class="btn btn-primary" type="button">Создать мероприятие</button>
 
             <table id="eventsTable" class="editor-table" style="margin-top:20px;">

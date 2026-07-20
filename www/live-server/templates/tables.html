@@ -8,42 +8,8 @@
   <link rel="stylesheet" href="/static/tables.css" />
 </head>
 <body class="tables-page">
-  <aside class="sidebar">
-    <div class="sidebar-header">
-      <span class="logo">🎥 Live Admin</span>
-      <button id="collapseSidebar" aria-label="Свернуть меню">❮</button>
-    </div>
-
-    <nav class="sidebar-menu">
-      <a class="menu-item" href="/admin">
-        <span class="icon">✏️</span>
-        <span class="text">Редактор</span>
-      </a>
-      <a class="menu-item" href="/competition">
-        <span class="icon">🏆</span>
-        <span class="text">Конкурс</span>
-      </a>
-      <a class="menu-item" href="/broadcast">
-        <span class="icon">📺</span>
-        <span class="text">Трансляция</span>
-      </a>
-      <a class="menu-item" href="/staff">
-        <span class="icon">👥</span>
-        <span class="text">Сотрудники</span>
-      </a>
-      <a class="menu-item active" href="/tables">
-        <span class="icon">📋</span>
-        <span class="text">Таблицы заявок</span>
-      </a>
-    </nav>
-
-    <div class="sidebar-footer">
-      <a href="/logout" class="menu-item logout">
-        <span class="icon">🚪</span>
-        <span class="text">Выход</span>
-      </a>
-    </div>
-  </aside>
+  {% import "_sidebar.html" as nav %}
+  {{ nav.render_sidebar("tables") }}
 
   <main class="content container tables-content">
     <section class="card page-card">

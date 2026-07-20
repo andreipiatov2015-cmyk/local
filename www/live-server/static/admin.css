@@ -848,6 +848,15 @@ tr:hover {
     overflow-y: auto;
 }
 
+/* Список выступающих пуст — прячем блок и растягиваем плеер на весь экран. */
+.broadcast-layout-no-list {
+    grid-template-columns: 1fr;
+}
+
+.broadcast-layout-no-list .broadcast-list {
+    display: none;
+}
+
 @media (max-width: 960px) {
     .broadcast-layout-fullscreen {
         grid-template-columns: 1fr;

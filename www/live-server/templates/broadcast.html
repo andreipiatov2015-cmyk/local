@@ -189,12 +189,16 @@
       }
 
       // --- Entries (как у тебя) ---
+      const broadcastLayout = document.querySelector(".broadcast-layout");
+
       function loadEntries() {
         fetch("/entries")
           .then((r) => r.json())
           .then((data) => {
             const entriesContainer = document.getElementById("entries");
             if (!entriesContainer) return;
+
+            broadcastLayout?.classList.toggle("broadcast-layout-no-list", data.length === 0);
 
             entriesContainer.innerHTML = "";
 
