@@ -20,6 +20,7 @@ from pathlib import Path
 from rtmp_server import __version__
 from rtmp_server.monitor import site_monitor, system_monitor
 from rtmp_server.services.definitions import get_all_services, get_service
+from rtmp_server.site_admin import stream_info
 from rtmp_server.site_admin import users as site_users
 from rtmp_server.updates import app_updater, site_updater
 
@@ -132,6 +133,128 @@ def cmd_site_users_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_stream_name(explicit: str | None) -> str | None:
+    if explicit:
+        return explicit
+    streams = stream_info.list_live_streams()
+    return streams[0] if streams else None
+
+
+def cmd_stream_status(args: argparse.Namespace) -> int:
+    streams = stream_info.list_live_streams()
+    if not streams:
+        print("Активной трансляции сейчас нет")
+        return 0
+    for name in streams:
+        print(f"поток: {name}")
+    return 0
+
+
+def cmd_stream_probe(args: argparse.Namespace) -> int:
+    name = _resolve_stream_name(args.name)
+    if not name:
+        print("Активной трансляции сейчас нет")
+        return 1
+    info = stream_info.probe_incoming_stream(name)
+    if not info.live:
+        print(f"Поток {name}: недоступен ({info.error})")
+        return 1
+    print(f"Поток:      {info.stream_name}")
+    print(f"Разрешение: {info.width}x{info.height}")
+    print(f"FPS:        {info.fps}")
+    print(f"Видео:      {info.video_codec}")
+    print(f"Аудио:      {info.audio_codec} ({info.audio_sample_rate} Гц)")
+    return 0
+
+
+def cmd_stream_bitrate(args: argparse.Namespace) -> int:
+    name = _resolve_stream_name(args.name)
+    if not name:
+        print("Активной трансляции сейчас нет")
+        return 1
+    sample = stream_info.measure_segment_bitrate(name)
+    if not sample.segments_measured:
+        print(f"Нет HLS-сегментов для потока {name}")
+        return 1
+    print(f"Поток {name}: ~{sample.avg_kbps} кбит/с (мин {sample.min_kbps}, макс {sample.max_kbps}, по {sample.segments_measured} сегментам)")
+    return 0
+
+
+def cmd_stream_test_bandwidth(args: argparse.Namespace) -> int:
+    result = stream_info.test_server_bandwidth()
+    if not result.ok:
+        print(f"Не удалось проверить канал сервера: {result.error}")
+        return 1
+    print(f"Канал сервера наружу: ~{result.mbps} Мбит/с")
+    return 0
+
+
+def cmd_stream_vk_settings_show(args: argparse.Namespace) -> int:
+    settings = stream_info.get_vk_settings()
+    print(f"enabled:           {settings.enabled}")
+    print(f"vk_rtmp_url:       {settings.vk_rtmp_url or '(не задан)'}")
+    print(f"target_ids:        {', '.join(settings.target_ids) or '(нет)'}")
+    print(f"bitrate_kbps:      {settings.bitrate_kbps if settings.bitrate_kbps is not None else '(без ограничения)'}")
+    print(f"resolution_height: {settings.resolution_height if settings.resolution_height is not None else '(как на входе)'}")
+    return 0
+
+
+def cmd_stream_vk_settings_set(args: argparse.Namespace) -> int:
+    settings = stream_info.get_vk_settings()
+    if args.enable:
+        settings.enabled = True
+    if args.disable:
+        settings.enabled = False
+    if args.vk_url is not None:
+        settings.vk_rtmp_url = args.vk_url
+    if args.bitrate is not None:
+        settings.bitrate_kbps = None if args.bitrate == 0 else args.bitrate
+    if args.resolution is not None:
+        settings.resolution_height = None if args.resolution == 0 else args.resolution
+    stream_info.save_vk_settings(settings)
+    print("Настройки VK сохранены. Применятся при следующем запуске трансляции.")
+    return 0
+
+
+def cmd_stream_targets_list(args: argparse.Namespace) -> int:
+    for target in stream_info.list_stream_targets():
+        state = "включена" if target.enabled else "выключена"
+        print(f"{target.id:10s} {target.name:25s} {state:10s} {target.url}")
+    return 0
+
+
+def cmd_stream_targets_add(args: argparse.Namespace) -> int:
+    import secrets
+
+    targets = stream_info.list_stream_targets()
+    target_id = secrets.token_hex(4)
+    targets.append(stream_info.VkTarget(id=target_id, name=args.name, url=args.url, enabled=not args.disabled))
+    stream_info.save_stream_targets(targets)
+    print(f"Добавлена площадка id={target_id}")
+    return 0
+
+
+def cmd_stream_targets_delete(args: argparse.Namespace) -> int:
+    targets = stream_info.list_stream_targets()
+    remaining = [t for t in targets if t.id != args.id]
+    if len(remaining) == len(targets):
+        print(f"Площадка id={args.id} не найдена")
+        return 1
+    stream_info.save_stream_targets(remaining)
+    print(f"Площадка id={args.id} удалена")
+    return 0
+
+
+def cmd_stream_restart_vk(args: argparse.Namespace) -> int:
+    name = _resolve_stream_name(args.name)
+    if not name:
+        print("Активной трансляции сейчас нет — перезапускать нечего")
+        return 1
+    stream_info.restart_vk_push(name)
+    print(f"Трансляция в VK перезапущена для потока {name}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rtmp-server-ctl")
     parser.add_argument("--version", action="version", version=__version__)
@@ -194,6 +317,48 @@ def build_parser() -> argparse.ArgumentParser:
     p_su_delete = site_users_sub.add_parser("delete", help="удалить пользователя")
     p_su_delete.add_argument("id", type=int)
     p_su_delete.set_defaults(func=cmd_site_users_delete)
+
+    p_stream = sub.add_parser("stream", help="трансляция: входящий поток и пуш в VK/OK")
+    stream_sub = p_stream.add_subparsers(dest="stream_command", required=True)
+
+    stream_sub.add_parser("status", help="список активных потоков").set_defaults(func=cmd_stream_status)
+
+    p_probe = stream_sub.add_parser("probe", help="параметры входящего потока (разрешение/fps/кодеки)")
+    p_probe.add_argument("name", nargs="?", default=None, help="имя потока (по умолчанию — первый активный)")
+    p_probe.set_defaults(func=cmd_stream_probe)
+
+    p_bitrate = stream_sub.add_parser("bitrate", help="приближённый битрейт входящего потока по HLS-сегментам")
+    p_bitrate.add_argument("name", nargs="?", default=None)
+    p_bitrate.set_defaults(func=cmd_stream_bitrate)
+
+    stream_sub.add_parser("test-bandwidth", help="тест исходящего канала сервера").set_defaults(func=cmd_stream_test_bandwidth)
+
+    p_vk_settings = stream_sub.add_parser("vk-settings", help="настройки пуша в VK/OK")
+    vk_settings_sub = p_vk_settings.add_subparsers(dest="vk_settings_command", required=True)
+    vk_settings_sub.add_parser("show", help="показать текущие настройки").set_defaults(func=cmd_stream_vk_settings_show)
+    p_vk_set = vk_settings_sub.add_parser("set", help="изменить настройки")
+    p_vk_set.add_argument("--enable", action="store_true", help="включить пуш в VK")
+    p_vk_set.add_argument("--disable", action="store_true", help="выключить пуш в VK")
+    p_vk_set.add_argument("--vk-url", default=None, help="RTMP URL с ключом трансляции")
+    p_vk_set.add_argument("--bitrate", type=int, default=None, help="кбит/с; 0 = без ограничения")
+    p_vk_set.add_argument("--resolution", type=int, default=None, help="высота кадра; 0 = как на входе")
+    p_vk_set.set_defaults(func=cmd_stream_vk_settings_set)
+
+    p_targets = stream_sub.add_parser("targets", help="площадки вещания VK/OK")
+    targets_sub = p_targets.add_subparsers(dest="targets_command", required=True)
+    targets_sub.add_parser("list", help="список площадок").set_defaults(func=cmd_stream_targets_list)
+    p_target_add = targets_sub.add_parser("add", help="добавить площадку")
+    p_target_add.add_argument("name")
+    p_target_add.add_argument("url")
+    p_target_add.add_argument("--disabled", action="store_true", help="создать выключенной")
+    p_target_add.set_defaults(func=cmd_stream_targets_add)
+    p_target_delete = targets_sub.add_parser("delete", help="удалить площадку")
+    p_target_delete.add_argument("id")
+    p_target_delete.set_defaults(func=cmd_stream_targets_delete)
+
+    p_restart_vk = stream_sub.add_parser("restart-vk", help="перезапустить трансляцию в VK/OK")
+    p_restart_vk.add_argument("name", nargs="?", default=None)
+    p_restart_vk.set_defaults(func=cmd_stream_restart_vk)
 
     return parser
 
