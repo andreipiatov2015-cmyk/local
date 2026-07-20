@@ -111,14 +111,35 @@ def get_vk_urls(settings: dict, targets: list):
     return []
 
 
-def popen_ffmpeg_live(stream: str, vk_url: str):
+def popen_ffmpeg_live(stream: str, vk_url: str, settings: dict = None):
     """
     HLS -> VK с перекодированием (как твоя рабочая ручная команда)
+
+    settings.bitrate_kbps / settings.resolution_height — опциональные поля,
+    выставляемые через вкладку "Трансляция" в RTMP-server. Если не заданы —
+    поведение полностью прежнее (без ограничения битрейта, без масштабирования).
     """
+    settings = settings or {}
     hls_in = LOCAL_HLS_TEMPLATE.format(stream=stream)
 
     ff_log = LOG_DIR / f"ffmpeg_live_{stream}.log"
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    video_args = ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency"]
+
+    bitrate_kbps = settings.get("bitrate_kbps")
+    if bitrate_kbps:
+        video_args += [
+            "-b:v", f"{bitrate_kbps}k",
+            "-maxrate", f"{bitrate_kbps}k",
+            "-bufsize", f"{bitrate_kbps * 2}k",
+        ]
+
+    resolution_height = settings.get("resolution_height")
+    if resolution_height:
+        video_args += ["-vf", f"scale=-2:{resolution_height}"]
+
+    video_args += ["-g", "60", "-keyint_min", "60", "-sc_threshold", "0", "-pix_fmt", "yuv420p"]
 
     cmd = [
         FFMPEG, "-hide_banner", "-loglevel", "info",
@@ -126,9 +147,7 @@ def popen_ffmpeg_live(stream: str, vk_url: str):
         "-fflags", "+genpts",
         "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2",
         "-i", hls_in,
-        "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-        "-g", "60", "-keyint_min", "60", "-sc_threshold", "0",
-        "-pix_fmt", "yuv420p",
+        *video_args,
         "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2",
         "-f", "flv",
         "-flvflags", "no_duration_filesize",
@@ -191,7 +210,7 @@ def main():
 
     # стартуем первый url (обычно один). если нужно мульти-пуш — можно расширить позже
     vk_url = vk_urls[0]
-    pid = popen_ffmpeg_live(stream, vk_url)
+    pid = popen_ffmpeg_live(stream, vk_url, settings)
     write_lock(stream, pid)
     log(f"OK: ffmpeg запущен pid={pid}, stream={stream}")
     return 0
