@@ -41,6 +41,12 @@ LIVE_SERVER_SCRIPT = f"{LIVE_SERVER_DIR}/server.py"
 REBOOT_SERVER_SCRIPT = f"{REBOOT_SERVER_DIR}/server.py"
 VK_PUSHER_SCRIPT = f"{LIVE_SERVER_DIR}/start_vk.py"
 
+# Настройки VK/OK-пуша — читаются/пишутся напрямую вкладкой "Трансляция"
+# (не через маршруты Flask, аналогично site_admin/users.py), а start_vk.py
+# читает их же при следующем запуске ffmpeg.
+VK_SETTINGS_FILE = f"{LIVE_SERVER_DIR}/vk_settings.json"
+STREAM_TARGETS_FILE = f"{LIVE_SERVER_DIR}/stream_targets.json"
+
 # Подтверждено владельцем: отдельного venv на продакшене НЕТ, сайт запускается
 # системным Python напрямую (см. restart_astra.sh: PYTHON_BIN=/usr/bin/python3).
 # Юниты и постинст используют ИМЕННО это, а не venv, который был неверным

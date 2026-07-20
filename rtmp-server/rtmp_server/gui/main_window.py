@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import QMainWindow, QTabWidget
 from rtmp_server import __version__
 from rtmp_server.gui.tabs.services_tab import ServicesTab
 from rtmp_server.gui.tabs.status_tab import StatusTab
+from rtmp_server.gui.tabs.stream_tab import StreamTab
 from rtmp_server.gui.tabs.system_tab import SystemTab
 from rtmp_server.gui.tabs.updates_tab import UpdatesTab
 from rtmp_server.gui.tabs.users_tab import UsersTab
@@ -21,6 +22,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(ServicesTab(), "Сервисы")
         tabs.addTab(SystemTab(), "Система")
         tabs.addTab(UsersTab(), "Пользователи сайта")
+        tabs.addTab(StreamTab(), "Трансляция")
         tabs.addTab(UpdatesTab(), "Обновления")
         self.setCentralWidget(tabs)
 
