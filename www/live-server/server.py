@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, g, make_response, send_file
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, g, make_response, send_file, abort
 import json
 import os
 import io
@@ -791,6 +791,11 @@ def staff():
     users = query_db("SELECT id, username, email, role, is_verified FROM users ORDER BY id")
     return render_template("staff.html", users=users, stream_url=resolve_stream_url())
 
+@app.route("/profile")
+@login_required
+def profile():
+    return render_template("profile.html", user=get_current_user())
+
 @app.route("/broadcast")
 def broadcast():
     return render_template("broadcast.html", stream_url=resolve_stream_url())
@@ -1006,9 +1011,9 @@ def verify():
     token = request.args.get("token", "")
     row = query_db("SELECT id FROM users WHERE verify_token=?", (token,), one=True)
     if not row:
-        return "Неверный токен", 400
+        return render_template("verify_failed.html"), 400
     query_db("UPDATE users SET is_verified=1, verify_token=NULL, updated_at=? WHERE id=?", (datetime.datetime.utcnow().isoformat(), row["id"]))
-    return "E-mail подтверждён!"
+    return render_template("verify_success.html")
 
 
 def now_iso():
@@ -2799,7 +2804,7 @@ def tables_page():
 def table_details_page(table_id):
     user = table_user_from_request()
     if not user:
-        return redirect(url_for("login_page"))
+        return redirect(url_for("login"))
     row = query_db("SELECT id FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
     if not row:
         abort(404)
@@ -4654,52 +4659,9 @@ def preview_file(entry_id, ftype):
 # =====================================================
 
 VK_SETTINGS_FILE = os.path.join(BASE_DIR, "vk_settings.json")
-PREVIEW_PID_FILE = os.path.join(BASE_DIR, "start_vk_preview.pid")
 START_VK_SCRIPT = os.path.join(BASE_DIR, "start_vk.py")  # путь к скрипту, который мы писали
 VK_LOCK_TEMPLATE = "/tmp/start_vk_{stream}.lock"
 DEFAULT_STREAM_NAME = os.environ.get("RTMP_STREAM_NAME", "stream")
-
-
-def start_preview_process():
-    """Запустить start_vk.py как отдельный процесс (режим preview)."""
-    # если pid-файл есть — считаем, что уже запущено
-    if os.path.exists(PREVIEW_PID_FILE):
-        try:
-            with open(PREVIEW_PID_FILE) as f:
-                pid = int(f.read().strip())
-            os.kill(pid, 0)
-            return
-        except Exception:
-            # старый pid мёртв — продолжим и перезапишем
-            pass
-
-    # Запускаем скрипт с произвольным аргументом (preview)
-    cmd = ["/usr/bin/python3", START_VK_SCRIPT, "preview"]
-    try:
-        p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
-        with open(PREVIEW_PID_FILE, "w") as f:
-            f.write(str(p.pid))
-    except Exception as e:
-        app.logger.error("Не удалось запустить preview process: %s", e)
-
-def stop_preview_process():
-    """Остановить ранее запущенный preview процесс (если есть)."""
-    if not os.path.exists(PREVIEW_PID_FILE):
-        return
-    try:
-        with open(PREVIEW_PID_FILE) as f:
-            pid = int(f.read().strip())
-        # убиваем группу процессов
-        try:
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except Exception:
-            os.kill(pid, signal.SIGTERM)
-    except Exception as e:
-        app.logger.error("Ошибка при остановке preview: %s", e)
-    try:
-        os.remove(PREVIEW_PID_FILE)
-    except:
-        pass
 
 
 def load_vk_settings():
@@ -4937,6 +4899,22 @@ def vk_stop():
         save_vk_settings(s)
     except Exception as e:
         return jsonify({"status": "error", "message": f"Не удалось сохранить настройки: {e}"}), 500
+
+    # enabled=False сам по себе только предотвращает СЛЕДУЮЩИЙ запуск —
+    # start_vk.py читает этот флаг один раз при старте, уже запущенный
+    # ffmpeg/start_vk.py продолжил бы транслировать. Останавливаем процесс явно.
+    try:
+        subprocess.run(["pkill", "-f", "start_vk.py"], capture_output=True, timeout=5)
+    except Exception as e:
+        app.logger.warning("vk_stop: не удалось остановить процесс start_vk.py: %s", e)
+
+    lock_file = VK_LOCK_TEMPLATE.format(stream=DEFAULT_STREAM_NAME)
+    try:
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
+    except Exception:
+        pass
+
     return jsonify({"status": "ok", "msg": "VK streaming stopped"})
 
 @app.route("/vk/schedule", methods=["POST"])
