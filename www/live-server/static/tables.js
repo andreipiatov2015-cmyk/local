@@ -106,13 +106,6 @@ function parseDurationToSeconds(value, fallbackMinutes = 3) {
   return Math.round(asNumber * 60);
 }
 
-function formatDurationLabel(seconds) {
-  const s = Math.max(0, Math.floor(seconds || 0));
-  const mm = Math.floor(s / 60);
-  const ss = s % 60;
-  return `${mm}:${ss.toString().padStart(2, '0')}`;
-}
-
 function formatDateRuLong(value) {
   const text = (value || '').toString().trim();
   if (!text) return '';
@@ -483,18 +476,6 @@ async function initDetailPage() {
     renderPreview();
   }
 
-  function moveItem(fromPos, toPos) {
-    if (!sequenceItems.length) return;
-    const from = Number(fromPos);
-    const to = Number(toPos);
-    if (!Number.isInteger(from) || !Number.isInteger(to)) return;
-    if (from < 1 || to < 1 || from > sequenceItems.length || to > sequenceItems.length || from === to) return;
-    const [moved] = sequenceItems.splice(from - 1, 1);
-    sequenceItems.splice(to - 1, 0, moved);
-    queueSequenceSave();
-    renderPreview();
-  }
-
   function createSequenceId(prefix) {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   }
@@ -616,13 +597,6 @@ async function initDetailPage() {
     if (contextMenuEl) contextMenuEl.remove();
     contextMenuEl = null;
     contextMenuTargetId = '';
-  }
-
-  function getParticipantLabel(item) {
-    const row = previewRowsData[(item?.rowRef || 1) - 1] || [];
-    const title = getMappedValueByMatchers(row, ['название номера', 'номер']) || 'Без названия номера';
-    const fio = getMappedValueByMatchers(row, ['участник', 'фио']);
-    return fio ? `${title} — ${fio}` : title;
   }
 
   function getLastEndMinutesBeforeIndex(index, settings) {

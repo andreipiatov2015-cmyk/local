@@ -943,6 +943,7 @@ setIFOButton.addEventListener('click', () => {
   const vkModal = document.getElementById("vkModal");
   const vkCloseBtn = document.getElementById("vkCloseBtn");
   const vkScheduleBtn = document.getElementById("vkScheduleBtn");
+  const vkStopBtn = document.getElementById("vkStopBtn");
   const vkTabs = document.querySelectorAll(".vk-tab");
   const vkTabPanels = document.querySelectorAll(".vk-tab-panel");
 
@@ -1207,6 +1208,16 @@ setIFOButton.addEventListener('click', () => {
     await loadVkStatus();
     renderBroadcastTargets();
     vkBroadcastModal?.classList.add("visible");
+  });
+
+  vkStopBtn?.addEventListener("click", async () => {
+    if (!confirm("Остановить трансляцию в VK/OK?")) return;
+    const resp = await fetch("/vk/stop", { method: "POST" });
+    if (resp.ok) {
+      await loadVkStatus();
+    } else {
+      alert("Не удалось остановить трансляцию.");
+    }
   });
 
   vkBroadcastClose?.addEventListener("click", () => {
