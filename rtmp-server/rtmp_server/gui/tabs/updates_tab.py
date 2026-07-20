@@ -47,9 +47,14 @@ class UpdatesTab(QWidget):
         layout.addWidget(self.btn_apply)
 
         layout.addWidget(QLabel(
-            "<i>Обновление сайта штатно приходит автоматически через CI при пуше в main.\n"
-            "Кнопка ниже — ручной запасной путь (например, для офлайн-доставки).</i>"
+            "<i>Обновление сайта штатно приходит автоматически через CI при пуше в main,\n"
+            "а также вместе с каждым обновлением самого RTMP-server (см. постинст).\n"
+            "Кнопки ниже — на случай, если нужно обновить сайт прямо сейчас, не дожидаясь.</i>"
         ))
+        self.btn_site_update_latest = QPushButton("Обновить сайт (последняя версия с GitHub)")
+        self.btn_site_update_latest.clicked.connect(self._on_site_update_latest)
+        layout.addWidget(self.btn_site_update_latest)
+
         self.btn_site_update = QPushButton("Обновить сайт из папки...")
         self.btn_site_update.clicked.connect(self._on_site_update)
         layout.addWidget(self.btn_site_update)
@@ -129,6 +134,41 @@ class UpdatesTab(QWidget):
         self._set_busy(self.btn_check, self.btn_apply, busy=False)
         self.app_status_label.setText("Установка не удалась — см. сообщение об ошибке")
         QMessageBox.critical(self, "Ошибка", err)
+
+    def _on_site_update_latest(self) -> None:
+        confirm = QMessageBox.question(
+            self, "Обновление сайта",
+            "Скачать и применить актуальный код сайта с GitHub (main)?",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        self.site_status_label.setText("Скачиваю актуальный код сайта с GitHub...")
+        self._set_busy(self.btn_site_update_latest, self.btn_site_update, busy=True)
+
+        def do_apply():
+            import tempfile
+
+            with tempfile.TemporaryDirectory(prefix="rtmp-server-site-fetch-") as work_dir:
+                source = site_updater.fetch_latest_site_source(Path(work_dir))
+                return site_updater.apply(source)
+
+        def on_done(result):
+            self._set_busy(self.btn_site_update_latest, self.btn_site_update, busy=False)
+            self.site_status_label.setText(result.message)
+            if not result.applied:
+                QMessageBox.warning(self, "Обновление не применено", result.message)
+
+        def on_error(err):
+            self._set_busy(self.btn_site_update_latest, self.btn_site_update, busy=False)
+            self.site_status_label.setText("Обновление сайта не удалось — см. сообщение об ошибке")
+            QMessageBox.critical(self, "Ошибка", err)
+
+        worker = WorkerThread(do_apply)
+        worker.finished_ok.connect(on_done)
+        worker.finished_error.connect(on_error)
+        self._worker = worker
+        worker.start()
 
     def _on_site_update(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "Папка с новым кодом сайта (live-server/, reboot/)")

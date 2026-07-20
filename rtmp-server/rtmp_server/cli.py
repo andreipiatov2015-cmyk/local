@@ -78,6 +78,21 @@ def cmd_site_update_apply(args: argparse.Namespace) -> int:
     return 0 if result.applied else 1
 
 
+def cmd_site_update_apply_latest(args: argparse.Namespace) -> int:
+    import tempfile
+
+    print("Скачиваю актуальный код сайта с GitHub (main)...")
+    with tempfile.TemporaryDirectory(prefix="rtmp-server-site-fetch-") as work_dir:
+        try:
+            source = site_updater.fetch_latest_site_source(Path(work_dir))
+        except Exception as exc:
+            print(f"Не удалось скачать код сайта: {exc}")
+            return 1
+        result = site_updater.apply(source)
+    print(result.message)
+    return 0 if result.applied else 1
+
+
 def cmd_app_update_check(args: argparse.Namespace) -> int:
     release = app_updater.check_for_update()
     if release is None:
@@ -304,6 +319,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_site_apply = site_update_sub.add_parser("apply", help="применить обновление из директории")
     p_site_apply.add_argument("--source", required=True, help="директория с распакованным www/ (live-server/, reboot/)")
     p_site_apply.set_defaults(func=cmd_site_update_apply)
+
+    site_update_sub.add_parser(
+        "apply-latest",
+        help="скачать актуальный www/ с GitHub (main) и применить — без ручного копирования файлов",
+    ).set_defaults(func=cmd_site_update_apply_latest)
 
     p_app_update = sub.add_parser("app-update", help="самообновление RTMP-server")
     app_update_sub = p_app_update.add_subparsers(dest="app_update_command", required=True)
