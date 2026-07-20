@@ -53,10 +53,29 @@ def _rsync(src: Path, dest: Path) -> None:
 
 
 def _backup(dest: Path, backup_tar: Path) -> None:
+    """Бэкап перед обновлением. Раньше использовался рекурсивный tar.add(dest,...) —
+    он падает целиком на ПЕРВОМ же файле, который процесс не может прочитать
+    (например, .flask_secret_key с правами 600 — сайт запущен от root, а
+    self-hosted раннер деплоя от отдельного пользователя без доступа к нему).
+    Из-за этого обновление сайта падало на каждом пуше в main, даже когда
+    сам код обновления был исправен. Добавляем файлы по одному и пропускаем
+    с предупреждением те, что не читаются — секрет всё равно не меняется
+    code-обновлением, бэкапить его незачем, а падать из-за него нельзя."""
     backup_tar.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(backup_tar, "w") as tar:
-        if dest.exists():
-            tar.add(dest, arcname=dest.name)
+        if not dest.exists():
+            return
+        try:
+            tar.add(dest, arcname=dest.name, recursive=False)
+        except PermissionError as exc:
+            logger.warning("Бэкап %s: нет доступа к самой директории: %s", dest, exc)
+            return
+        for path in sorted(dest.rglob("*")):
+            arcname = str(Path(dest.name) / path.relative_to(dest))
+            try:
+                tar.add(path, arcname=arcname, recursive=False)
+            except PermissionError as exc:
+                logger.warning("Бэкап %s: пропускаю файл без прав на чтение: %s", dest, exc)
 
 
 def _restore(dest: Path, backup_tar: Path) -> None:
