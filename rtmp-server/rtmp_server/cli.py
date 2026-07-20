@@ -37,10 +37,15 @@ def cmd_service_status(args: argparse.Namespace) -> int:
 
 def cmd_service_action(args: argparse.Namespace) -> int:
     targets = get_all_services() if args.name == "all" else [get_service(args.name)]
+    ok = True
     for svc in targets:
         print(f"{args.action} {svc.name}...")
-        getattr(svc, args.action)()
-    return 0
+        try:
+            getattr(svc, args.action)()
+        except Exception as exc:
+            print(f"  ошибка: {exc}")
+            ok = False
+    return 0 if ok else 1
 
 
 def cmd_system_status(args: argparse.Namespace) -> int:
@@ -234,6 +239,25 @@ def cmd_stream_targets_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stream_targets_edit(args: argparse.Namespace) -> int:
+    targets = stream_info.list_stream_targets()
+    for target in targets:
+        if target.id == args.id:
+            if args.name is not None:
+                target.name = args.name
+            if args.url is not None:
+                target.url = args.url
+            if args.enable:
+                target.enabled = True
+            if args.disable:
+                target.enabled = False
+            stream_info.save_stream_targets(targets)
+            print(f"Площадка id={args.id} обновлена")
+            return 0
+    print(f"Площадка id={args.id} не найдена")
+    return 1
+
+
 def cmd_stream_targets_delete(args: argparse.Namespace) -> int:
     targets = stream_info.list_stream_targets()
     remaining = [t for t in targets if t.id != args.id]
@@ -352,6 +376,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_target_add.add_argument("url")
     p_target_add.add_argument("--disabled", action="store_true", help="создать выключенной")
     p_target_add.set_defaults(func=cmd_stream_targets_add)
+    p_target_edit = targets_sub.add_parser("edit", help="изменить площадку")
+    p_target_edit.add_argument("id")
+    p_target_edit.add_argument("--name", default=None)
+    p_target_edit.add_argument("--url", default=None)
+    p_target_edit.add_argument("--enable", action="store_true", help="включить площадку")
+    p_target_edit.add_argument("--disable", action="store_true", help="выключить площадку")
+    p_target_edit.set_defaults(func=cmd_stream_targets_edit)
+
     p_target_delete = targets_sub.add_parser("delete", help="удалить площадку")
     p_target_delete.add_argument("id")
     p_target_delete.set_defaults(func=cmd_stream_targets_delete)
