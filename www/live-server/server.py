@@ -825,6 +825,24 @@ def create_event():
 def editor_event(event_id):
     return render_template("admin.html", event_id=event_id, stream_url=resolve_stream_url())
 
+# --- Разделы в разработке (пункты меню-заглушки на будущее) ---
+PLACEHOLDER_DESCRIPTION = "Раздел в разработке — появится в одном из следующих обновлений."
+
+@app.route("/messenger")
+@login_required
+def messenger():
+    return render_template("placeholder.html", active="messenger", title="Мессенджер", description=PLACEHOLDER_DESCRIPTION)
+
+@app.route("/ai-chat")
+@login_required
+def ai_chat():
+    return render_template("placeholder.html", active="ai_chat", title="Чат AI", description=PLACEHOLDER_DESCRIPTION)
+
+@app.route("/consent-check")
+@login_required
+def consent_check():
+    return render_template("placeholder.html", active="consent_check", title="Проверка заполнения согласий", description=PLACEHOLDER_DESCRIPTION)
+
 # --- Участники / пресеты ---
 @app.route("/entries")
 def get_entries():

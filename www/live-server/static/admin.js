@@ -2,75 +2,45 @@ function initAdmin() {
   // Переключение меню
   const sidebar = document.querySelector(".sidebar");
   const collapseSidebarButton = document.getElementById("collapseSidebar");
-  const editorLink = document.querySelector('.sidebar-menu a[href="/admin"]');
-  const autoAddLink = document.getElementById("autoAddLink");
-  const tablesLink = document.getElementById("tablesLink");
-  const previewSection = document.getElementById("preview");
-  const tableSection = document.querySelector("table");
-  const autoAddSection = document.getElementById("autoAddSection");
-  const tablesSection = document.getElementById("tablesSection");
 
   collapseSidebarButton?.addEventListener("click", () => {
     sidebar?.classList.toggle("collapsed");
   });
 
-  // Переключение секций
-  if (!editorLink || !autoAddLink || !tablesLink || !previewSection || !tableSection || !autoAddSection || !tablesSection) {
+  // Переключение вида страницы "Участники очного этапа": ручное добавление
+  // (таблица + предпросмотр) или автодобавление из Excel. Раньше это
+  // переключалось через отдельные пункты меню "Редактор"/"Автодобавление",
+  // но общее меню теперь одно на все страницы (см. _sidebar.html) — здесь
+  // просто локальный переключатель вида внутри самой страницы.
+  const viewManualBtn = document.getElementById("viewManualBtn");
+  const viewAutoAddBtn = document.getElementById("viewAutoAddBtn");
+  const previewSection = document.getElementById("preview");
+  const tableSection = document.querySelector("table");
+  const autoAddSection = document.getElementById("autoAddSection");
+
+  if (!viewManualBtn || !viewAutoAddBtn || !previewSection || !tableSection || !autoAddSection) {
     console.warn("Admin UI: missing required section elements.");
   } else {
-    const activateEditor = () => {
-      document.querySelectorAll(".sidebar-menu .menu-item").forEach((l) => l.classList.remove("active"));
-      editorLink.classList.add("active");
+    const activateManual = () => {
+      viewManualBtn.classList.add("active");
+      viewAutoAddBtn.classList.remove("active");
       previewSection.style.display = "block";
       tableSection.style.display = "table";
       autoAddSection.style.display = "none";
-      tablesSection.style.display = "none";
     };
 
     const activateAutoAdd = () => {
-      document.querySelectorAll(".sidebar-menu .menu-item").forEach((l) => l.classList.remove("active"));
-      autoAddLink.classList.add("active");
+      viewManualBtn.classList.remove("active");
+      viewAutoAddBtn.classList.add("active");
       previewSection.style.display = "none";
       tableSection.style.display = "none";
       autoAddSection.style.display = "block";
-      tablesSection.style.display = "none";
     };
 
-    const activateTables = () => {
-      document.querySelectorAll(".sidebar-menu .menu-item").forEach((l) => l.classList.remove("active"));
-      tablesLink.classList.add("active");
-      previewSection.style.display = "none";
-      tableSection.style.display = "none";
-      autoAddSection.style.display = "none";
-      tablesSection.style.display = "block";
-      if (window.initTablesSection) {
-        window.initTablesSection();
-      }
-    };
-
-    editorLink.addEventListener("click", (e) => {
-      e.preventDefault();
-      history.replaceState({}, "", "/admin");
-      activateEditor();
-    });
-
-    autoAddLink.addEventListener("click", (e) => {
-      e.preventDefault();
-      activateAutoAdd();
-    });
-
-    tablesLink.addEventListener("click", (e) => {
-      e.preventDefault();
-      history.replaceState({}, "", "/admin?section=tables");
-      activateTables();
-    });
-
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("section") === "tables") {
-      activateTables();
-    }
+    viewManualBtn.addEventListener("click", activateManual);
+    viewAutoAddBtn.addEventListener("click", activateAutoAdd);
   }
-  
+
     // Добавление новой строки
     let rowCount = 1;
     function addNewRow(sendToServer = false) {

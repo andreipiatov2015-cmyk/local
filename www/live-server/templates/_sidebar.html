@@ -1,0 +1,74 @@
+{# Единое левое меню, общее для всех страниц админки (кроме /broadcast —
+   там меню намеренно нет, страница на весь экран).
+
+   Раньше каждая страница копировала <aside class="sidebar">...</aside> у
+   себя — со временем копии разъехались (где-то не было пункта
+   "Автодобавление", где-то "активный" пункт не совпадал со страницей,
+   где-то ссылки вели не туда). Теперь разметка меню в ОДНОМ месте,
+   страница передаёт только то, какой пункт сейчас активен.
+
+   Использование:
+     {% import "_sidebar.html" as nav %}
+     {{ nav.render_sidebar("participants") }}
+
+   Если странице нужно что-то дополнительное в подвале меню (как кнопка
+   "Настройка трансляции" на /admin) — через caller():
+     {% call nav.render_sidebar("participants") %}
+       <button id="vkStreamButton" class="vk-btn">⚙️ Настройка трансляции</button>
+     {% endcall %}
+#}
+{% macro render_sidebar(active) %}
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <span class="logo">🎥 Live Admin</span>
+    <button id="collapseSidebar" aria-label="Свернуть меню">❮</button>
+  </div>
+
+  <nav class="sidebar-menu">
+    <a class="menu-item{{ ' active' if active == 'events' }}" href="/editor">
+      <span class="icon">📅</span>
+      <span class="text">Мероприятие</span>
+    </a>
+    <a class="menu-item{{ ' active' if active == 'participants' }}" href="/admin">
+      <span class="icon">🧑‍🤝‍🧑</span>
+      <span class="text">Участники очного этапа</span>
+    </a>
+    <a class="menu-item{{ ' active' if active == 'competition' }}" href="/competition">
+      <span class="icon">🏆</span>
+      <span class="text">Конкурс</span>
+    </a>
+    <a class="menu-item{{ ' active' if active == 'broadcast' }}" href="/broadcast">
+      <span class="icon">📺</span>
+      <span class="text">Трансляция</span>
+    </a>
+    <a class="menu-item{{ ' active' if active == 'staff' }}" href="/staff">
+      <span class="icon">👥</span>
+      <span class="text">Сотрудники</span>
+    </a>
+    <a class="menu-item{{ ' active' if active == 'tables' }}" href="/tables">
+      <span class="icon">📋</span>
+      <span class="text">Таблицы заявок</span>
+    </a>
+    <a class="menu-item{{ ' active' if active == 'messenger' }}" href="/messenger">
+      <span class="icon">💬</span>
+      <span class="text">Мессенджер</span>
+    </a>
+    <a class="menu-item{{ ' active' if active == 'ai_chat' }}" href="/ai-chat">
+      <span class="icon">🤖</span>
+      <span class="text">Чат AI</span>
+    </a>
+    <a class="menu-item{{ ' active' if active == 'consent_check' }}" href="/consent-check">
+      <span class="icon">📝</span>
+      <span class="text">Проверка заполнения согласий</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    {% if caller is defined %}{{ caller() }}{% endif %}
+    <a href="/logout" class="menu-item logout">
+      <span class="icon">🚪</span>
+      <span class="text">Выход</span>
+    </a>
+  </div>
+</aside>
+{% endmacro %}
