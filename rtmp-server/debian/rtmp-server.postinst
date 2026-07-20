@@ -23,7 +23,17 @@ case "$1" in
 
     # --- nginx+RTMP: тяжёлая зависимость, берём готовую сборку из GitHub Release ---
     NGINX_MARKER=/usr/local/nginx/.rtmp-server-installed-version
-    if [ -x /usr/local/nginx/sbin/nginx ] && [ -f "$NGINX_MARKER" ] && [ "$(cat "$NGINX_MARKER")" = "$VERSION" ]; then
+    NGINX_ALREADY_RUNNING=$(sh "$APP_DIR/lib/check_nginx_running.sh")
+
+    if [ "$NGINX_ALREADY_RUNNING" = "true" ]; then
+        # nginx живой прямо сейчас (не важно, кем и когда запущенный) —
+        # НЕ трогаем ни бинарник, ни conf/nginx.conf вообще. Раньше здесь
+        # смотрели только на файл-метку версии, а не на реально работающий
+        # процесс — если бы скачивание когда-нибудь прошло успешно, tar -xzf
+        # затёр бы рабочий конфиг дефолтным из чистой сборки.
+        echo "nginx уже запущен — не трогаю установленные файлы/конфиг в /usr/local/nginx."
+        echo "$VERSION" > "$NGINX_MARKER" 2>/dev/null || true
+    elif [ -x /usr/local/nginx/sbin/nginx ] && [ -f "$NGINX_MARKER" ] && [ "$(cat "$NGINX_MARKER")" = "$VERSION" ]; then
         echo "nginx+RTMP уже установлен (версия $VERSION) — пропускаю."
     else
         ASSET="nginx-rtmp-$VERSION.tar.gz"
@@ -31,7 +41,11 @@ case "$1" in
         SUMS_URL="https://github.com/$REPO/releases/download/v$VERSION/SHA256SUMS"
         TMP=$(mktemp -d)
         echo "Скачивание $ASSET из GitHub Release ($REPO)..."
-        if curl -fsSL -o "$TMP/$ASSET" "$URL" 2>/dev/null && curl -fsSL -o "$TMP/SHA256SUMS" "$SUMS_URL" 2>/dev/null; then
+        # Таймауты обязательны: без них зависшее соединение вешает весь
+        # apt install/dpkg --configure намертво, без единого шанса прервать
+        # штатно (баг, из-за которого владелец застрял на реальной установке).
+        CURL_OPTS="--connect-timeout 10 --max-time 90 --retry 2 --retry-delay 3"
+        if curl -fsSL $CURL_OPTS -o "$TMP/$ASSET" "$URL" 2>/dev/null && curl -fsSL $CURL_OPTS -o "$TMP/SHA256SUMS" "$SUMS_URL" 2>/dev/null; then
             EXPECTED=$(grep " $ASSET\$" "$TMP/SHA256SUMS" | awk '{print $1}')
             ACTUAL=$(sha256sum "$TMP/$ASSET" | awk '{print $1}')
             if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ]; then
@@ -45,7 +59,7 @@ case "$1" in
                 echo "  Повторить можно вручную: rtmp-server-ctl (или мастер первого запуска GUI)." >&2
             fi
         else
-            echo "ВНИМАНИЕ: не удалось скачать $ASSET (нет сети или релиз ещё не опубликован)." >&2
+            echo "ВНИМАНИЕ: не удалось скачать $ASSET за отведённое время (нет сети или релиз ещё не опубликован)." >&2
             echo "  nginx+RTMP не установлен. Сайт продолжит работать на уже развёрнутой версии, если она есть." >&2
         fi
         rm -rf "$TMP"
@@ -91,10 +105,27 @@ case "$1" in
     cp "$UNITS_SRC/rtmp-server-gui.service" "$UNITS_DST/rtmp-server-gui.service"
 
     systemctl daemon-reload >/dev/null 2>&1 || true
-    for unit in nginx-rtmp.service live-server.service reboot-server.service rtmp-server-gui.service; do
+    for unit in live-server.service reboot-server.service rtmp-server-gui.service; do
         systemctl enable "$unit" >/dev/null 2>&1 || true
     done
     systemctl start rtmp-server-gui.service >/dev/null 2>&1 || true
+
+    # --- nginx-rtmp.service: НЕ включаем и не стартуем, если nginx уже
+    # запущен вне systemd (например, старым restart_astra.sh на боте) —
+    # иначе на следующей перезагрузке два запуска одного nginx подерутся
+    # за порты 1936/8082 и оба упадут в restart-loop. Юнит всё равно
+    # устанавливается, просто ждёт, пока оператор осознанно включит его сам.
+    if [ "$(sh "$APP_DIR/lib/check_nginx_running.sh")" = "true" ]; then
+        echo "nginx уже запущен вне systemd (старым способом) — юнит nginx-rtmp.service"
+        echo "  установлен, но НЕ включён и НЕ запущен, чтобы не конфликтовать по портам"
+        echo "  1936/8082 на следующей перезагрузке. Уже работающий процесс не тронут."
+        echo "  Когда решите переключиться на управление через systemd:"
+        echo "    systemctl disable restart_astra.service   # если он у вас запускает nginx на старте"
+        echo "    systemctl enable --now nginx-rtmp.service"
+    else
+        systemctl enable nginx-rtmp.service >/dev/null 2>&1 || true
+        systemctl start nginx-rtmp.service >/dev/null 2>&1 || true
+    fi
 
     # --- Беспарольный запуск от root для ярлыка/автозапуска ---
     # Проверяем синтаксис ПЕРЕД установкой в /etc/sudoers.d — битый файл
@@ -113,19 +144,29 @@ case "$1" in
     cp "$APP_DIR/skel/rtmp-server-autostart.desktop" /etc/xdg/autostart/rtmp-server.desktop
 
     # --- Ярлык на рабочем столе: новым пользователям (/etc/skel) и всем существующим ---
+    # gio set ... trusted true — best-effort: некоторые файловые менеджеры
+    # (GNOME/MATE Caja-семейство) считают .desktop-файл "непроверенным" и
+    # отказываются его запускать по клику, даже с выставленным +x, пока
+    # пользователь явно не разрешит через "Allow Launching". Пытаемся
+    # проставить доверие заранее; если gio недоступен — просто игнорируем.
     mkdir -p /etc/skel/Desktop
     cp /usr/share/applications/rtmp-server.desktop /etc/skel/Desktop/rtmp-server.desktop
     chmod +x /etc/skel/Desktop/rtmp-server.desktop
+    command -v gio >/dev/null 2>&1 && gio set /etc/skel/Desktop/rtmp-server.desktop metadata::trusted true 2>/dev/null || true
 
     for home in /root /home/*; do
         [ -d "$home" ] || continue
         mkdir -p "$home/Desktop"
         cp /usr/share/applications/rtmp-server.desktop "$home/Desktop/rtmp-server.desktop"
         chmod +x "$home/Desktop/rtmp-server.desktop"
+        command -v gio >/dev/null 2>&1 && gio set "$home/Desktop/rtmp-server.desktop" metadata::trusted true 2>/dev/null || true
         owner=$(stat -c '%U:%G' "$home" 2>/dev/null || echo root:root)
         chown "$owner" "$home/Desktop/rtmp-server.desktop" 2>/dev/null || true
     done
     echo "Ярлык добавлен на рабочий стол всем существующим пользователям и в /etc/skel для новых."
+    echo "Если ярлык всё равно не запускается кликом — попробуйте правой кнопкой"
+    echo "по нему -> 'Разрешить запуск' (или аналог в вашем файловом менеджере),"
+    echo "либо запустите вручную: sudo /usr/bin/rtmp-server"
 
     echo ""
     echo "=================================================================="
@@ -133,6 +174,11 @@ case "$1" in
     echo " GUI:      rtmp-server"
     echo " Консоль:  rtmp-server-ctl status"
     echo " Лог установки шагов выше — при необходимости повторите вручную."
+    if systemctl is-active rtmp-server-gui.service >/dev/null 2>&1; then
+        echo " Приложение уже запущено (systemd) — новый код применится"
+        echo " после перезапуска: systemctl restart rtmp-server-gui.service"
+        echo " (или просто закройте и снова откройте окно вручную)."
+    fi
     echo "=================================================================="
     ;;
 esac

@@ -18,6 +18,7 @@ from pathlib import Path
 from rtmp_server import __version__ as CURRENT_VERSION
 from rtmp_server.config import constants as C
 from rtmp_server.updates.staging import (
+    DownloadTimeoutError,
     UpdateResult,
     download_file,
     parse_sha256sums,
@@ -31,6 +32,7 @@ logger = logging.getLogger("rtmp_server.updates.app")
 class ReleaseInfo:
     tag: str
     version: str
+    deb_asset_name: str
     deb_asset_url: str
     checksums_url: str
 
@@ -58,6 +60,7 @@ def check_for_update() -> ReleaseInfo | None:
     return ReleaseInfo(
         tag=tag,
         version=version,
+        deb_asset_name=deb_name,
         deb_asset_url=assets[deb_name],
         checksums_url=assets[C.CHECKSUMS_ASSET_NAME],
     )
@@ -65,12 +68,19 @@ def check_for_update() -> ReleaseInfo | None:
 
 def apply_update(release: ReleaseInfo, download_dir: Path = Path("/tmp/rtmp-server-update")) -> UpdateResult:
     download_dir.mkdir(parents=True, exist_ok=True)
-    deb_path = download_dir / f"rtmp-server-{release.version}.deb"
+    # Имя файла ДОЛЖНО совпадать с реальным именем ассета — именно под этим
+    # именем оно ищется в SHA256SUMS. Раньше здесь реконструировали имя как
+    # f"rtmp-server-{version}.deb", а настоящий ассет называется
+    # rtmp-server_{version}-1_all.deb — несовпадение имён давало ложное
+    # "чексумма не совпадает" (ключ просто не находился в словаре).
+    deb_path = download_dir / release.deb_asset_name
     checksums_path = download_dir / C.CHECKSUMS_ASSET_NAME
 
     try:
         download_file(release.deb_asset_url, deb_path)
         download_file(release.checksums_url, checksums_path)
+    except DownloadTimeoutError as exc:
+        return UpdateResult(applied=False, message=f"Скачивание зависло и было прервано: {exc}")
     except OSError as exc:
         return UpdateResult(applied=False, message=f"Не удалось скачать релиз: {exc}")
 
@@ -84,4 +94,12 @@ def apply_update(release: ReleaseInfo, download_dir: Path = Path("/tmp/rtmp-serv
         logger.error("dpkg -i упал: %s", result.stderr)
         return UpdateResult(applied=False, message=f"dpkg -i завершился с ошибкой: {result.stderr[:500]}")
 
-    return UpdateResult(applied=True, message=f"RTMP-server обновлён до {release.version}")
+    return UpdateResult(
+        applied=True,
+        message=(
+            f"RTMP-server обновлён до {release.version}. "
+            "Закройте и снова откройте приложение (или systemctl restart "
+            "rtmp-server-gui.service), чтобы увидеть новую версию — "
+            "текущее окно продолжает работать со старым кодом в памяти."
+        ),
+    )

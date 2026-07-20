@@ -2,7 +2,7 @@ Source: rtmp-server
 Section: admin
 Priority: optional
 Maintainer: RTMP-server maintainers <support@rtmp-server.local>
-Build-Depends: debhelper-compat (= 13)
+Build-Depends: debhelper-compat (= 13), build-essential
 Standards-Version: 4.6.2
 
 Package: rtmp-server
