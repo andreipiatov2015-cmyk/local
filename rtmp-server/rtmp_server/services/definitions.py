@@ -35,7 +35,16 @@ SERVICES: dict[str, ServiceHandle] = {
         name="vk_pusher",
         display_name="VK/OK трансляция (start_vk.py)",
         pattern=C.VK_PUSHER_PROCESS_PATTERN,
-        start_argv=["/usr/bin/python3", C.VK_PUSHER_SCRIPT],
+        # start_argv намеренно None: start_vk.py требует обязательный
+        # аргумент stream_name (имя активного потока), которого здесь
+        # взять неоткуда — универсального start_argv без него быть не
+        # может (процесс сразу завершится с ошибкой, а Popen этого не
+        # заметит — кнопка "Запустить" в общей вкладке "Сервисы" будет
+        # выглядеть так, будто ничего не произошло). Запуск/перезапуск
+        # с правильным именем потока — только через site_admin.stream_info
+        # .restart_vk_push() из вкладки "Трансляция", которая знает, какой
+        # поток сейчас реально активен.
+        start_argv=None,
         log_file=f"{C.APP_LOG_DIR}/vk_pusher.log",
     ),
 }

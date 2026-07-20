@@ -75,7 +75,10 @@ class ProcessService(ServiceHandle):
 
     def start(self) -> None:
         if not self.start_argv:
-            raise RuntimeError(f"{self.name}: запуск вручную не поддерживается")
+            raise RuntimeError(
+                f"{self.name}: запуск отсюда не поддерживается (нужно имя активного "
+                f"потока) — используйте вкладку «Трансляция»"
+            )
         if self._find_pid() is not None:
             return
         log_target = open(self.log_file, "a") if self.log_file else subprocess.DEVNULL

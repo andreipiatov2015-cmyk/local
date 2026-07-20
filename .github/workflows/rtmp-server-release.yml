@@ -76,9 +76,21 @@ jobs:
           DEBEMAIL: support@rtmp-server.local
           DEBFULLNAME: RTMP-server CI
         run: |
+          set -e
           cd rtmp-server
           NEW_VERSION=$(cat VERSION)
-          dch --newversion "${NEW_VERSION}-1" --distribution stable "Automated release ${NEW_VERSION}"
+          # Каждый релиз этого проекта сопровождается вручную написанной
+          # записью в debian/changelog (что изменилось и почему) ДО тега —
+          # если версия наверху changelog уже совпадает с VERSION, значит
+          # это уже сделано, и dch --newversion затёр бы её общей строкой
+          # "Automated release X"/задвоил бы запись. Генерируем автозапись
+          # только как подстраховку, если версию в changelog забыли обновить.
+          CURRENT_TOP=$(dpkg-parsechangelog -S Version | sed 's/-1$//')
+          if [ "$CURRENT_TOP" = "$NEW_VERSION" ]; then
+            echo "debian/changelog уже содержит запись для $NEW_VERSION — не трогаю"
+          else
+            dch --newversion "${NEW_VERSION}-1" --distribution stable "Automated release ${NEW_VERSION}"
+          fi
 
       - name: Build .deb
         run: |

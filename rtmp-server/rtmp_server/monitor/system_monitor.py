@@ -83,14 +83,3 @@ def get_listening_ports() -> dict[int, dict]:
             "process_name": process_name,
         }
     return listening
-
-
-def get_top_processes(limit: int = 15) -> list[dict]:
-    procs = []
-    for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
-        try:
-            procs.append(proc.info)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    procs.sort(key=lambda p: p.get("cpu_percent") or 0, reverse=True)
-    return procs[:limit]
