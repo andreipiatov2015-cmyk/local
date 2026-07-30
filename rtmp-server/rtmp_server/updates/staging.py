@@ -94,7 +94,13 @@ def parse_sha256sums(text: str) -> dict[str, str]:
 def extract_tarball(archive: Path, dest_dir: Path) -> None:
     dest_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive) as tar:
-        tar.extractall(dest_dir, filter="data")
+        # filter="data" (PEP 706) не поддерживается на некоторых системных
+        # python3 (бэкпортирован только в отдельные патч-релизы 3.8-3.11) —
+        # см. site_updater._extractall_compat, тот же баг, тот же фикс.
+        try:
+            tar.extractall(dest_dir, filter="data")
+        except TypeError:
+            tar.extractall(dest_dir)
 
 
 @dataclass

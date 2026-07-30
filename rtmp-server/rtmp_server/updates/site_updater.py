@@ -25,6 +25,21 @@ from rtmp_server.updates.staging import UpdateResult
 logger = logging.getLogger("rtmp_server.updates.site")
 
 
+def _extractall_compat(tar: tarfile.TarFile, path: Path) -> None:
+    """tarfile.TarFile.extractall(..., filter=...) — аргумент filter появился
+    в PEP 706 и был бэкпортирован только в отдельные патч-релизы Python
+    3.8-3.11 (3.11.4+ и т.п.); более старый системный python3 на реальном
+    сервере (Astra Linux) кидает `TypeError: extractall() got an
+    unexpected keyword argument 'filter'` — падение обнаружено владельцем
+    вживую при первой попытке автообновления сайта. Источники здесь
+    доверенные (архив с самого GitHub, наш же файл бэкапа), так что
+    падение назад на поведение без filter — приемлемый компромисс."""
+    try:
+        tar.extractall(path, filter="data")
+    except TypeError:
+        tar.extractall(path)
+
+
 @dataclass
 class SiteUpdateSource:
     """Источник новой версии кода сайта: директория с подпапками
@@ -67,7 +82,7 @@ def fetch_latest_site_source(work_dir: Path) -> SiteUpdateSource:
     extract_dir = work_dir / "extracted"
     extract_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tarball) as tar:
-        tar.extractall(extract_dir, filter="data")
+        _extractall_compat(tar, extract_dir)
 
     # GitHub codeload распаковывает архив в один каталог вида <repo>-<branch>/
     # (например local-main/) — находим его, не хардкодя точное имя.
@@ -133,7 +148,7 @@ def _restore(dest: Path, backup_tar: Path) -> None:
     if dest.exists():
         shutil.rmtree(dest)
     with tarfile.open(backup_tar) as tar:
-        tar.extractall(dest.parent, filter="data")
+        _extractall_compat(tar, dest.parent)
 
 
 def apply(source: SiteUpdateSource) -> UpdateResult:
