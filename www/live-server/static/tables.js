@@ -282,6 +282,31 @@ async function initDetailPage() {
   const programPreviewModalBodyEl = document.getElementById('programPreviewModalBody');
   const downloadProgramDocxEl = document.getElementById('downloadProgramDocx');
 
+  const resultsProtocolDocCardEl = document.getElementById('resultsProtocolDocCard');
+  const resultsProtocolPreviewModalEl = document.getElementById('resultsProtocolPreviewModal');
+  const closeResultsProtocolPreviewModalEl = document.getElementById('closeResultsProtocolPreviewModal');
+  const resultsProtocolPreviewModalBodyEl = document.getElementById('resultsProtocolPreviewModalBody');
+  const downloadResultsProtocolDocxEl = document.getElementById('downloadResultsProtocolDocx');
+  const resultsProtocolStatusEl = document.getElementById('docResultsProtocolStatus');
+
+  const evaluationProtocolDocCardEl = document.getElementById('evaluationProtocolDocCard');
+  const evaluationProtocolPreviewModalEl = document.getElementById('evaluationProtocolPreviewModal');
+  const closeEvaluationProtocolPreviewModalEl = document.getElementById('closeEvaluationProtocolPreviewModal');
+  const evaluationProtocolPreviewModalBodyEl = document.getElementById('evaluationProtocolPreviewModalBody');
+  const downloadEvaluationProtocolDocxEl = document.getElementById('downloadEvaluationProtocolDocx');
+  const evaluationProtocolStatusEl = document.getElementById('docEvaluationProtocolStatus');
+
+  const docSignerEl = document.getElementById('docSigner');
+  const docRegionLineEl = document.getElementById('docRegionLine');
+  const docYearLineEl = document.getElementById('docYearLine');
+  const docBuildAwardBtn = document.getElementById('docBuildAward');
+  const awardStatusEl = document.getElementById('docAwardStatus');
+  const awardDocCardEl = document.getElementById('awardDocCard');
+  const awardPreviewModalEl = document.getElementById('awardPreviewModal');
+  const closeAwardPreviewModalEl = document.getElementById('closeAwardPreviewModal');
+  const awardPreviewModalBodyEl = document.getElementById('awardPreviewModalBody');
+  const downloadAwardDocxEl = document.getElementById('downloadAwardDocx');
+
   let headers = [];
   let mappingByHeaderIdx = {};
   let collapsedMappingCards = {};
@@ -293,8 +318,33 @@ async function initDetailPage() {
   let isMappingSectionCollapsed = false;
   const expandedRows = {};
   let documentationState = null;
+  let resultsProtocolState = null;
+  let evaluationProtocolState = null;
+  let awardState = null;
   let contextMenuEl = null;
   let contextMenuTargetId = '';
+
+  const RESULTS_PROTOCOL_COLUMNS = [
+    { key: 'territory', label: 'Территория' },
+    { key: 'institution', label: 'ОУ' },
+    { key: 'studioName', label: 'Название коллектива' },
+    { key: 'nomination', label: 'Номинация' },
+    { key: 'ageCategory', label: 'Возраст' },
+    { key: 'numberTitle', label: 'Номер' },
+    { key: 'result', label: 'Итоги' },
+  ];
+  const EVALUATION_PROTOCOL_COLUMNS = [
+    { key: 'territory', label: 'Территория' },
+    { key: 'institution', label: 'ОУ' },
+    { key: 'studioName', label: 'Название коллектива' },
+    { key: 'leaderFio', label: 'ФИО руководителя' },
+    { key: 'leaderContacts', label: 'Контакты руководителя' },
+    { key: 'nomination', label: 'Номинация' },
+    { key: 'ageCategory', label: 'Возраст' },
+    { key: 'numberTitle', label: 'Номер' },
+    { key: 'videoUrl', label: 'Ссылка на видео' },
+    { key: 'result', label: 'Оценка / Результат' },
+  ];
 
   function syncMappingSectionCollapsedState() {
     if (!mappingSectionCardEl || !mappingSectionToggleBtn) return;
@@ -1281,6 +1331,116 @@ async function initDetailPage() {
     };
   }
 
+  function buildRegistryRows() {
+    return previewRowsData.map((row, idx) => buildEffectiveRow(row, { rowRef: idx + 1 }));
+  }
+
+  function buildProtocolItemFromRow(row) {
+    const territory = getMappedValueByMatchers(row, ['муниципалитет', 'территория']);
+    const institution = getMappedValueByMatchers(row, ['краткое название учереждения', 'полное название учередения', 'название учреждения']);
+    const studioName = getMappedValueByMatchers(row, ['навазние коллетива', 'название коллектива']);
+    const nomination = getMappedValueByMatchers(row, ['номинация']);
+    const ageCategory = getMappedValueByMatchers(row, ['возрастная']);
+    const numberTitle = getMappedValueByMatchers(row, ['навание номреа', 'название номера']);
+    const result = getMappedValueByMatchers(row, ['итоги']);
+    const score = getMappedValueByMatchers(row, ['баллы']);
+    const leaderFio = getMappedValueByMatchers(row, ['фио руководителя']);
+    const leaderPhone = getMappedValueByMatchers(row, ['телефон руководителя']);
+    const leaderEmail = getMappedValueByMatchers(row, ['e-mail руководителя']);
+    const leaderContacts = [leaderPhone, leaderEmail].filter(Boolean).join(', ');
+    const videoUrl = getMappedValueByMatchers(row, ['ссылки']);
+    const place = getMappedValueByMatchers(row, ['место (наградные документы)', 'место']);
+    const fio = getMappedValueByMatchers(row, ['список участников']);
+    return {
+      territory, institution, studioName, nomination, ageCategory, numberTitle,
+      result, score, leaderFio, leaderContacts, videoUrl, place, fio,
+    };
+  }
+
+  function buildResultsProtocolData() {
+    const items = buildRegistryRows().map((row) => {
+      const item = buildProtocolItemFromRow(row);
+      return {
+        territory: item.territory, institution: item.institution, studioName: item.studioName,
+        nomination: item.nomination, ageCategory: item.ageCategory, numberTitle: item.numberTitle,
+        result: item.result,
+      };
+    });
+    return { items };
+  }
+
+  function buildEvaluationProtocolData() {
+    const items = buildRegistryRows().map((row) => {
+      const item = buildProtocolItemFromRow(row);
+      return {
+        territory: item.territory, institution: item.institution, studioName: item.studioName,
+        leaderFio: item.leaderFio, leaderContacts: item.leaderContacts,
+        nomination: item.nomination, ageCategory: item.ageCategory, numberTitle: item.numberTitle,
+        videoUrl: item.videoUrl, result: item.result || item.score,
+      };
+    });
+    return { items };
+  }
+
+  function buildAwardData() {
+    const items = buildRegistryRows().map((row) => {
+      const item = buildProtocolItemFromRow(row);
+      return {
+        performer: item.fio || item.studioName || 'Участник',
+        studioName: item.studioName,
+        institution: item.institution,
+        nomination: item.nomination,
+        place: item.place,
+      };
+    });
+    return { items };
+  }
+
+  function readAwardSettingsFromForm() {
+    return {
+      signer: docSignerEl?.value?.trim() || 'Директор ГАУДО «Сириус.Кузбасс» Н.А. Петрик',
+      region_line: docRegionLineEl?.value?.trim() || 'Кемеровская область-Кузбасс',
+      year_line: docYearLineEl?.value?.trim() || String(new Date().getFullYear()),
+    };
+  }
+
+  function applyAwardSettingsToForm(settings = {}) {
+    if (docSignerEl) docSignerEl.value = settings.signer || 'Директор ГАУДО «Сириус.Кузбасс» Н.А. Петрик';
+    if (docRegionLineEl) docRegionLineEl.value = settings.region_line || 'Кемеровская область-Кузбасс';
+    if (docYearLineEl) docYearLineEl.value = settings.year_line || String(new Date().getFullYear());
+  }
+
+  function renderProtocolPreview(protocol, containerEl, columns) {
+    if (!containerEl) return;
+    const items = protocol?.items || [];
+    if (!items.length) {
+      containerEl.classList.add('is-empty');
+      containerEl.innerHTML = '<div>Нет данных таблицы для формирования протокола.</div>';
+      return;
+    }
+    containerEl.classList.remove('is-empty');
+    const head = `<tr><th>№</th>${columns.map((c) => `<th>${esc(c.label)}</th>`).join('')}</tr>`;
+    const body = items.map((item, idx) => `<tr><td>${idx + 1}</td>${columns.map((c) => `<td>${esc(item[c.key] || '')}</td>`).join('')}</tr>`).join('');
+    containerEl.innerHTML = `<table class="doc-preview-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  }
+
+  function renderAwardPreview(award, containerEl) {
+    if (!containerEl) return;
+    const items = award?.items || [];
+    if (!items.length) {
+      containerEl.classList.add('is-empty');
+      containerEl.innerHTML = '<div>Нет данных таблицы для формирования наградных документов.</div>';
+      return;
+    }
+    containerEl.classList.remove('is-empty');
+    containerEl.innerHTML = items.map((item) => {
+      const kind = item.place ? 'Диплом' : 'Сертификат';
+      const placeSuffix = item.place ? ` (${esc(item.place)})` : '';
+      const nominationSuffix = item.nomination ? `, номинация «${esc(item.nomination)}»` : '';
+      return `<div class="doc-preview-award-row"><strong>${esc(kind)}</strong> — ${esc(item.performer || 'Участник')}${placeSuffix}${nominationSuffix}</div>`;
+    }).join('');
+  }
+
   function renderDocumentationPreview(program, containerEl) {
     if (!containerEl) return;
     if (!program || !Array.isArray(program.blocks) || !program.blocks.length) {
@@ -1331,6 +1491,22 @@ async function initDetailPage() {
     programPreviewModalEl.setAttribute('aria-hidden', 'true');
   }
 
+  async function triggerBlobDownload(response, fallbackName) {
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+    const rawName = match ? decodeURIComponent(match[1].replace(/"/g, '').trim()) : fallbackName;
+    const filename = rawName.endsWith('.docx') ? rawName : `${rawName}.docx`;
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  }
+
   async function downloadProgramDocx() {
     if (!previewRowsData.length) {
       setStatus(docProgramStatusEl, 'Нет данных таблицы для формирования программы.', 'warning');
@@ -1343,22 +1519,139 @@ async function initDetailPage() {
       documentationState = state;
       await saveDocumentationState(state);
       const response = await apiPostBlob(`/api/tables/${tableId}/documentation/program/docx`, state);
-      const blob = await response.blob();
-      const disposition = response.headers.get('Content-Disposition') || '';
-      const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
-      const rawName = match ? decodeURIComponent(match[1].replace(/"/g, '').trim()) : 'program.docx';
-      const filename = rawName.endsWith('.docx') ? rawName : `${rawName}.docx`;
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      await triggerBlobDownload(response, 'program.docx');
       setStatus(docProgramStatusEl, 'DOCX сформирован и скачан.', 'success');
     } catch (e) {
       setStatus(docProgramStatusEl, `Ошибка скачивания DOCX: ${e.message}`, 'error');
+    }
+  }
+
+  async function saveResultsProtocolState(state) {
+    await apiPostJson(`/api/tables/${tableId}/documentation/results-protocol`, state);
+  }
+
+  async function loadResultsProtocolState() {
+    const resp = await apiGet(`/api/tables/${tableId}/documentation/results-protocol`);
+    resultsProtocolState = resp || {};
+  }
+
+  function openResultsProtocolPreviewModal() {
+    if (!resultsProtocolPreviewModalEl) return;
+    const protocol = buildResultsProtocolData();
+    resultsProtocolState = { settings: {}, protocol };
+    renderProtocolPreview(protocol, resultsProtocolPreviewModalBodyEl, RESULTS_PROTOCOL_COLUMNS);
+    resultsProtocolPreviewModalEl.classList.add('visible');
+    resultsProtocolPreviewModalEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeResultsProtocolPreviewModal() {
+    if (!resultsProtocolPreviewModalEl) return;
+    resultsProtocolPreviewModalEl.classList.remove('visible');
+    resultsProtocolPreviewModalEl.setAttribute('aria-hidden', 'true');
+  }
+
+  async function downloadResultsProtocolDocx() {
+    if (!previewRowsData.length) {
+      setStatus(resultsProtocolStatusEl, 'Нет данных таблицы для формирования протокола.', 'warning');
+      return;
+    }
+    try {
+      const protocol = buildResultsProtocolData();
+      const state = { settings: {}, protocol };
+      resultsProtocolState = state;
+      await saveResultsProtocolState(state);
+      const response = await apiPostBlob(`/api/tables/${tableId}/documentation/results-protocol/docx`, state);
+      await triggerBlobDownload(response, 'results_protocol.docx');
+      setStatus(resultsProtocolStatusEl, 'DOCX сформирован и скачан.', 'success');
+    } catch (e) {
+      setStatus(resultsProtocolStatusEl, `Ошибка скачивания DOCX: ${e.message}`, 'error');
+    }
+  }
+
+  async function saveEvaluationProtocolState(state) {
+    await apiPostJson(`/api/tables/${tableId}/documentation/evaluation-protocol`, state);
+  }
+
+  async function loadEvaluationProtocolState() {
+    const resp = await apiGet(`/api/tables/${tableId}/documentation/evaluation-protocol`);
+    evaluationProtocolState = resp || {};
+  }
+
+  function openEvaluationProtocolPreviewModal() {
+    if (!evaluationProtocolPreviewModalEl) return;
+    const protocol = buildEvaluationProtocolData();
+    evaluationProtocolState = { settings: {}, protocol };
+    renderProtocolPreview(protocol, evaluationProtocolPreviewModalBodyEl, EVALUATION_PROTOCOL_COLUMNS);
+    evaluationProtocolPreviewModalEl.classList.add('visible');
+    evaluationProtocolPreviewModalEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeEvaluationProtocolPreviewModal() {
+    if (!evaluationProtocolPreviewModalEl) return;
+    evaluationProtocolPreviewModalEl.classList.remove('visible');
+    evaluationProtocolPreviewModalEl.setAttribute('aria-hidden', 'true');
+  }
+
+  async function downloadEvaluationProtocolDocx() {
+    if (!previewRowsData.length) {
+      setStatus(evaluationProtocolStatusEl, 'Нет данных таблицы для формирования протокола.', 'warning');
+      return;
+    }
+    try {
+      const protocol = buildEvaluationProtocolData();
+      const state = { settings: {}, protocol };
+      evaluationProtocolState = state;
+      await saveEvaluationProtocolState(state);
+      const response = await apiPostBlob(`/api/tables/${tableId}/documentation/evaluation-protocol/docx`, state);
+      await triggerBlobDownload(response, 'evaluation_protocol.docx');
+      setStatus(evaluationProtocolStatusEl, 'DOCX сформирован и скачан.', 'success');
+    } catch (e) {
+      setStatus(evaluationProtocolStatusEl, `Ошибка скачивания DOCX: ${e.message}`, 'error');
+    }
+  }
+
+  async function saveAwardState(state) {
+    await apiPostJson(`/api/tables/${tableId}/documentation/award`, state);
+  }
+
+  async function loadAwardState() {
+    const resp = await apiGet(`/api/tables/${tableId}/documentation/award`);
+    awardState = resp || {};
+    applyAwardSettingsToForm(awardState.settings || {});
+  }
+
+  function openAwardPreviewModal() {
+    if (!awardPreviewModalEl) return;
+    const settings = readAwardSettingsFromForm();
+    const award = buildAwardData();
+    awardState = { settings, award };
+    renderAwardPreview(award, awardPreviewModalBodyEl);
+    awardPreviewModalEl.classList.add('visible');
+    awardPreviewModalEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeAwardPreviewModal() {
+    if (!awardPreviewModalEl) return;
+    awardPreviewModalEl.classList.remove('visible');
+    awardPreviewModalEl.setAttribute('aria-hidden', 'true');
+  }
+
+  async function downloadAwardDocx() {
+    if (!previewRowsData.length) {
+      setStatus(awardStatusEl, 'Нет данных таблицы для формирования наградных документов.', 'warning');
+      return;
+    }
+    try {
+      const settings = readAwardSettingsFromForm();
+      const award = buildAwardData();
+      const state = { settings, award };
+      awardState = state;
+      await saveAwardState(state);
+      const response = await apiPostBlob(`/api/tables/${tableId}/documentation/award/docx`, state);
+      await triggerBlobDownload(response, 'awards.docx');
+      setStatus(awardStatusEl, 'DOCX сформирован и скачан.', 'success');
+    } catch (e) {
+      setStatus(awardStatusEl, `Ошибка скачивания DOCX: ${e.message}`, 'error');
     }
   }
 
@@ -1634,6 +1927,9 @@ async function initDetailPage() {
     if (event.key === 'Escape') {
       closeContextMenu();
       closeProgramPreviewModal();
+      closeResultsProtocolPreviewModal();
+      closeEvaluationProtocolPreviewModal();
+      closeAwardPreviewModal();
     }
   });
 
@@ -1669,10 +1965,47 @@ async function initDetailPage() {
     if (event.target === programPreviewModalEl) closeProgramPreviewModal();
   });
 
+  resultsProtocolDocCardEl?.addEventListener('click', openResultsProtocolPreviewModal);
+  closeResultsProtocolPreviewModalEl?.addEventListener('click', closeResultsProtocolPreviewModal);
+  downloadResultsProtocolDocxEl?.addEventListener('click', downloadResultsProtocolDocx);
+  resultsProtocolPreviewModalEl?.addEventListener('click', (event) => {
+    if (event.target === resultsProtocolPreviewModalEl) closeResultsProtocolPreviewModal();
+  });
+
+  evaluationProtocolDocCardEl?.addEventListener('click', openEvaluationProtocolPreviewModal);
+  closeEvaluationProtocolPreviewModalEl?.addEventListener('click', closeEvaluationProtocolPreviewModal);
+  downloadEvaluationProtocolDocxEl?.addEventListener('click', downloadEvaluationProtocolDocx);
+  evaluationProtocolPreviewModalEl?.addEventListener('click', (event) => {
+    if (event.target === evaluationProtocolPreviewModalEl) closeEvaluationProtocolPreviewModal();
+  });
+
+  docBuildAwardBtn?.addEventListener('click', async () => {
+    try {
+      const settings = readAwardSettingsFromForm();
+      const award = buildAwardData();
+      const state = { settings, award };
+      awardState = state;
+      renderAwardPreview(award, awardPreviewModalBodyEl);
+      await saveAwardState(state);
+      setStatus(awardStatusEl, 'Реквизиты сохранены.', 'success');
+    } catch (e) {
+      setStatus(awardStatusEl, `Ошибка сохранения: ${e.message}`, 'error');
+    }
+  });
+  awardDocCardEl?.addEventListener('click', openAwardPreviewModal);
+  closeAwardPreviewModalEl?.addEventListener('click', closeAwardPreviewModal);
+  downloadAwardDocxEl?.addEventListener('click', downloadAwardDocx);
+  awardPreviewModalEl?.addEventListener('click', (event) => {
+    if (event.target === awardPreviewModalEl) closeAwardPreviewModal();
+  });
+
   try {
     syncMappingSectionCollapsedState();
     await reload();
     await loadDocumentationState();
+    await loadResultsProtocolState();
+    await loadEvaluationProtocolState();
+    await loadAwardState();
   } catch (e) {
     setStatus(uploadStatusEl, `Ошибка загрузки данных: ${e.message}`, 'error');
   }
