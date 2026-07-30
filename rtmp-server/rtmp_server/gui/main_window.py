@@ -15,9 +15,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"RTMP-server {__version__}")
-        self.resize(900, 600)
+        self.resize(1100, 700)
 
         tabs = QTabWidget()
+        tabs.setDocumentMode(True)
         tabs.addTab(StatusTab(), "Обзор")
         tabs.addTab(ServicesTab(), "Сервисы")
         tabs.addTab(SystemTab(), "Система")
@@ -32,9 +33,10 @@ def main() -> int:
 
     from PyQt5.QtWidgets import QApplication, QMessageBox
 
-    from rtmp_server.gui import single_instance
+    from rtmp_server.gui import single_instance, theme
 
     app = QApplication(sys.argv)
+    theme.apply(app)
 
     if not single_instance.acquire_or_none():
         QMessageBox.information(

@@ -46,11 +46,15 @@ class ApplyUpdateChecksumTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _fake_download_file(self, url: str, dest: Path, timeout: float = 60.0) -> Path:
+    def _fake_download_file(self, url: str, dest: Path, timeout: float = 60.0, on_progress=None) -> Path:
         # Подменяем реальный download_file (urllib) на копирование из
         # локальных фикстур — без сети, только проверяем логику именования.
         source = self.fixtures_dir / Path(url.replace("file://", "")).name
         dest.parent.mkdir(parents=True, exist_ok=True)
+        size = source.stat().st_size
+        if on_progress is not None:
+            on_progress(0, size)
+            on_progress(size, size)
         shutil.copy(source, dest)
         return dest
 
@@ -75,6 +79,26 @@ class ApplyUpdateChecksumTests(unittest.TestCase):
 
         self.assertFalse(result.applied)
         self.assertIn("Чексумма", result.message)
+
+    def test_progress_callback_receives_start_and_complete(self):
+        """Регрессия/фича: прогресс-бар в GUI (вкладка "Обновления") завязан
+        на on_progress — без него он не мог бы показывать реальный процент."""
+        calls = []
+
+        with mock.patch.object(app_updater, "download_file", side_effect=self._fake_download_file), \
+             mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0, stderr="")
+            app_updater.apply_update(
+                self.release, download_dir=self.download_dir,
+                on_progress=lambda done, total: calls.append((done, total)),
+            )
+
+        self.assertTrue(calls)
+        first_done, first_total = calls[0]
+        last_done, last_total = calls[-1]
+        self.assertEqual(first_done, 0)
+        self.assertGreater(first_total, 0)
+        self.assertEqual(last_done, last_total)
 
 
 if __name__ == "__main__":

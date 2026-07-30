@@ -41,7 +41,12 @@ class UpdateResult:
     rolled_back: bool = False
 
 
-def download_file(url: str, dest: Path, timeout: float = 60.0) -> Path:
+def download_file(
+    url: str,
+    dest: Path,
+    timeout: float = 60.0,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> Path:
     """Скачивает url в dest с жёстким ОБЩИМ дедлайном на всю передачу.
 
     urllib.request.urlopen(timeout=...) ограничивает только каждую отдельную
@@ -50,12 +55,26 @@ def download_file(url: str, dest: Path, timeout: float = 60.0) -> Path:
     лимит, а суммарное время может растянуться на сколько угодно. Именно
     так самообновление зависало без вообще какой-либо обратной связи в GUI:
     воркер-поток просто никогда не завершался. Здесь дедлайн проверяется
-    между чанками независимо от поведения отдельных чтений."""
+    между чанками независимо от поведения отдельных чтений.
+
+    on_progress(downloaded_bytes, total_bytes) — вызывается после каждого
+    чанка, если задан (используется GUI для прогресс-бара). total_bytes
+    может быть 0, если сервер не прислал Content-Length — вызывающий
+    должен в этом случае показывать неопределённый ("бегущий") индикатор,
+    а не процент."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Скачивание %s -> %s", url, dest)
     deadline = time.monotonic() + timeout
     request = urllib.request.Request(url, headers={"User-Agent": "rtmp-server-updater"})
     with urllib.request.urlopen(request, timeout=timeout) as response, open(dest, "wb") as fh:
+        headers = getattr(response, "headers", None)
+        try:
+            total = int(headers.get("Content-Length", 0) or 0) if headers is not None else 0
+        except (ValueError, AttributeError):
+            total = 0
+        downloaded = 0
+        if on_progress is not None:
+            on_progress(0, total)
         while True:
             if time.monotonic() > deadline:
                 raise DownloadTimeoutError(f"Скачивание {url} не уложилось в {timeout:.0f} сек.")
@@ -63,6 +82,9 @@ def download_file(url: str, dest: Path, timeout: float = 60.0) -> Path:
             if not chunk:
                 break
             fh.write(chunk)
+            downloaded += len(chunk)
+            if on_progress is not None:
+                on_progress(downloaded, total)
     return dest
 
 

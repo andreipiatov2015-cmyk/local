@@ -197,7 +197,7 @@ class FetchLatestSiteSourceTests(unittest.TestCase):
             tar.add(reboot_py, arcname=f"{top_dir}/www/reboot/server.py")
 
     def test_fetch_extracts_and_locates_www_under_codeload_top_dir(self):
-        def fake_download(url, dest, timeout=60.0):
+        def fake_download(url, dest, timeout=60.0, on_progress=None):
             self._build_fake_tarball(dest)
             return dest
 
@@ -208,7 +208,7 @@ class FetchLatestSiteSourceTests(unittest.TestCase):
         self.assertTrue((source.reboot_src / "server.py").exists())
 
     def test_fetch_raises_clearly_on_unexpected_archive_layout(self):
-        def fake_download(url, dest, timeout=60.0):
+        def fake_download(url, dest, timeout=60.0, on_progress=None):
             with tarfile.open(dest, "w:gz") as tar:
                 stray = self.root / "stray.tmp"
                 stray.write_text("x")
@@ -219,6 +219,23 @@ class FetchLatestSiteSourceTests(unittest.TestCase):
         with mock.patch("rtmp_server.updates.staging.download_file", side_effect=fake_download):
             with self.assertRaises(RuntimeError):
                 fetch_latest_site_source(self.root / "work")
+
+    def test_fetch_passes_on_progress_through_to_download_file(self):
+        """Прогресс-бар в GUI ("Обновить сайт") завязан на этот проброс —
+        без него не мог бы показывать реальный процент скачивания."""
+        received = {}
+
+        def fake_download(url, dest, timeout=60.0, on_progress=None):
+            received["on_progress"] = on_progress
+            self._build_fake_tarball(dest)
+            return dest
+
+        marker = object()
+
+        with mock.patch("rtmp_server.updates.staging.download_file", side_effect=fake_download):
+            fetch_latest_site_source(self.root / "work", on_progress=marker)
+
+        self.assertIs(received["on_progress"], marker)
 
 
 if __name__ == "__main__":
