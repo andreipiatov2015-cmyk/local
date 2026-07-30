@@ -17,6 +17,12 @@ case "$1" in
   configure)
     mkdir -p "$LOG_DIR" "$STATE_DIR"
 
+    # Каталог для секретов сайта (SMTP и т.п.), НЕ отслеживаемых git —
+    # см. debian/local/units/live-server.service (EnvironmentFile=).
+    # Только каталог, файл внутри оператор создаёт вручную сам.
+    mkdir -p /etc/rtmp-server
+    chmod 700 /etc/rtmp-server
+
     VERSION=$(cat "$APP_DIR/VERSION")
     echo "RTMP-server $VERSION: проверка окружения..."
     PYTHONPATH="$APP_DIR" python3 -m rtmp_server.setup.adopt || true

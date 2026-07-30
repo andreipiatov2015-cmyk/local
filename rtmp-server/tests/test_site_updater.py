@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from rtmp_server.updates.site_updater import _backup, _restore, fetch_latest_site_source
+from rtmp_server.updates.site_updater import _backup, _restore, _rsync, fetch_latest_site_source
 
 
 class BackupPermissionErrorTests(unittest.TestCase):
@@ -64,6 +64,66 @@ class BackupPermissionErrorTests(unittest.TestCase):
         self.assertTrue(self.backup_tar.exists())
         with tarfile.open(self.backup_tar) as tar:
             self.assertEqual(tar.getnames(), [])
+
+
+class RsyncPreservesDestinationOwnershipTests(unittest.TestCase):
+    """Регрессия: _rsync() использовал `rsync -a`, что переносит владельца
+    и группу из src на dest. src — распакованный из GitHub архив,
+    принадлежащий тому, кто запускал обновление (root), а живой сайт
+    работает от www-data. Это молча переставляло владельца
+    /var/www/live-server на root, из-за чего www-data терял право писать
+    в свою же sqlite-базу, и сервис падал в restart-loop с "attempt to
+    write a readonly database" сразу при старте."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.src = self.root / "src"
+        self.dest = self.root / "dest"
+        self.src.mkdir()
+        self.dest.mkdir()
+        # Разная длина содержимого — иначе rsync-овская быстрая проверка
+        # (совпадающие размер+mtime) может решить, что файл не менялся,
+        # и пропустить синхронизацию, дав ложноотрицательный результат теста.
+        (self.src / "server.py").write_text("print('this is the new deployed code')")
+        (self.dest / "server.py").write_text("old")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_rsync_does_not_change_destination_owner(self):
+        import os
+        import shutil
+
+        if shutil.which("rsync") is None:
+            self.skipTest("rsync не установлен в этом окружении")
+        if os.geteuid() != 0:
+            self.skipTest("chown к произвольному UID требует root")
+
+        fake_uid, fake_gid = 5000, 5000  # имитируем www-data
+        os.chown(self.dest, fake_uid, fake_gid)
+        os.chown(self.dest / "server.py", fake_uid, fake_gid)
+
+        _rsync(self.src, self.dest)
+
+        dest_stat = self.dest.stat()
+        self.assertEqual(dest_stat.st_uid, fake_uid)
+        self.assertEqual(dest_stat.st_gid, fake_gid)
+        self.assertEqual((self.dest / "server.py").read_text(), "print('this is the new deployed code')")
+
+    def test_rsync_command_uses_no_owner_no_group_not_archive(self):
+        captured = {}
+
+        def fake_run(args, **kwargs):
+            captured["args"] = args
+            return mock.Mock(returncode=0, stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            _rsync(self.src, self.dest)
+
+        self.assertNotIn("-a", captured["args"])
+        self.assertIn("--no-owner", captured["args"])
+        self.assertIn("--no-group", captured["args"])
 
 
 class FetchLatestSiteSourceTests(unittest.TestCase):

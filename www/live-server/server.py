@@ -102,7 +102,6 @@ app.secret_key = resolve_app_secret_key()
 # ------------ Константы (абсолютные пути) ------------
 DB_FILE = os.path.join(BASE_DIR, "app.db")
 ENTRIES_FILE = os.path.join(BASE_DIR, "entries.json")
-PRESETS_FILE = os.path.join(BASE_DIR, "presets.json")
 VK_SETTINGS_FILE = os.path.join(BASE_DIR, "vk_settings.json")
 STREAM_TARGETS_FILE = os.path.join(BASE_DIR, "stream_targets.json")
 HLS_STREAM_URL = (os.environ.get("HLS_STREAM_URL") or "").strip()
@@ -287,26 +286,7 @@ def save_entries(entries):
     with open(ENTRIES_FILE, "w", encoding="utf-8") as f:
         json.dump(entries, f, ensure_ascii=False, indent=4)
 
-def clear_entries():
-    entries.clear()
-    save_entries(entries)
-
-def load_presets():
-    if os.path.exists(PRESETS_FILE):
-        try:
-            with open(PRESETS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_presets(presets):
-    os.makedirs(os.path.dirname(PRESETS_FILE), exist_ok=True)
-    with open(PRESETS_FILE, "w", encoding="utf-8") as f:
-        json.dump(presets, f, ensure_ascii=False, indent=4)
-
 entries = load_entries()
-presets = load_presets()
 
 # ------------ Работа с БД ------------
 def query_db(query, args=(), one=False):
@@ -780,11 +760,6 @@ def resolve_stream_url():
 def index():
     return redirect("/login")
 
-@app.route("/admin")
-@login_required
-def admin():
-    return render_template("admin.html", user=get_current_user(), stream_url=resolve_stream_url())
-
 @app.route("/staff")
 @roles_required("admin")
 def staff():
@@ -825,11 +800,6 @@ def create_event():
     )
     return jsonify({"status": "ok"})
 
-@app.route("/editor/<int:event_id>")
-@login_required
-def editor_event(event_id):
-    return render_template("admin.html", event_id=event_id, stream_url=resolve_stream_url())
-
 # --- Разделы в разработке (пункты меню-заглушки на будущее) ---
 PLACEHOLDER_DESCRIPTION = "Раздел в разработке — появится в одном из следующих обновлений."
 
@@ -853,44 +823,12 @@ def consent_check():
 def get_entries():
     return jsonify(entries)
 
-@app.route("/entries/clear", methods=["POST"])
-def clear_entries_route():
-    clear_entries()
-    return jsonify({"status": "ok", "count": 0})
-
-@app.route("/add_entry", methods=["POST"])
-def add_entry():
-    data = request.json or {}
-    new_id = max([entry.get("id", 0) for entry in entries], default=0) + 1
-    data["id"] = new_id
-    entries.append(data)
-    save_entries(entries)
-    return jsonify({"message": "Запись добавлена"}), 200
-
-@app.route("/update_entry/<int:id>", methods=["PUT"])
-def update_entry(id):
-    data = request.json or {}
-    for entry in entries:
-        if entry.get("id") == id:
-            entry.update(data)
-            save_entries(entries)
-            return jsonify({"message": "Запись обновлена"}), 200
-    return jsonify({"error": "Запись не найдена"}), 404
-
 @app.route("/delete_entry/<int:id>", methods=["DELETE"])
 def delete_entry(id):
     global entries
     entries = [entry for entry in entries if entry.get("id") != id]
     save_entries(entries)
     return jsonify({"message": "Запись удалена"}), 200
-
-@app.route("/save_all_entries", methods=["POST"])
-def save_all_entries():
-    data = request.json or []
-    entries.clear()
-    entries.extend(data)
-    save_entries(entries)
-    return jsonify({"message": "Все записи сохранены"}), 200
 
 @app.route("/reorder_entries", methods=["POST"])
 def reorder_entries():
@@ -899,17 +837,6 @@ def reorder_entries():
     entries.extend(data)
     save_entries(entries)
     return jsonify({"message": "Порядок обновлён"}), 200
-
-@app.route("/presets")
-def get_presets():
-    return jsonify(presets)
-
-@app.route("/save_preset", methods=["POST"])
-def save_preset():
-    data = request.json or {}
-    presets.append(data)
-    save_presets(presets)
-    return jsonify({"message": "Пресет сохранён"}), 200
 
 # --- Управление пользователями ---
 @app.route("/staff/change_role/<int:user_id>", methods=["POST"])
@@ -947,7 +874,7 @@ def login():
             error_message = "Подтвердите e-mail."
             return render_template("login.html", error_message=error_message), 403
         session["user_id"] = row["id"]
-        return redirect(url_for("admin"))
+        return redirect(url_for("editor_list"))
     return render_template("login.html", error_message=error_message)
 
 @app.route("/logout")
