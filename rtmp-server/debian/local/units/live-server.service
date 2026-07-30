@@ -9,6 +9,10 @@ Type=simple
 # Понижение привилегий до www-data — отдельная задача для фазы работы
 # над безопасностью самого сайта, не делаем это здесь неявно.
 WorkingDirectory=/var/www/live-server
+# Секреты (SMTP и т.п.) — только из НЕ отслеживаемого git файла на самом
+# сервере, chmod 600, создаётся оператором вручную; "-" делает файл
+# необязательным, чтобы установка без email-функций не падала.
+EnvironmentFile=-/etc/rtmp-server/site-secrets.env
 ExecStart=/usr/bin/python3 /var/www/live-server/server.py
 Restart=on-failure
 RestartSec=5

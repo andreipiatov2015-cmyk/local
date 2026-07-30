@@ -9,11 +9,22 @@ LIVE_SERVER_HOST="127.0.0.1"
 LIVE_SERVER_PORT="8083"
 
 # ===== SMTP (registration emails) =====
-export SMTP_HOST="${SMTP_HOST:-smtp.yandex.ru}"
+# Секреты НИКОГДА не хардкодятся здесь — этот файл лежит в публичном
+# репозитории на GitHub, и раньше здесь был закоммичен реальный пароль
+# (см. историю git). Реальные значения — только в НЕ отслеживаемом git
+# файле /etc/rtmp-server/site-secrets.env на самом сервере (создаётся
+# вручную оператором, chmod 600), который подхватывается ниже, если есть.
+if [ -f /etc/rtmp-server/site-secrets.env ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . /etc/rtmp-server/site-secrets.env
+    set +a
+fi
+export SMTP_HOST="${SMTP_HOST:-}"
 export SMTP_PORT="${SMTP_PORT:-465}"
-export SMTP_USER="${SMTP_USER:-kcdoregister@yandex.ru}"
-export SMTP_PASSWORD="${SMTP_PASSWORD:-Andrei25082002}"
-export SMTP_FROM="${SMTP_FROM:-kcdoregister@yandex.ru}"
+export SMTP_USER="${SMTP_USER:-}"
+export SMTP_PASSWORD="${SMTP_PASSWORD:-}"
+export SMTP_FROM="${SMTP_FROM:-}"
 
 # Custom nginx (with RTMP) installed manually
 CUSTOM_NGINX_BIN="/usr/local/nginx/sbin/nginx"
