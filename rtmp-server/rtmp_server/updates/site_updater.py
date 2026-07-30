@@ -80,7 +80,17 @@ def fetch_latest_site_source(work_dir: Path) -> SiteUpdateSource:
 
 def _rsync(src: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
-    args = ["rsync", "-a"]
+    # НЕ -a ("archive" = -rlptgoD): -o/-g переносят владельца/группу из
+    # src на dest. src — это распакованный из GitHub архив, принадлежащий
+    # тому, кто запускал обновление (root — postinst/self-hosted раннер),
+    # а живой сайт на сервере работает от www-data (см. live-server.service
+    # User=www-data). Автообновление с -a молча переставляло владельца
+    # /var/www/live-server и его содержимого на root, из-за чего
+    # www-data больше не мог писать в свою же sqlite-базу — сервис падал
+    # в restart-loop сразу на старте с "attempt to write a readonly
+    # database". --no-owner --no-group — явно, а не просто "не передавать
+    # -o/-g", чтобы намерение было видно в самой команде.
+    args = ["rsync", "-rlptD", "--no-owner", "--no-group"]
     for pattern in C.SITE_UPDATE_EXCLUDES:
         args += ["--exclude", pattern]
     args += [f"{src}/", f"{dest}/"]

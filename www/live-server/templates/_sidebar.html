@@ -9,11 +9,11 @@
 
    Использование:
      {% import "_sidebar.html" as nav %}
-     {{ nav.render_sidebar("participants") }}
+     {{ nav.render_sidebar("events") }}
 
    Если странице нужно что-то дополнительное в подвале меню (как кнопка
-   "Настройка трансляции" на /admin) — через caller():
-     {% call nav.render_sidebar("participants") %}
+   "Настройка трансляции" на /editor) — через caller():
+     {% call nav.render_sidebar("events") %}
        <button id="vkStreamButton" class="vk-btn">⚙️ Настройка трансляции</button>
      {% endcall %}
 #}
@@ -28,10 +28,6 @@
     <a class="menu-item{{ ' active' if active == 'events' }}" href="/editor">
       <span class="icon">📅</span>
       <span class="text">Мероприятие</span>
-    </a>
-    <a class="menu-item{{ ' active' if active == 'participants' }}" href="/admin">
-      <span class="icon">🧑‍🤝‍🧑</span>
-      <span class="text">Участники очного этапа</span>
     </a>
     <a class="menu-item{{ ' active' if active == 'competition' }}" href="/competition">
       <span class="icon">🏆</span>
