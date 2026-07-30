@@ -103,6 +103,36 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
+.documentation-cards-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.documentation-cards-row .program-doc-card {
+  width: auto;
+  flex: 1 1 150px;
+  max-width: 200px;
+  margin-top: 0;
+  padding: 10px;
+  gap: 8px;
+}
+
+.documentation-cards-row .program-doc-card-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+}
+
+.documentation-cards-row .program-doc-card-title {
+  font-size: 13px;
+}
+
+.documentation-cards-row .program-doc-card-subtitle {
+  font-size: 11px;
+}
+
 .program-doc-card:hover {
   border-color: #7eaef6;
   box-shadow: 0 8px 20px rgba(30, 58, 138, 0.12);
