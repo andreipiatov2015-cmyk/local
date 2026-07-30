@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from rtmp_server.updates.staging import StagedSwap
+from rtmp_server.updates.staging import StagedSwap, extract_tarball
 
 
 class StagedSwapTests(unittest.TestCase):
@@ -82,6 +84,38 @@ class StagedSwapTests(unittest.TestCase):
 
         self.assertFalse(result.applied)
         self.assertFalse(self.target.exists())
+
+
+class ExtractTarballFilterCompatTests(unittest.TestCase):
+    """Тот же баг/фикс, что и в site_updater._extractall_compat: filter="data"
+    (PEP 706) не поддерживается на системном python3 реального сервера."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.archive = self.root / "test.tar"
+        payload = self.root / "payload.txt"
+        payload.write_text("content")
+        with tarfile.open(self.archive, "w") as tar:
+            tar.add(payload, arcname="payload.txt")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_falls_back_when_filter_kwarg_unsupported(self):
+        dest = self.root / "out"
+
+        real_extractall = tarfile.TarFile.extractall
+
+        def flaky_extractall(self, path=".", members=None, *, numeric_owner=False, filter=None):
+            if filter is not None:
+                raise TypeError("extractall() got an unexpected keyword argument 'filter'")
+            return real_extractall(self, path, members, numeric_owner=numeric_owner)
+
+        with mock.patch.object(tarfile.TarFile, "extractall", flaky_extractall):
+            extract_tarball(self.archive, dest)  # не должно бросить исключение
+
+        self.assertEqual((dest / "payload.txt").read_text(), "content")
 
 
 if __name__ == "__main__":

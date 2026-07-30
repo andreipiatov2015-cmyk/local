@@ -14,7 +14,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from rtmp_server.updates.site_updater import _backup, _restore, _rsync, fetch_latest_site_source
+from rtmp_server.updates.site_updater import (
+    _backup,
+    _extractall_compat,
+    _restore,
+    _rsync,
+    fetch_latest_site_source,
+)
 
 
 class BackupPermissionErrorTests(unittest.TestCase):
@@ -64,6 +70,49 @@ class BackupPermissionErrorTests(unittest.TestCase):
         self.assertTrue(self.backup_tar.exists())
         with tarfile.open(self.backup_tar) as tar:
             self.assertEqual(tar.getnames(), [])
+
+
+class ExtractallFilterCompatTests(unittest.TestCase):
+    """Регрессия: extractall(..., filter="data") (PEP 706) не поддерживается
+    на системном python3 реального сервера (Astra Linux) — бэкпортировано
+    только в отдельные патч-релизы 3.8-3.11, там же ловится TypeError.
+    Обнаружено владельцем вживую при первой попытке "Обновить сайт" из GUI."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.archive = self.root / "test.tar"
+        payload = self.root / "payload.txt"
+        payload.write_text("content")
+        with tarfile.open(self.archive, "w") as tar:
+            tar.add(payload, arcname="payload.txt")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_falls_back_when_filter_kwarg_unsupported(self):
+        dest = self.root / "out"
+        dest.mkdir()
+
+        real_extractall = tarfile.TarFile.extractall
+
+        def flaky_extractall(self, path=".", members=None, *, numeric_owner=False, filter=None):
+            if filter is not None:
+                raise TypeError("extractall() got an unexpected keyword argument 'filter'")
+            return real_extractall(self, path, members, numeric_owner=numeric_owner)
+
+        with mock.patch.object(tarfile.TarFile, "extractall", flaky_extractall):
+            with tarfile.open(self.archive) as tar:
+                _extractall_compat(tar, dest)  # не должно бросить исключение
+
+        self.assertEqual((dest / "payload.txt").read_text(), "content")
+
+    def test_uses_filter_when_supported(self):
+        dest = self.root / "out"
+        dest.mkdir()
+        with tarfile.open(self.archive) as tar:
+            _extractall_compat(tar, dest)
+        self.assertEqual((dest / "payload.txt").read_text(), "content")
 
 
 class RsyncPreservesDestinationOwnershipTests(unittest.TestCase):

@@ -1,3 +1,21 @@
+rtmp-server (1.0.14-1) stable; urgency=high
+
+  * Критический баг: "Обновить сайт (последняя версия с GitHub)" падало с
+    `TarFile.extractall() got an unexpected keyword argument 'filter'`
+    (обнаружено владельцем вживую при первой же попытке). Аргумент filter=
+    (PEP 706, защита от tar-bomb) бэкпортирован только в отдельные
+    патч-релизы Python 3.8–3.11 (и есть нативно в 3.12+) — системный
+    python3 на реальном сервере (Astra Linux) его не поддерживает.
+    Добавлена универсальная обёртка _extractall_compat(): пробует
+    filter="data", при TypeError откатывается на extractall() без
+    аргумента. Применена везде, где используется extractall — в
+    site_updater.py (fetch_latest_site_source, _restore) и
+    staging.extract_tarball. Регрессионные тесты — воспроизводят
+    TypeError через mock, не полагаясь на конкретную версию Python
+    в тестовом окружении.
+
+ -- RTMP-server maintainers <support@rtmp-server.local>  Thu, 30 Jul 2026 17:55:00 +0000
+
 rtmp-server (1.0.13-1) stable; urgency=high
 
   * Критический баг: автообновление сайта (site_updater._rsync) гоняло
