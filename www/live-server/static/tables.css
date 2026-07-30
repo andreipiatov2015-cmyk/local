@@ -279,6 +279,34 @@
   font-style: italic;
 }
 
+.doc-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.doc-preview-table th,
+.doc-preview-table td {
+  border: 1px solid #dbe2ea;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-preview-table th {
+  background: #f1f5f9;
+  font-weight: 700;
+}
+
+.doc-preview-award-row {
+  padding: 6px 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.doc-preview-award-row:last-child {
+  border-bottom: none;
+}
+
 .section-title-row {
   display: flex;
   align-items: center;

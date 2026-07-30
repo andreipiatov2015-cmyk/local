@@ -548,6 +548,12 @@ def init_db():
         "ALTER TABLE table_entries ADD COLUMN application_file TEXT",
         "ALTER TABLE import_tables ADD COLUMN documentation_program_settings_json TEXT",
         "ALTER TABLE import_tables ADD COLUMN documentation_program_preview_json TEXT",
+        "ALTER TABLE import_tables ADD COLUMN documentation_results_protocol_settings_json TEXT",
+        "ALTER TABLE import_tables ADD COLUMN documentation_results_protocol_preview_json TEXT",
+        "ALTER TABLE import_tables ADD COLUMN documentation_evaluation_protocol_settings_json TEXT",
+        "ALTER TABLE import_tables ADD COLUMN documentation_evaluation_protocol_preview_json TEXT",
+        "ALTER TABLE import_tables ADD COLUMN documentation_award_settings_json TEXT",
+        "ALTER TABLE import_tables ADD COLUMN documentation_award_preview_json TEXT",
         "ALTER TABLE import_tables ADD COLUMN card_sequence_json TEXT",
         "ALTER TABLE import_table_rows ADD COLUMN participant_edits_json TEXT",
     ]:
@@ -3671,6 +3677,306 @@ def build_program_docx_bytes(document_title, program):
     return mem
 
 
+def build_docx_bytes_from_body(title, body_inner_xml, landscape=False):
+    """Zips a full .docx around pre-built <w:p>/<w:tbl> body XML. Shared by the
+    protocol/award document generators so they don't each re-declare the same
+    OOXML namespace and package boilerplate as build_program_docx_bytes."""
+    top_margin = cm_to_twips(1.5)
+    side_margin = cm_to_twips(1.5)
+    page_w = cm_to_twips(29.7 if landscape else 21.0)
+    page_h = cm_to_twips(21.0 if landscape else 29.7)
+    sect_pr = (
+        "<w:sectPr>"
+        + (f"<w:pgSz w:w=\"{page_w}\" w:h=\"{page_h}\" w:orient=\"landscape\"/>" if landscape else f"<w:pgSz w:w=\"{page_w}\" w:h=\"{page_h}\"/>")
+        + f"<w:pgMar w:top=\"{top_margin}\" w:right=\"{side_margin}\" w:bottom=\"{top_margin}\" w:left=\"{side_margin}\" w:header=\"708\" w:footer=\"708\" w:gutter=\"0\"/>"
+        "</w:sectPr>"
+    )
+    document_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<w:document xmlns:wpc=\"http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas\" "
+        "xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" "
+        "xmlns:o=\"urn:schemas-microsoft-com:office:office\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" "
+        "xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\" "
+        "xmlns:v=\"urn:schemas-microsoft-com:vml\" "
+        "xmlns:wp14=\"http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing\" "
+        "xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" "
+        "xmlns:w10=\"urn:schemas-microsoft-com:office:word\" "
+        "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" "
+        "xmlns:w14=\"http://schemas.microsoft.com/office/word/2010/wordml\" "
+        "xmlns:wpg=\"http://schemas.microsoft.com/office/word/2010/wordprocessingGroup\" "
+        "xmlns:wpi=\"http://schemas.microsoft.com/office/word/2010/wordprocessingInk\" "
+        "xmlns:wne=\"http://schemas.microsoft.com/office/word/2006/wordml\" "
+        "xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\" "
+        "mc:Ignorable=\"w14 wp14\">"
+        "<w:body>" + body_inner_xml + sect_pr + "</w:body></w:document>"
+    )
+    content_types_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>"""
+    root_rels_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>"""
+    app_xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>Live Server</Application>
+</Properties>"""
+    created = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    core_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" "
+        "xmlns:dc=\"http://purl.org/dc/elements/1.1/\" "
+        "xmlns:dcterms=\"http://purl.org/dc/terms/\" "
+        "xmlns:dcmitype=\"http://purl.org/dc/dcmitype/\" "
+        "xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">"
+        f"<dc:title>{xml_escape(title)}</dc:title>"
+        "<dc:creator>Live Server</dc:creator>"
+        f"<dcterms:created xsi:type=\"dcterms:W3CDTF\">{created}</dcterms:created>"
+        f"<dcterms:modified xsi:type=\"dcterms:W3CDTF\">{created}</dcterms:modified>"
+        "</cp:coreProperties>"
+    )
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("_rels/.rels", root_rels_xml)
+        zf.writestr("word/document.xml", document_xml)
+        zf.writestr("docProps/app.xml", app_xml)
+        zf.writestr("docProps/core.xml", core_xml)
+    mem.seek(0)
+    return mem
+
+
+def _table_run_props_xml(*flags, color=None, size_half_points=20):
+    parts = [
+        "<w:rFonts w:ascii=\"Times New Roman\" w:hAnsi=\"Times New Roman\" w:cs=\"Times New Roman\"/>",
+        f"<w:sz w:val=\"{size_half_points}\"/>",
+        f"<w:szCs w:val=\"{size_half_points}\"/>",
+    ]
+    if "bold" in flags:
+        parts.append("<w:b/>")
+    if "italic" in flags:
+        parts.append("<w:i/>")
+    if color:
+        parts.append(f"<w:color w:val=\"{xml_escape(color)}\"/>")
+    return f"<w:rPr>{''.join(parts)}</w:rPr>"
+
+
+def _table_cell_xml(text, width_twips, *, bold=False, shading=None, align="left", color=None):
+    run = f"<w:r>{_table_run_props_xml(*(['bold'] if bold else []), color=color)}<w:t xml:space=\"preserve\">{xml_escape(text)}</w:t></w:r>"
+    shading_xml = f"<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{xml_escape(shading)}\"/>" if shading else ""
+    return (
+        "<w:tc>"
+        f"<w:tcPr><w:tcW w:w=\"{width_twips}\" w:type=\"dxa\"/>{shading_xml}<w:vAlign w:val=\"center\"/></w:tcPr>"
+        f"<w:p><w:pPr><w:jc w:val=\"{align}\"/></w:pPr>{run}</w:p>"
+        "</w:tc>"
+    )
+
+
+def build_protocol_table_docx_bytes(document_title, columns, rows):
+    """columns: list of {"title": str, "width_cm": float}; rows: list[list[str]] aligned to columns."""
+    portrait_usable_cm = 21.0 - 3.0
+    landscape_usable_cm = 29.7 - 3.0
+    total_width_cm = sum(float(c.get("width_cm") or 0) for c in columns) or 1.0
+    landscape = total_width_cm > portrait_usable_cm
+    usable_cm = landscape_usable_cm if landscape else portrait_usable_cm
+    scale = min(1.0, usable_cm / total_width_cm)
+    col_widths = [cm_to_twips((float(c.get("width_cm") or 0)) * scale) for c in columns]
+    grid_xml = "".join(f"<w:gridCol w:w=\"{w}\"/>" for w in col_widths)
+
+    header_cells = "".join(
+        _table_cell_xml(str(c.get("title") or ""), w, bold=True, shading="D9D9D9", align="center")
+        for c, w in zip(columns, col_widths)
+    )
+    header_row_xml = f"<w:tr>{header_cells}</w:tr>"
+
+    body_rows_xml = []
+    for row in rows:
+        cells_xml = "".join(
+            _table_cell_xml(str(row[i]) if i < len(row) else "", col_widths[i], align="center" if i == 0 else "left")
+            for i in range(len(columns))
+        )
+        body_rows_xml.append(f"<w:tr>{cells_xml}</w:tr>")
+
+    table_xml = (
+        "<w:tbl>"
+        "<w:tblPr>"
+        f"<w:tblW w:w=\"{sum(col_widths)}\" w:type=\"dxa\"/>"
+        "<w:tblBorders>"
+        "<w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
+        "<w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
+        "<w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
+        "<w:right w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
+        "<w:insideH w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
+        "<w:insideV w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"000000\"/>"
+        "</w:tblBorders>"
+        "</w:tblPr>"
+        f"<w:tblGrid>{grid_xml}</w:tblGrid>"
+        + header_row_xml
+        + "".join(body_rows_xml)
+        + "</w:tbl>"
+    )
+
+    title_xml = (
+        "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"200\"/></w:pPr>"
+        f"<w:r>{_table_run_props_xml('bold', size_half_points=28)}<w:t>{xml_escape(document_title)}</w:t></w:r></w:p>"
+    )
+    body_xml = title_xml + table_xml
+    return build_docx_bytes_from_body(document_title, body_xml, landscape=landscape)
+
+
+def build_results_protocol_docx_bytes(document_title, items):
+    columns = [
+        {"title": "№", "width_cm": 1.0},
+        {"title": "Территория", "width_cm": 3.0},
+        {"title": "ОУ", "width_cm": 4.5},
+        {"title": "Название коллектива", "width_cm": 4.0},
+        {"title": "Номинация", "width_cm": 3.0},
+        {"title": "Возраст", "width_cm": 2.2},
+        {"title": "Номер", "width_cm": 3.5},
+        {"title": "Итоги", "width_cm": 2.8},
+    ]
+    rows = []
+    for i, item in enumerate(items or []):
+        item = item if isinstance(item, dict) else {}
+        rows.append([
+            str(i + 1),
+            item.get("territory", ""),
+            item.get("institution", ""),
+            item.get("studioName", ""),
+            item.get("nomination", ""),
+            item.get("ageCategory", ""),
+            item.get("numberTitle", ""),
+            item.get("result", ""),
+        ])
+    return build_protocol_table_docx_bytes(document_title, columns, rows)
+
+
+def build_evaluation_protocol_docx_bytes(document_title, items):
+    columns = [
+        {"title": "№", "width_cm": 1.0},
+        {"title": "Территория", "width_cm": 2.6},
+        {"title": "ОУ", "width_cm": 3.8},
+        {"title": "Название коллектива", "width_cm": 3.4},
+        {"title": "ФИО руководителя", "width_cm": 3.4},
+        {"title": "Контакты руководителя", "width_cm": 3.2},
+        {"title": "Номинация", "width_cm": 2.6},
+        {"title": "Возраст", "width_cm": 2.0},
+        {"title": "Номер", "width_cm": 3.0},
+        {"title": "Ссылка на видео", "width_cm": 3.4},
+        {"title": "Оценка / Результат", "width_cm": 2.6},
+    ]
+    rows = []
+    for i, item in enumerate(items or []):
+        item = item if isinstance(item, dict) else {}
+        rows.append([
+            str(i + 1),
+            item.get("territory", ""),
+            item.get("institution", ""),
+            item.get("studioName", ""),
+            item.get("leaderFio", ""),
+            item.get("leaderContacts", ""),
+            item.get("nomination", ""),
+            item.get("ageCategory", ""),
+            item.get("numberTitle", ""),
+            item.get("videoUrl", ""),
+            item.get("result", ""),
+        ])
+    return build_protocol_table_docx_bytes(document_title, columns, rows)
+
+
+def build_award_docx_bytes(settings, items):
+    """One diploma/certificate page per item. Layout (colored banner + big
+    title + body + signature) mirrors the sample templates' structure without
+    embedding their photographic background art."""
+    settings = settings if isinstance(settings, dict) else {}
+    signer = str(settings.get("signer") or "Директор ГАУДО «Сириус.Кузбасс» Н.А. Петрик").strip()
+    region_line = str(settings.get("region_line") or "Кемеровская область-Кузбасс").strip()
+    year_line = str(settings.get("year_line") or str(datetime.datetime.utcnow().year)).strip()
+
+    pages_xml = []
+    items = items or []
+    for idx, item in enumerate(items):
+        item = item if isinstance(item, dict) else {}
+        is_diploma = bool(str(item.get("place") or "").strip())
+        banner_fill = "7C79B9" if is_diploma else "E8720C"
+        title_color = "7C79B9" if is_diploma else "E8720C"
+        heading = "ДИПЛОМ" if is_diploma else "СЕРТИФИКАТ"
+        performer = str(item.get("performer") or item.get("studioName") or "").strip() or "Участник"
+        institution = str(item.get("institution") or "").strip()
+        nomination = str(item.get("nomination") or "").strip()
+        place_text = str(item.get("place") or "").strip()
+
+        banner_table = (
+            "<w:tbl>"
+            "<w:tblPr><w:tblW w:w=\"9639\" w:type=\"dxa\"/><w:tblBorders>"
+            "<w:top w:val=\"none\"/><w:left w:val=\"none\"/><w:bottom w:val=\"none\"/><w:right w:val=\"none\"/>"
+            "<w:insideH w:val=\"none\"/><w:insideV w:val=\"none\"/></w:tblBorders></w:tblPr>"
+            "<w:tblGrid><w:gridCol w:w=\"9639\"/></w:tblGrid>"
+            "<w:tr><w:trPr><w:trHeight w:val=\"1000\" w:hRule=\"atLeast\"/></w:trPr>"
+            f"<w:tc><w:tcPr><w:tcW w:w=\"9639\" w:type=\"dxa\"/><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{banner_fill}\"/><w:vAlign w:val=\"center\"/></w:tcPr>"
+            f"<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r>{_table_run_props_xml('bold', color='FFFFFF', size_half_points=28)}<w:t>СИРИУС.КУЗБАСС</w:t></w:r></w:p>"
+            "</w:tc></w:tr></w:tbl>"
+        )
+
+        parts = [banner_table, "<w:p/>", "<w:p/>"]
+        parts.append(
+            "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"240\"/></w:pPr>"
+            f"<w:r>{_table_run_props_xml('bold', color=title_color, size_half_points=96)}<w:t>{xml_escape(heading)}</w:t></w:r></w:p>"
+        )
+        if place_text:
+            parts.append(
+                "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"360\"/></w:pPr>"
+                f"<w:r>{_table_run_props_xml('bold', size_half_points=32)}<w:t>{xml_escape(place_text)}</w:t></w:r></w:p>"
+            )
+        parts.append(
+            "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"120\"/></w:pPr>"
+            f"<w:r>{_table_run_props_xml(size_half_points=24)}<w:t>{'награждается' if is_diploma else 'награждается участник'}</w:t></w:r></w:p>"
+        )
+        parts.append(
+            "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"120\"/></w:pPr>"
+            f"<w:r>{_table_run_props_xml('bold', size_half_points=32)}<w:t>{xml_escape(performer)}</w:t></w:r></w:p>"
+        )
+        if institution:
+            parts.append(
+                "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"120\"/></w:pPr>"
+                f"<w:r>{_table_run_props_xml(size_half_points=22)}<w:t>{xml_escape(institution)}</w:t></w:r></w:p>"
+            )
+        if nomination:
+            parts.append(
+                "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"120\"/></w:pPr>"
+                f"<w:r>{_table_run_props_xml('italic', size_half_points=22)}<w:t>{xml_escape(f'в номинации «{nomination}»')}</w:t></w:r></w:p>"
+            )
+        for _ in range(6):
+            parts.append("<w:p/>")
+        parts.append(
+            "<w:p><w:pPr><w:spacing w:after=\"40\"/></w:pPr>"
+            f"<w:r>{_table_run_props_xml(size_half_points=22)}<w:t>{xml_escape(signer)}</w:t></w:r></w:p>"
+        )
+        parts.append("<w:p/>")
+        parts.append(
+            "<w:p><w:pPr><w:spacing w:after=\"20\"/></w:pPr>"
+            f"<w:r>{_table_run_props_xml(size_half_points=20)}<w:t>{xml_escape(region_line)}</w:t></w:r></w:p>"
+        )
+        parts.append(
+            "<w:p>"
+            f"<w:r>{_table_run_props_xml(size_half_points=20)}<w:t>{xml_escape(year_line)}</w:t></w:r></w:p>"
+        )
+        if idx < len(items) - 1:
+            parts.append("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>")
+        pages_xml.append("".join(parts))
+
+    body_xml = "".join(pages_xml) if pages_xml else "<w:p/>"
+    return build_docx_bytes_from_body("Дипломы и сертификаты", body_xml, landscape=False)
+
+
 @app.route("/api/tables/<int:table_id>/documentation/program", methods=["GET", "POST"])
 def table_documentation_program(table_id):
     user = table_user_from_request()
@@ -3774,6 +4080,150 @@ def table_documentation_program_docx(table_id):
     document_title = str((table.get("title") if isinstance(table, dict) else table["title"]) or "").strip() or "Программа выступлений"
     docx_buf = build_program_docx_bytes(document_title, program)
     safe_name = sanitize_docx_filename(document_title, fallback=f"table_{table_id}")
+    download_name = f"{safe_name}.docx"
+    response = send_file(
+        docx_buf,
+        as_attachment=True,
+        download_name=download_name,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(download_name)}"
+    return response
+
+
+def _documentation_settings_route(table_id, settings_col, preview_col, data_key):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db(
+        f"SELECT id, {settings_col}, {preview_col} FROM import_tables WHERE id=? AND user_id=?",
+        (table_id, user["id"]),
+        one=True,
+    )
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    if request.method == "GET":
+        try:
+            settings = json.loads(table[settings_col] or "{}")
+        except Exception:
+            settings = {}
+        try:
+            data = json.loads(table[preview_col] or "{}")
+        except Exception:
+            data = {}
+        return jsonify({"settings": settings, data_key: data})
+
+    payload = request.get_json(silent=True) or {}
+    settings = payload.get("settings") if isinstance(payload, dict) else {}
+    data = payload.get(data_key) if isinstance(payload, dict) else {}
+    if not isinstance(settings, dict) or not isinstance(data, dict):
+        return jsonify({"detail": f"Ожидаются объекты settings и {data_key}"}), 400
+    query_db(
+        f"UPDATE import_tables SET {settings_col}=?, {preview_col}=?, updated_at=? WHERE id=?",
+        (json.dumps(settings, ensure_ascii=False), json.dumps(data, ensure_ascii=False), now_iso(), table_id),
+    )
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/tables/<int:table_id>/documentation/results-protocol", methods=["GET", "POST"])
+def table_documentation_results_protocol(table_id):
+    return _documentation_settings_route(
+        table_id, "documentation_results_protocol_settings_json", "documentation_results_protocol_preview_json", "protocol",
+    )
+
+
+@app.route("/api/tables/<int:table_id>/documentation/evaluation-protocol", methods=["GET", "POST"])
+def table_documentation_evaluation_protocol(table_id):
+    return _documentation_settings_route(
+        table_id, "documentation_evaluation_protocol_settings_json", "documentation_evaluation_protocol_preview_json", "protocol",
+    )
+
+
+@app.route("/api/tables/<int:table_id>/documentation/award", methods=["GET", "POST"])
+def table_documentation_award(table_id):
+    return _documentation_settings_route(
+        table_id, "documentation_award_settings_json", "documentation_award_preview_json", "award",
+    )
+
+
+@app.route("/api/tables/<int:table_id>/documentation/results-protocol/docx", methods=["POST"])
+def table_documentation_results_protocol_docx(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id, title FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    protocol = payload.get("protocol") if isinstance(payload, dict) else {}
+    items = protocol.get("items") if isinstance(protocol, dict) else None
+    if not isinstance(items, list) or not items:
+        return jsonify({"detail": "Протокол пуст"}), 400
+
+    document_title = "Протокол о подведении итогов заочного этапа"
+    docx_buf = build_results_protocol_docx_bytes(document_title, items)
+    safe_name = sanitize_docx_filename(document_title, fallback=f"table_{table_id}_results")
+    download_name = f"{safe_name}.docx"
+    response = send_file(
+        docx_buf,
+        as_attachment=True,
+        download_name=download_name,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(download_name)}"
+    return response
+
+
+@app.route("/api/tables/<int:table_id>/documentation/evaluation-protocol/docx", methods=["POST"])
+def table_documentation_evaluation_protocol_docx(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id, title FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    protocol = payload.get("protocol") if isinstance(payload, dict) else {}
+    items = protocol.get("items") if isinstance(protocol, dict) else None
+    if not isinstance(items, list) or not items:
+        return jsonify({"detail": "Протокол пуст"}), 400
+
+    document_title = "Оценочный протокол"
+    docx_buf = build_evaluation_protocol_docx_bytes(document_title, items)
+    safe_name = sanitize_docx_filename(document_title, fallback=f"table_{table_id}_evaluation")
+    download_name = f"{safe_name}.docx"
+    response = send_file(
+        docx_buf,
+        as_attachment=True,
+        download_name=download_name,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(download_name)}"
+    return response
+
+
+@app.route("/api/tables/<int:table_id>/documentation/award/docx", methods=["POST"])
+def table_documentation_award_docx(table_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    table = query_db("SELECT id, title FROM import_tables WHERE id=? AND user_id=?", (table_id, user["id"]), one=True)
+    if not table:
+        return jsonify({"detail": "Таблица не найдена"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    settings = payload.get("settings") if isinstance(payload, dict) else {}
+    award = payload.get("award") if isinstance(payload, dict) else {}
+    items = award.get("items") if isinstance(award, dict) else None
+    if not isinstance(items, list) or not items:
+        return jsonify({"detail": "Список награждаемых пуст"}), 400
+
+    document_title = "Дипломы и сертификаты"
+    docx_buf = build_award_docx_bytes(settings, items)
+    safe_name = sanitize_docx_filename(document_title, fallback=f"table_{table_id}_awards")
     download_name = f"{safe_name}.docx"
     response = send_file(
         docx_buf,
