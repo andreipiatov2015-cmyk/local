@@ -360,6 +360,14 @@
   word-break: break-word;
 }
 
+.table-main strong {
+  color: #f1f5f9;
+}
+
+.table-item .hint {
+  color: #8892a0;
+}
+
 .table-item.is-creating {
   border-color: #4f8cff;
   box-shadow: 0 0 0 2px rgba(79, 140, 255, 0.2);
