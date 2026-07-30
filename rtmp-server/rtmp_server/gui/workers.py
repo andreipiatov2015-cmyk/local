@@ -13,6 +13,12 @@ from PyQt5.QtCore import QThread, pyqtSignal
 class WorkerThread(QThread):
     finished_ok = pyqtSignal(object)
     finished_error = pyqtSignal(str)
+    # (done, total) — total=0 значит "неизвестно" (сервер не прислал
+    # Content-Length), GUI в этом случае должен показывать неопределённый
+    # индикатор, а не процент. Не все worker'ы им пользуются — это
+    # безопасное дополнение, ничего не меняет для тех, кто просто игнорирует
+    # сигнал (как было раньше).
+    progress = pyqtSignal(int, int)
 
     def __init__(self, fn: Callable[[], object], parent=None):
         super().__init__(parent)

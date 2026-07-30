@@ -16,6 +16,7 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from rtmp_server.config import constants as C
 from rtmp_server.monitor.site_monitor import check_site_health
@@ -59,7 +60,10 @@ def source_from_extracted_dir(root: Path) -> SiteUpdateSource:
 GITHUB_MAIN_TARBALL_URL = f"https://github.com/{C.GITHUB_REPO}/archive/refs/heads/main.tar.gz"
 
 
-def fetch_latest_site_source(work_dir: Path) -> SiteUpdateSource:
+def fetch_latest_site_source(
+    work_dir: Path,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> SiteUpdateSource:
     """Скачивает www/ с текущего main публичного репозитория (без токена —
     репозиторий публичный) и возвращает готовый SiteUpdateSource.
 
@@ -77,7 +81,7 @@ def fetch_latest_site_source(work_dir: Path) -> SiteUpdateSource:
 
     work_dir.mkdir(parents=True, exist_ok=True)
     tarball = work_dir / "site-main.tar.gz"
-    download_file(GITHUB_MAIN_TARBALL_URL, tarball, timeout=60.0)
+    download_file(GITHUB_MAIN_TARBALL_URL, tarball, timeout=60.0, on_progress=on_progress)
 
     extract_dir = work_dir / "extracted"
     extract_dir.mkdir(parents=True, exist_ok=True)

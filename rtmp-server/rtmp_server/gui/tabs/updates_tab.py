@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -21,6 +22,15 @@ from PyQt5.QtWidgets import (
 from rtmp_server import __version__
 from rtmp_server.gui.workers import WorkerThread
 from rtmp_server.updates import app_updater, site_updater
+
+
+def _make_progress_bar() -> QProgressBar:
+    bar = QProgressBar()
+    bar.setRange(0, 100)
+    bar.setValue(0)
+    bar.setTextVisible(True)
+    bar.setVisible(False)
+    return bar
 
 
 class UpdatesTab(QWidget):
@@ -36,6 +46,9 @@ class UpdatesTab(QWidget):
 
         self.app_status_label = QLabel("Статус: не проверялось")
         layout.addWidget(self.app_status_label)
+
+        self.app_progress = _make_progress_bar()
+        layout.addWidget(self.app_progress)
 
         self.btn_check = QPushButton("Проверить обновление приложения")
         self.btn_check.clicked.connect(self._on_check)
@@ -59,6 +72,9 @@ class UpdatesTab(QWidget):
         self.btn_site_update.clicked.connect(self._on_site_update)
         layout.addWidget(self.btn_site_update)
 
+        self.site_progress = _make_progress_bar()
+        layout.addWidget(self.site_progress)
+
         self.site_status_label = QLabel()
         layout.addWidget(self.site_status_label)
         layout.addStretch()
@@ -68,6 +84,19 @@ class UpdatesTab(QWidget):
     def _set_busy(self, *buttons: QPushButton, busy: bool) -> None:
         for btn in buttons:
             btn.setEnabled(not busy)
+
+    @staticmethod
+    def _apply_progress(bar: QProgressBar, done: int, total: int) -> None:
+        bar.setVisible(True)
+        if total > 0:
+            bar.setRange(0, total)
+            bar.setValue(done)
+            bar.setFormat("%p%")
+        else:
+            # Сервер не прислал Content-Length — показываем "бегущий"
+            # индикатор вместо неверного процента.
+            bar.setRange(0, 0)
+            bar.setFormat("Скачивание...")
 
     def _on_check(self) -> None:
         self.app_status_label.setText("Проверяю GitHub на наличие обновления...")
@@ -113,12 +142,16 @@ class UpdatesTab(QWidget):
             f"Скачивание и установка версии {self._pending_release.version}... "
             "это может занять до пары минут, окно не зависло."
         )
+        self.app_progress.setRange(0, 0)
+        self.app_progress.setFormat("Скачивание...")
+        self.app_progress.setVisible(True)
         self._set_busy(self.btn_check, self.btn_apply, busy=True)
 
-        def do_apply():
-            return app_updater.apply_update(self._pending_release)
-
-        worker = WorkerThread(do_apply)
+        worker = WorkerThread(lambda: app_updater.apply_update(
+            self._pending_release,
+            on_progress=lambda done, total: worker.progress.emit(done, total),
+        ))
+        worker.progress.connect(lambda done, total: self._apply_progress(self.app_progress, done, total))
         worker.finished_ok.connect(self._on_apply_done)
         worker.finished_error.connect(self._on_apply_error)
         self._worker = worker
@@ -126,12 +159,14 @@ class UpdatesTab(QWidget):
 
     def _on_apply_done(self, result) -> None:
         self._set_busy(self.btn_check, self.btn_apply, busy=False)
+        self.app_progress.setVisible(False)
         self.app_status_label.setText(result.message)
         if not result.applied:
             QMessageBox.warning(self, "Обновление не применено", result.message)
 
     def _on_apply_error(self, err: str) -> None:
         self._set_busy(self.btn_check, self.btn_apply, busy=False)
+        self.app_progress.setVisible(False)
         self.app_status_label.setText("Установка не удалась — см. сообщение об ошибке")
         QMessageBox.critical(self, "Ошибка", err)
 
@@ -144,27 +179,36 @@ class UpdatesTab(QWidget):
             return
 
         self.site_status_label.setText("Скачиваю актуальный код сайта с GitHub...")
+        self.site_progress.setRange(0, 0)
+        self.site_progress.setFormat("Скачивание...")
+        self.site_progress.setVisible(True)
         self._set_busy(self.btn_site_update_latest, self.btn_site_update, busy=True)
 
         def do_apply():
             import tempfile
 
             with tempfile.TemporaryDirectory(prefix="rtmp-server-site-fetch-") as work_dir:
-                source = site_updater.fetch_latest_site_source(Path(work_dir))
+                source = site_updater.fetch_latest_site_source(
+                    Path(work_dir),
+                    on_progress=lambda done, total: worker.progress.emit(done, total),
+                )
                 return site_updater.apply(source)
 
         def on_done(result):
             self._set_busy(self.btn_site_update_latest, self.btn_site_update, busy=False)
+            self.site_progress.setVisible(False)
             self.site_status_label.setText(result.message)
             if not result.applied:
                 QMessageBox.warning(self, "Обновление не применено", result.message)
 
         def on_error(err):
             self._set_busy(self.btn_site_update_latest, self.btn_site_update, busy=False)
+            self.site_progress.setVisible(False)
             self.site_status_label.setText("Обновление сайта не удалось — см. сообщение об ошибке")
             QMessageBox.critical(self, "Ошибка", err)
 
         worker = WorkerThread(do_apply)
+        worker.progress.connect(lambda done, total: self._apply_progress(self.site_progress, done, total))
         worker.finished_ok.connect(on_done)
         worker.finished_error.connect(on_error)
         self._worker = worker

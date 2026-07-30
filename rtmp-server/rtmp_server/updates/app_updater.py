@@ -14,6 +14,7 @@ import subprocess
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from rtmp_server import __version__ as CURRENT_VERSION
 from rtmp_server.config import constants as C
@@ -66,7 +67,11 @@ def check_for_update() -> ReleaseInfo | None:
     )
 
 
-def apply_update(release: ReleaseInfo, download_dir: Path = Path("/tmp/rtmp-server-update")) -> UpdateResult:
+def apply_update(
+    release: ReleaseInfo,
+    download_dir: Path = Path("/tmp/rtmp-server-update"),
+    on_progress: Callable[[int, int], None] | None = None,
+) -> UpdateResult:
     download_dir.mkdir(parents=True, exist_ok=True)
     # Имя файла ДОЛЖНО совпадать с реальным именем ассета — именно под этим
     # именем оно ищется в SHA256SUMS. Раньше здесь реконструировали имя как
@@ -77,7 +82,7 @@ def apply_update(release: ReleaseInfo, download_dir: Path = Path("/tmp/rtmp-serv
     checksums_path = download_dir / C.CHECKSUMS_ASSET_NAME
 
     try:
-        download_file(release.deb_asset_url, deb_path)
+        download_file(release.deb_asset_url, deb_path, on_progress=on_progress)
         download_file(release.checksums_url, checksums_path)
     except DownloadTimeoutError as exc:
         return UpdateResult(applied=False, message=f"Скачивание зависло и было прервано: {exc}")
