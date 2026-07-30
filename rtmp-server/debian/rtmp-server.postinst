@@ -75,12 +75,12 @@ case "$1" in
     # venv на продакшене НЕТ — restart_astra.sh запускает сайт системным
     # /usr/bin/python3 напрямую (PYTHON_BIN=/usr/bin/python3). Ставим туда же,
     # а не в venv, которого реально не существует.
-    if python3 -c "import flask" >/dev/null 2>&1; then
+    if python3 -c "import flask, pptx" >/dev/null 2>&1; then
         echo "Python-зависимости сайта уже установлены — пропускаю."
     else
         echo "Устанавливаю Python-зависимости сайта в системный python3..."
-        if pip3 install --break-system-packages flask flask-cors requests openpyxl pandas schedule pillow websockets gunicorn waitress >/dev/null 2>&1 \
-            || pip3 install flask flask-cors requests openpyxl pandas schedule pillow websockets gunicorn waitress >/dev/null 2>&1; then
+        if pip3 install --break-system-packages flask flask-cors requests openpyxl pandas schedule pillow python-pptx websockets gunicorn waitress >/dev/null 2>&1 \
+            || pip3 install flask flask-cors requests openpyxl pandas schedule pillow python-pptx websockets gunicorn waitress >/dev/null 2>&1; then
             echo "Python-зависимости сайта установлены."
         else
             echo "ВНИМАНИЕ: pip3 install зависимостей сайта завершился с ошибкой — проверьте вручную." >&2

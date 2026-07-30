@@ -34,6 +34,14 @@ except Exception:
     openpyxl = None
 
 try:
+    from pptx import Presentation
+    from pptx.util import Emu, Pt
+    from pptx.enum.text import PP_ALIGN
+    from pptx.dml.color import RGBColor
+except Exception:
+    Presentation = None
+
+try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import sync_playwright
 except Exception:
@@ -3892,89 +3900,160 @@ def build_evaluation_protocol_docx_bytes(document_title, items):
     return build_protocol_table_docx_bytes(document_title, columns, rows)
 
 
-def build_award_docx_bytes(settings, items):
-    """One diploma/certificate page per item. Layout (colored banner + big
-    title + body + signature) mirrors the sample templates' structure without
-    embedding their photographic background art."""
+def cm_to_emu(value_cm):
+    return int(round(float(value_cm) * 360000))
+
+
+# Background artwork for the diploma/certificate slides. Once the real
+# template images are supplied, drop them here (see AWARD_BACKGROUND_IMAGES)
+# and the slide size will switch to match each image's exact pixel size.
+AWARD_BACKGROUND_IMAGES = {
+    "diploma": os.path.join(BASE_DIR, "static", "award_backgrounds", "diploma_bg.png"),
+    "certificate": os.path.join(BASE_DIR, "static", "award_backgrounds", "certificate_bg.png"),
+}
+AWARD_DEFAULT_SLIDE_SIZE_CM = (21.0, 29.7)
+
+
+_LIBERATION_SERIF_REGULAR = "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf"
+_LIBERATION_SERIF_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf"
+
+
+def _wrapped_line_count(text, size_pt, max_width_emu, bold=False):
+    """How many lines `text` wraps to at size_pt in a box max_width_emu wide.
+    Measured against Liberation Serif (metric-compatible with Times New
+    Roman, which is what the run actually uses) so the textbox height we
+    allocate matches what Word/PowerPoint will really render — avoiding
+    both wasted whitespace and text overlapping the block below it."""
+    text = str(text or "").strip()
+    if not text:
+        return 1
+    max_width_pt = max_width_emu / 12700.0
+    try:
+        from PIL import ImageFont
+        font = ImageFont.truetype(_LIBERATION_SERIF_BOLD if bold else _LIBERATION_SERIF_REGULAR, size=int(round(size_pt)))
+        words = text.split()
+        lines = 1
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if not current or font.getlength(candidate) <= max_width_pt:
+                current = candidate
+            else:
+                lines += 1
+                current = word
+        return lines
+    except Exception:
+        chars_per_line = max(1, int(max_width_pt / (size_pt * 0.52)))
+        return max(1, -(-len(text) // chars_per_line))
+
+
+def _pptx_add_centered_text(slide, slide_width, top_emu, text, size_pt, bold=False, italic=False, color=(0, 0, 0)):
+    text = str(text or "").strip()
+    if not text:
+        return top_emu
+    margin_emu = cm_to_emu(1.0)
+    box_width_emu = int(slide_width) - 2 * margin_emu
+    lines = _wrapped_line_count(text, size_pt, box_width_emu, bold=bold)
+    line_height_emu = int(Pt(size_pt * 1.3))
+    height_emu = lines * line_height_emu
+    box = slide.shapes.add_textbox(Emu(margin_emu), Emu(top_emu), Emu(box_width_emu), Emu(height_emu))
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.margin_left = Emu(0)
+    tf.margin_right = Emu(0)
+    tf.margin_top = Emu(0)
+    tf.margin_bottom = Emu(0)
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    run = p.add_run()
+    run.text = text
+    run.font.size = Pt(size_pt)
+    run.font.bold = bold
+    run.font.italic = italic
+    run.font.name = "Times New Roman"
+    run.font.color.rgb = RGBColor(*color)
+    return top_emu + height_emu
+
+
+def build_award_pptx_bytes(settings, items, is_diploma):
+    """One slide per participant. Text-only content overlaid on the
+    competition's background artwork (full-bleed picture behind the text
+    boxes) sized to that image's exact pixel dimensions; falls back to a
+    plain white A4-proportioned slide until the background image is supplied."""
+    if Presentation is None:
+        raise RuntimeError("python-pptx не установлен на сервере")
+
     settings = settings if isinstance(settings, dict) else {}
-    signer = str(settings.get("signer") or "Директор ГАУДО «Сириус.Кузбасс» Н.А. Петрик").strip()
-    region_line = str(settings.get("region_line") or "Кемеровская область-Кузбасс").strip()
+    event_title = str(settings.get("event_title") or "").strip()
+    signer = str(settings.get("signer") or "").strip()
+    region_line = str(settings.get("region_line") or "").strip()
     year_line = str(settings.get("year_line") or str(datetime.datetime.utcnow().year)).strip()
 
-    pages_xml = []
-    items = items or []
-    for idx, item in enumerate(items):
+    bg_path = AWARD_BACKGROUND_IMAGES["diploma" if is_diploma else "certificate"]
+    slide_w_cm, slide_h_cm = AWARD_DEFAULT_SLIDE_SIZE_CM
+    if os.path.isfile(bg_path):
+        try:
+            from PIL import Image
+            with Image.open(bg_path) as im:
+                dpi = im.info.get("dpi", (96, 96))[0] or 96
+                slide_w_cm = im.width / dpi * 2.54
+                slide_h_cm = im.height / dpi * 2.54
+        except Exception:
+            app.logger.exception("[award_pptx] failed to read background image size: %s", bg_path)
+
+    prs = Presentation()
+    prs.slide_width = Emu(cm_to_emu(slide_w_cm))
+    prs.slide_height = Emu(cm_to_emu(slide_h_cm))
+    blank_layout = prs.slide_layouts[6]
+
+    for item in (items or []):
         item = item if isinstance(item, dict) else {}
-        is_diploma = bool(str(item.get("place") or "").strip())
-        banner_fill = "7C79B9" if is_diploma else "E8720C"
-        title_color = "7C79B9" if is_diploma else "E8720C"
-        heading = "ДИПЛОМ" if is_diploma else "СЕРТИФИКАТ"
-        performer = str(item.get("performer") or item.get("studioName") or "").strip() or "Участник"
-        institution = str(item.get("institution") or "").strip()
-        nomination = str(item.get("nomination") or "").strip()
+        slide = prs.slides.add_slide(blank_layout)
+        if os.path.isfile(bg_path):
+            slide.shapes.add_picture(bg_path, Emu(0), Emu(0), width=prs.slide_width, height=prs.slide_height)
+
+        performer = str(item.get("performer") or item.get("studioName") or "Участник").strip()
         place_text = str(item.get("place") or "").strip()
 
-        banner_table = (
-            "<w:tbl>"
-            "<w:tblPr><w:tblW w:w=\"9639\" w:type=\"dxa\"/><w:tblBorders>"
-            "<w:top w:val=\"none\"/><w:left w:val=\"none\"/><w:bottom w:val=\"none\"/><w:right w:val=\"none\"/>"
-            "<w:insideH w:val=\"none\"/><w:insideV w:val=\"none\"/></w:tblBorders></w:tblPr>"
-            "<w:tblGrid><w:gridCol w:w=\"9639\"/></w:tblGrid>"
-            "<w:tr><w:trPr><w:trHeight w:val=\"1000\" w:hRule=\"atLeast\"/></w:trPr>"
-            f"<w:tc><w:tcPr><w:tcW w:w=\"9639\" w:type=\"dxa\"/><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{banner_fill}\"/><w:vAlign w:val=\"center\"/></w:tcPr>"
-            f"<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r>{_table_run_props_xml('bold', color='FFFFFF', size_half_points=28)}<w:t>СИРИУС.КУЗБАСС</w:t></w:r></w:p>"
-            "</w:tc></w:tr></w:tbl>"
-        )
-
-        parts = [banner_table, "<w:p/>", "<w:p/>"]
-        parts.append(
-            "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"240\"/></w:pPr>"
-            f"<w:r>{_table_run_props_xml('bold', color=title_color, size_half_points=96)}<w:t>{xml_escape(heading)}</w:t></w:r></w:p>"
-        )
-        if place_text:
-            parts.append(
-                "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"360\"/></w:pPr>"
-                f"<w:r>{_table_run_props_xml('bold', size_half_points=32)}<w:t>{xml_escape(place_text)}</w:t></w:r></w:p>"
-            )
-        parts.append(
-            "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"120\"/></w:pPr>"
-            f"<w:r>{_table_run_props_xml(size_half_points=24)}<w:t>{'награждается' if is_diploma else 'награждается участник'}</w:t></w:r></w:p>"
-        )
-        parts.append(
-            "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"120\"/></w:pPr>"
-            f"<w:r>{_table_run_props_xml('bold', size_half_points=32)}<w:t>{xml_escape(performer)}</w:t></w:r></w:p>"
-        )
-        if institution:
-            parts.append(
-                "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"120\"/></w:pPr>"
-                f"<w:r>{_table_run_props_xml(size_half_points=22)}<w:t>{xml_escape(institution)}</w:t></w:r></w:p>"
-            )
+        cursor = cm_to_emu(slide_h_cm * 0.22)
+        cursor = _pptx_add_centered_text(slide, prs.slide_width, cursor, "награждается" if is_diploma else "награждается участник", 14)
+        cursor = _pptx_add_centered_text(slide, prs.slide_width, cursor, performer, 30, bold=True)
+        for line in (item.get("studioName"), item.get("institution"), item.get("territory")):
+            line = str(line or "").strip()
+            cursor = _pptx_add_centered_text(slide, prs.slide_width, cursor, line, 12)
+        leader_fio = str(item.get("leaderFio") or "").strip()
+        if leader_fio:
+            cursor = _pptx_add_centered_text(slide, prs.slide_width, cursor, f"Руководитель: {leader_fio}", 12)
+        cursor += cm_to_emu(0.6)
+        if is_diploma and place_text:
+            cursor = _pptx_add_centered_text(slide, prs.slide_width, cursor, place_text, 26, bold=True)
+            cursor += cm_to_emu(0.3)
+        if event_title:
+            cursor = _pptx_add_centered_text(slide, prs.slide_width, cursor, event_title, 14)
+        nomination = str(item.get("nomination") or "").strip()
         if nomination:
-            parts.append(
-                "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:after=\"120\"/></w:pPr>"
-                f"<w:r>{_table_run_props_xml('italic', size_half_points=22)}<w:t>{xml_escape(f'в номинации «{nomination}»')}</w:t></w:r></w:p>"
-            )
-        for _ in range(6):
-            parts.append("<w:p/>")
-        parts.append(
-            "<w:p><w:pPr><w:spacing w:after=\"40\"/></w:pPr>"
-            f"<w:r>{_table_run_props_xml(size_half_points=22)}<w:t>{xml_escape(signer)}</w:t></w:r></w:p>"
-        )
-        parts.append("<w:p/>")
-        parts.append(
-            "<w:p><w:pPr><w:spacing w:after=\"20\"/></w:pPr>"
-            f"<w:r>{_table_run_props_xml(size_half_points=20)}<w:t>{xml_escape(region_line)}</w:t></w:r></w:p>"
-        )
-        parts.append(
-            "<w:p>"
-            f"<w:r>{_table_run_props_xml(size_half_points=20)}<w:t>{xml_escape(year_line)}</w:t></w:r></w:p>"
-        )
-        if idx < len(items) - 1:
-            parts.append("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>")
-        pages_xml.append("".join(parts))
+            cursor = _pptx_add_centered_text(slide, prs.slide_width, cursor, f"Номинация: {nomination}", 12)
+        age_category = str(item.get("ageCategory") or "").strip()
+        if age_category:
+            cursor = _pptx_add_centered_text(slide, prs.slide_width, cursor, f"Возрастная категория: {age_category}", 12)
 
-    body_xml = "".join(pages_xml) if pages_xml else "<w:p/>"
-    return build_docx_bytes_from_body("Дипломы и сертификаты", body_xml, landscape=False)
+        signer_top = cm_to_emu(slide_h_cm - 4.0)
+        signer_top = _pptx_add_centered_text(slide, prs.slide_width, signer_top, signer, 12)
+        signer_top = _pptx_add_centered_text(slide, prs.slide_width, signer_top, region_line, 11)
+        _pptx_add_centered_text(slide, prs.slide_width, signer_top, year_line, 11)
+
+    buf = io.BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def build_diploma_pptx_bytes(settings, items):
+    return build_award_pptx_bytes(settings, items, is_diploma=True)
+
+
+def build_certificate_pptx_bytes(settings, items):
+    return build_award_pptx_bytes(settings, items, is_diploma=False)
 
 
 @app.route("/api/tables/<int:table_id>/documentation/program", methods=["GET", "POST"])
@@ -4205,8 +4284,7 @@ def table_documentation_evaluation_protocol_docx(table_id):
     return response
 
 
-@app.route("/api/tables/<int:table_id>/documentation/award/docx", methods=["POST"])
-def table_documentation_award_docx(table_id):
+def _award_pptx_response(table_id, is_diploma, fallback_name, document_title):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
@@ -4221,18 +4299,30 @@ def table_documentation_award_docx(table_id):
     if not isinstance(items, list) or not items:
         return jsonify({"detail": "Список награждаемых пуст"}), 400
 
-    document_title = "Дипломы и сертификаты"
-    docx_buf = build_award_docx_bytes(settings, items)
-    safe_name = sanitize_docx_filename(document_title, fallback=f"table_{table_id}_awards")
-    download_name = f"{safe_name}.docx"
+    try:
+        pptx_buf = build_award_pptx_bytes(settings, items, is_diploma=is_diploma)
+    except RuntimeError as exc:
+        return jsonify({"detail": str(exc)}), 500
+    safe_name = sanitize_docx_filename(document_title, fallback=f"table_{table_id}_{fallback_name}")
+    download_name = f"{safe_name}.pptx"
     response = send_file(
-        docx_buf,
+        pptx_buf,
         as_attachment=True,
         download_name=download_name,
-        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
     )
     response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(download_name)}"
     return response
+
+
+@app.route("/api/tables/<int:table_id>/documentation/diploma/pptx", methods=["POST"])
+def table_documentation_diploma_pptx(table_id):
+    return _award_pptx_response(table_id, is_diploma=True, fallback_name="diplomas", document_title="Дипломы")
+
+
+@app.route("/api/tables/<int:table_id>/documentation/certificate/pptx", methods=["POST"])
+def table_documentation_certificate_pptx(table_id):
+    return _award_pptx_response(table_id, is_diploma=False, fallback_name="certificates", document_title="Сертификаты")
 
 
 def sanitize_participant_edits_payload(payload):

@@ -296,16 +296,24 @@ async function initDetailPage() {
   const downloadEvaluationProtocolDocxEl = document.getElementById('downloadEvaluationProtocolDocx');
   const evaluationProtocolStatusEl = document.getElementById('docEvaluationProtocolStatus');
 
+  const docEventTitleEl = document.getElementById('docEventTitle');
   const docSignerEl = document.getElementById('docSigner');
   const docRegionLineEl = document.getElementById('docRegionLine');
   const docYearLineEl = document.getElementById('docYearLine');
   const docBuildAwardBtn = document.getElementById('docBuildAward');
   const awardStatusEl = document.getElementById('docAwardStatus');
-  const awardDocCardEl = document.getElementById('awardDocCard');
-  const awardPreviewModalEl = document.getElementById('awardPreviewModal');
-  const closeAwardPreviewModalEl = document.getElementById('closeAwardPreviewModal');
-  const awardPreviewModalBodyEl = document.getElementById('awardPreviewModalBody');
-  const downloadAwardDocxEl = document.getElementById('downloadAwardDocx');
+
+  const diplomaDocCardEl = document.getElementById('diplomaDocCard');
+  const diplomaPreviewModalEl = document.getElementById('diplomaPreviewModal');
+  const closeDiplomaPreviewModalEl = document.getElementById('closeDiplomaPreviewModal');
+  const diplomaPreviewModalBodyEl = document.getElementById('diplomaPreviewModalBody');
+  const downloadDiplomaPptxEl = document.getElementById('downloadDiplomaPptx');
+
+  const certificateDocCardEl = document.getElementById('certificateDocCard');
+  const certificatePreviewModalEl = document.getElementById('certificatePreviewModal');
+  const closeCertificatePreviewModalEl = document.getElementById('closeCertificatePreviewModal');
+  const certificatePreviewModalBodyEl = document.getElementById('certificatePreviewModalBody');
+  const downloadCertificatePptxEl = document.getElementById('downloadCertificatePptx');
 
   let headers = [];
   let mappingByHeaderIdx = {};
@@ -320,7 +328,8 @@ async function initDetailPage() {
   let documentationState = null;
   let resultsProtocolState = null;
   let evaluationProtocolState = null;
-  let awardState = null;
+  let diplomaState = null;
+  let certificateState = null;
   let contextMenuEl = null;
   let contextMenuTargetId = '';
 
@@ -1331,8 +1340,19 @@ async function initDetailPage() {
     };
   }
 
-  function buildRegistryRows() {
-    return previewRowsData.map((row, idx) => buildEffectiveRow(row, { rowRef: idx + 1 }));
+  function buildMarkedRegistryRows(filterStage) {
+    const rows = [];
+    sequenceItems.forEach((item) => {
+      if (item.type !== 'participant') return;
+      const stage = getParticipantStage(item);
+      if (filterStage === 'any') {
+        if (!stage) return;
+      } else if (stage !== filterStage) {
+        return;
+      }
+      rows.push(buildEffectiveRow(previewRowsData[item.rowRef - 1] || [], item));
+    });
+    return rows;
   }
 
   function buildProtocolItemFromRow(row) {
@@ -1358,7 +1378,7 @@ async function initDetailPage() {
   }
 
   function buildResultsProtocolData() {
-    const items = buildRegistryRows().map((row) => {
+    const items = buildMarkedRegistryRows('remote').map((row) => {
       const item = buildProtocolItemFromRow(row);
       return {
         territory: item.territory, institution: item.institution, studioName: item.studioName,
@@ -1370,7 +1390,7 @@ async function initDetailPage() {
   }
 
   function buildEvaluationProtocolData() {
-    const items = buildRegistryRows().map((row) => {
+    const items = buildMarkedRegistryRows('remote').map((row) => {
       const item = buildProtocolItemFromRow(row);
       return {
         territory: item.territory, institution: item.institution, studioName: item.studioName,
@@ -1382,22 +1402,35 @@ async function initDetailPage() {
     return { items };
   }
 
-  function buildAwardData() {
-    const items = buildRegistryRows().map((row) => {
-      const item = buildProtocolItemFromRow(row);
-      return {
-        performer: item.fio || item.studioName || 'Участник',
-        studioName: item.studioName,
-        institution: item.institution,
-        nomination: item.nomination,
-        place: item.place,
-      };
-    });
-    return { items };
+  function buildAwardItems(filterPlacePresent) {
+    return buildMarkedRegistryRows('any')
+      .map((row) => {
+        const item = buildProtocolItemFromRow(row);
+        return {
+          performer: item.fio || item.studioName || 'Участник',
+          studioName: item.studioName,
+          institution: item.institution,
+          territory: item.territory,
+          leaderFio: item.leaderFio,
+          nomination: item.nomination,
+          ageCategory: item.ageCategory,
+          place: item.place,
+        };
+      })
+      .filter((it) => (filterPlacePresent ? Boolean(it.place) : !it.place));
+  }
+
+  function buildDiplomaData() {
+    return { items: buildAwardItems(true) };
+  }
+
+  function buildCertificateData() {
+    return { items: buildAwardItems(false) };
   }
 
   function readAwardSettingsFromForm() {
     return {
+      event_title: docEventTitleEl?.value?.trim() || '',
       signer: docSignerEl?.value?.trim() || 'Директор ГАУДО «Сириус.Кузбасс» Н.А. Петрик',
       region_line: docRegionLineEl?.value?.trim() || 'Кемеровская область-Кузбасс',
       year_line: docYearLineEl?.value?.trim() || String(new Date().getFullYear()),
@@ -1405,6 +1438,7 @@ async function initDetailPage() {
   }
 
   function applyAwardSettingsToForm(settings = {}) {
+    if (docEventTitleEl) docEventTitleEl.value = settings.event_title || '';
     if (docSignerEl) docSignerEl.value = settings.signer || 'Директор ГАУДО «Сириус.Кузбасс» Н.А. Петрик';
     if (docRegionLineEl) docRegionLineEl.value = settings.region_line || 'Кемеровская область-Кузбасс';
     if (docYearLineEl) docYearLineEl.value = settings.year_line || String(new Date().getFullYear());
@@ -1415,7 +1449,7 @@ async function initDetailPage() {
     const items = protocol?.items || [];
     if (!items.length) {
       containerEl.classList.add('is-empty');
-      containerEl.innerHTML = '<div>Нет данных таблицы для формирования протокола.</div>';
+      containerEl.innerHTML = '<div>Нет участников, отмеченных как «Заочный этап».</div>';
       return;
     }
     containerEl.classList.remove('is-empty');
@@ -1424,20 +1458,19 @@ async function initDetailPage() {
     containerEl.innerHTML = `<table class="doc-preview-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
   }
 
-  function renderAwardPreview(award, containerEl) {
+  function renderAwardPreview(award, containerEl, emptyMessage) {
     if (!containerEl) return;
     const items = award?.items || [];
     if (!items.length) {
       containerEl.classList.add('is-empty');
-      containerEl.innerHTML = '<div>Нет данных таблицы для формирования наградных документов.</div>';
+      containerEl.innerHTML = `<div>${esc(emptyMessage)}</div>`;
       return;
     }
     containerEl.classList.remove('is-empty');
     containerEl.innerHTML = items.map((item) => {
-      const kind = item.place ? 'Диплом' : 'Сертификат';
       const placeSuffix = item.place ? ` (${esc(item.place)})` : '';
       const nominationSuffix = item.nomination ? `, номинация «${esc(item.nomination)}»` : '';
-      return `<div class="doc-preview-award-row"><strong>${esc(kind)}</strong> — ${esc(item.performer || 'Участник')}${placeSuffix}${nominationSuffix}</div>`;
+      return `<div class="doc-preview-award-row">${esc(item.performer || 'Участник')}${placeSuffix}${nominationSuffix}</div>`;
     }).join('');
   }
 
@@ -1496,7 +1529,9 @@ async function initDetailPage() {
     const disposition = response.headers.get('Content-Disposition') || '';
     const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
     const rawName = match ? decodeURIComponent(match[1].replace(/"/g, '').trim()) : fallbackName;
-    const filename = rawName.endsWith('.docx') ? rawName : `${rawName}.docx`;
+    const extMatch = fallbackName.match(/\.[a-z0-9]+$/i);
+    const ext = extMatch ? extMatch[0] : '.docx';
+    const filename = rawName.toLowerCase().endsWith(ext.toLowerCase()) ? rawName : `${rawName}${ext}`;
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -1551,12 +1586,12 @@ async function initDetailPage() {
   }
 
   async function downloadResultsProtocolDocx() {
-    if (!previewRowsData.length) {
-      setStatus(resultsProtocolStatusEl, 'Нет данных таблицы для формирования протокола.', 'warning');
+    const protocol = buildResultsProtocolData();
+    if (!protocol.items.length) {
+      setStatus(resultsProtocolStatusEl, 'Нет участников, отмеченных как «Заочный этап».', 'warning');
       return;
     }
     try {
-      const protocol = buildResultsProtocolData();
       const state = { settings: {}, protocol };
       resultsProtocolState = state;
       await saveResultsProtocolState(state);
@@ -1593,12 +1628,12 @@ async function initDetailPage() {
   }
 
   async function downloadEvaluationProtocolDocx() {
-    if (!previewRowsData.length) {
-      setStatus(evaluationProtocolStatusEl, 'Нет данных таблицы для формирования протокола.', 'warning');
+    const protocol = buildEvaluationProtocolData();
+    if (!protocol.items.length) {
+      setStatus(evaluationProtocolStatusEl, 'Нет участников, отмеченных как «Заочный этап».', 'warning');
       return;
     }
     try {
-      const protocol = buildEvaluationProtocolData();
       const state = { settings: {}, protocol };
       evaluationProtocolState = state;
       await saveEvaluationProtocolState(state);
@@ -1616,42 +1651,79 @@ async function initDetailPage() {
 
   async function loadAwardState() {
     const resp = await apiGet(`/api/tables/${tableId}/documentation/award`);
-    awardState = resp || {};
-    applyAwardSettingsToForm(awardState.settings || {});
+    const state = resp || {};
+    applyAwardSettingsToForm(state.settings || {});
+    diplomaState = state;
+    certificateState = state;
   }
 
-  function openAwardPreviewModal() {
-    if (!awardPreviewModalEl) return;
+  function openDiplomaPreviewModal() {
+    if (!diplomaPreviewModalEl) return;
     const settings = readAwardSettingsFromForm();
-    const award = buildAwardData();
-    awardState = { settings, award };
-    renderAwardPreview(award, awardPreviewModalBodyEl);
-    awardPreviewModalEl.classList.add('visible');
-    awardPreviewModalEl.setAttribute('aria-hidden', 'false');
+    const award = buildDiplomaData();
+    diplomaState = { settings, award };
+    renderAwardPreview(award, diplomaPreviewModalBodyEl, 'Нет отмеченных участников с заполненным полем «Место».');
+    diplomaPreviewModalEl.classList.add('visible');
+    diplomaPreviewModalEl.setAttribute('aria-hidden', 'false');
   }
 
-  function closeAwardPreviewModal() {
-    if (!awardPreviewModalEl) return;
-    awardPreviewModalEl.classList.remove('visible');
-    awardPreviewModalEl.setAttribute('aria-hidden', 'true');
+  function closeDiplomaPreviewModal() {
+    if (!diplomaPreviewModalEl) return;
+    diplomaPreviewModalEl.classList.remove('visible');
+    diplomaPreviewModalEl.setAttribute('aria-hidden', 'true');
   }
 
-  async function downloadAwardDocx() {
-    if (!previewRowsData.length) {
-      setStatus(awardStatusEl, 'Нет данных таблицы для формирования наградных документов.', 'warning');
+  async function downloadDiplomaPptx() {
+    const award = buildDiplomaData();
+    if (!award.items.length) {
+      setStatus(awardStatusEl, 'Нет отмеченных участников с заполненным полем «Место» для дипломов.', 'warning');
       return;
     }
     try {
       const settings = readAwardSettingsFromForm();
-      const award = buildAwardData();
       const state = { settings, award };
-      awardState = state;
+      diplomaState = state;
       await saveAwardState(state);
-      const response = await apiPostBlob(`/api/tables/${tableId}/documentation/award/docx`, state);
-      await triggerBlobDownload(response, 'awards.docx');
-      setStatus(awardStatusEl, 'DOCX сформирован и скачан.', 'success');
+      const response = await apiPostBlob(`/api/tables/${tableId}/documentation/diploma/pptx`, state);
+      await triggerBlobDownload(response, 'diplomas.pptx');
+      setStatus(awardStatusEl, 'Дипломы сформированы и скачаны.', 'success');
     } catch (e) {
-      setStatus(awardStatusEl, `Ошибка скачивания DOCX: ${e.message}`, 'error');
+      setStatus(awardStatusEl, `Ошибка скачивания дипломов: ${e.message}`, 'error');
+    }
+  }
+
+  function openCertificatePreviewModal() {
+    if (!certificatePreviewModalEl) return;
+    const settings = readAwardSettingsFromForm();
+    const award = buildCertificateData();
+    certificateState = { settings, award };
+    renderAwardPreview(award, certificatePreviewModalBodyEl, 'Нет отмеченных участников без заполненного поля «Место».');
+    certificatePreviewModalEl.classList.add('visible');
+    certificatePreviewModalEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeCertificatePreviewModal() {
+    if (!certificatePreviewModalEl) return;
+    certificatePreviewModalEl.classList.remove('visible');
+    certificatePreviewModalEl.setAttribute('aria-hidden', 'true');
+  }
+
+  async function downloadCertificatePptx() {
+    const award = buildCertificateData();
+    if (!award.items.length) {
+      setStatus(awardStatusEl, 'Нет отмеченных участников без заполненного поля «Место» для сертификатов.', 'warning');
+      return;
+    }
+    try {
+      const settings = readAwardSettingsFromForm();
+      const state = { settings, award };
+      certificateState = state;
+      await saveAwardState(state);
+      const response = await apiPostBlob(`/api/tables/${tableId}/documentation/certificate/pptx`, state);
+      await triggerBlobDownload(response, 'certificates.pptx');
+      setStatus(awardStatusEl, 'Сертификаты сформированы и скачаны.', 'success');
+    } catch (e) {
+      setStatus(awardStatusEl, `Ошибка скачивания сертификатов: ${e.message}`, 'error');
     }
   }
 
@@ -1929,7 +2001,8 @@ async function initDetailPage() {
       closeProgramPreviewModal();
       closeResultsProtocolPreviewModal();
       closeEvaluationProtocolPreviewModal();
-      closeAwardPreviewModal();
+      closeDiplomaPreviewModal();
+      closeCertificatePreviewModal();
     }
   });
 
@@ -1982,21 +2055,26 @@ async function initDetailPage() {
   docBuildAwardBtn?.addEventListener('click', async () => {
     try {
       const settings = readAwardSettingsFromForm();
-      const award = buildAwardData();
-      const state = { settings, award };
-      awardState = state;
-      renderAwardPreview(award, awardPreviewModalBodyEl);
+      const state = { settings, award: { items: [] } };
       await saveAwardState(state);
       setStatus(awardStatusEl, 'Реквизиты сохранены.', 'success');
     } catch (e) {
       setStatus(awardStatusEl, `Ошибка сохранения: ${e.message}`, 'error');
     }
   });
-  awardDocCardEl?.addEventListener('click', openAwardPreviewModal);
-  closeAwardPreviewModalEl?.addEventListener('click', closeAwardPreviewModal);
-  downloadAwardDocxEl?.addEventListener('click', downloadAwardDocx);
-  awardPreviewModalEl?.addEventListener('click', (event) => {
-    if (event.target === awardPreviewModalEl) closeAwardPreviewModal();
+
+  diplomaDocCardEl?.addEventListener('click', openDiplomaPreviewModal);
+  closeDiplomaPreviewModalEl?.addEventListener('click', closeDiplomaPreviewModal);
+  downloadDiplomaPptxEl?.addEventListener('click', downloadDiplomaPptx);
+  diplomaPreviewModalEl?.addEventListener('click', (event) => {
+    if (event.target === diplomaPreviewModalEl) closeDiplomaPreviewModal();
+  });
+
+  certificateDocCardEl?.addEventListener('click', openCertificatePreviewModal);
+  closeCertificatePreviewModalEl?.addEventListener('click', closeCertificatePreviewModal);
+  downloadCertificatePptxEl?.addEventListener('click', downloadCertificatePptx);
+  certificatePreviewModalEl?.addEventListener('click', (event) => {
+    if (event.target === certificatePreviewModalEl) closeCertificatePreviewModal();
   });
 
   try {
