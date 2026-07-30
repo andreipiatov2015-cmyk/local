@@ -41,6 +41,43 @@ def source_from_extracted_dir(root: Path) -> SiteUpdateSource:
     )
 
 
+GITHUB_MAIN_TARBALL_URL = f"https://github.com/{C.GITHUB_REPO}/archive/refs/heads/main.tar.gz"
+
+
+def fetch_latest_site_source(work_dir: Path) -> SiteUpdateSource:
+    """Скачивает www/ с текущего main публичного репозитория (без токена —
+    репозиторий публичный) и возвращает готовый SiteUpdateSource.
+
+    Раньше единственным способом обновить сайт без пуша в main было либо
+    дождаться self-hosted раннера (deploy.yml), либо руками скопировать
+    файлы на сервер — что один раз уже привело к 502 (владелец скопировал
+    файлы вручную и что-то перезаписал не так). Эта функция даёт третий,
+    безопасный путь: скачать то же самое содержимое main и применить его
+    через тот же движок с бэкапом/health-check/откатом (site_updater.apply),
+    без ручного копирования файлов вообще.
+
+    work_dir — рабочая директория для скачивания/распаковки, вызывающий
+    отвечает за её очистку (обычно tempfile.TemporaryDirectory)."""
+    from rtmp_server.updates.staging import download_file
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    tarball = work_dir / "site-main.tar.gz"
+    download_file(GITHUB_MAIN_TARBALL_URL, tarball, timeout=60.0)
+
+    extract_dir = work_dir / "extracted"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tarball) as tar:
+        tar.extractall(extract_dir, filter="data")
+
+    # GitHub codeload распаковывает архив в один каталог вида <repo>-<branch>/
+    # (например local-main/) — находим его, не хардкодя точное имя.
+    candidates = [p for p in extract_dir.iterdir() if p.is_dir()]
+    if len(candidates) != 1:
+        raise RuntimeError(f"Неожиданная структура архива в {extract_dir}: {list(extract_dir.iterdir())}")
+
+    return source_from_extracted_dir(candidates[0] / "www")
+
+
 def _rsync(src: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     args = ["rsync", "-a"]

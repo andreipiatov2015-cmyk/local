@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from rtmp_server.updates.site_updater import _backup, _restore
+from rtmp_server.updates.site_updater import _backup, _restore, fetch_latest_site_source
 
 
 class BackupPermissionErrorTests(unittest.TestCase):
@@ -64,6 +64,52 @@ class BackupPermissionErrorTests(unittest.TestCase):
         self.assertTrue(self.backup_tar.exists())
         with tarfile.open(self.backup_tar) as tar:
             self.assertEqual(tar.getnames(), [])
+
+
+class FetchLatestSiteSourceTests(unittest.TestCase):
+    """download_file() подменяется моком — реальный сетевой запрос к GitHub
+    здесь не нужен, важно только правильно распознать структуру архива
+    codeload (<repo>-<branch>/www/...)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _build_fake_tarball(self, dest: Path, top_dir: str = "local-main") -> None:
+        with tarfile.open(dest, "w:gz") as tar:
+            live_server_py = self.root / "server.py.tmp"
+            live_server_py.write_text("print('site')")
+            tar.add(live_server_py, arcname=f"{top_dir}/www/live-server/server.py")
+            reboot_py = self.root / "reboot_server.py.tmp"
+            reboot_py.write_text("print('reboot')")
+            tar.add(reboot_py, arcname=f"{top_dir}/www/reboot/server.py")
+
+    def test_fetch_extracts_and_locates_www_under_codeload_top_dir(self):
+        def fake_download(url, dest, timeout=60.0):
+            self._build_fake_tarball(dest)
+            return dest
+
+        with mock.patch("rtmp_server.updates.staging.download_file", side_effect=fake_download):
+            source = fetch_latest_site_source(self.root / "work")
+
+        self.assertTrue((source.live_server_src / "server.py").exists())
+        self.assertTrue((source.reboot_src / "server.py").exists())
+
+    def test_fetch_raises_clearly_on_unexpected_archive_layout(self):
+        def fake_download(url, dest, timeout=60.0):
+            with tarfile.open(dest, "w:gz") as tar:
+                stray = self.root / "stray.tmp"
+                stray.write_text("x")
+                tar.add(stray, arcname="one/file.txt")
+                tar.add(stray, arcname="two/file.txt")
+            return dest
+
+        with mock.patch("rtmp_server.updates.staging.download_file", side_effect=fake_download):
+            with self.assertRaises(RuntimeError):
+                fetch_latest_site_source(self.root / "work")
 
 
 if __name__ == "__main__":
