@@ -13,6 +13,11 @@ WorkingDirectory=/var/www/live-server
 # сервере, chmod 600, создаётся оператором вручную; "-" делает файл
 # необязательным, чтобы установка без email-функций не падала.
 EnvironmentFile=-/etc/rtmp-server/site-secrets.env
+# Не-секретный конфиг (сейчас — RTMP_STREAM_NAME, ключ трансляции), который
+# пишет сама вкладка "Трансляция" RTMP-server (см. site_admin/stream_info.py)
+# — отдельно от секретов выше, чтобы автоматическая запись сюда не рисковала
+# случайно затереть вручную добавленную оператором строку в другом файле.
+EnvironmentFile=-/etc/rtmp-server/site-config.env
 ExecStart=/usr/bin/python3 /var/www/live-server/server.py
 Restart=on-failure
 RestartSec=5

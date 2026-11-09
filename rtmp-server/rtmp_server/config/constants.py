@@ -99,7 +99,6 @@ UNIT_APP_GUI = "rtmp-server-gui.service"
 
 # Беспарольный запуск ярлыка/автозапуска от root (см. запрос владельца).
 APP_SUDOERS_FILE = "/etc/sudoers.d/rtmp-server"
-APP_DESKTOP_AUTOSTART_FILE = "/etc/xdg/autostart/rtmp-server.desktop"
 APP_DESKTOP_MENU_FILE = "/usr/share/applications/rtmp-server.desktop"
 
 # Старая установка (astra-monitor) — используется только adopt.py, который
@@ -168,3 +167,23 @@ SITE_UPDATE_EXCLUDES = (
     "column_names.json",
     "_notes/",
 )
+
+# ---------------------------------------------------------------------------
+# Ключ трансляции (RTMP stream key) — см. site_admin/stream_info.py
+# ---------------------------------------------------------------------------
+
+# Имя RTMP-приложения в www/nginx.conf (application live { ... }).
+RTMP_APP_NAME = "live"
+
+# Совпадает с www/live-server/server.py:
+# DEFAULT_STREAM_NAME = os.environ.get("RTMP_STREAM_NAME", "stream") — именно
+# под этим именем сайт ищет HLS-плейлист (/hls/stream.m3u8) и запускает пуш
+# в VK. Если опубликовать поток под ДРУГИМ ключом, трансляция на сайте просто
+# не появится, хотя сам RTMP-приём в nginx.conf ключ никак не проверяет.
+DEFAULT_RTMP_STREAM_NAME = "stream"
+
+# Не-секретный конфиг сайта, которым управляет само приложение — в отличие
+# от /etc/rtmp-server/site-secrets.env (тот ручной, только для операторских
+# секретов вроде SMTP-пароля, см. live-server.service). EnvironmentFile=-
+# делает файл необязательным для systemd.
+SITE_CONFIG_ENV_FILE = "/etc/rtmp-server/site-config.env"
