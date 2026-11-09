@@ -5872,11 +5872,14 @@ def _api_token_valid():
     обычное == на секретных строках теоретически позволяет подбор по времени
     ответа. Если MONITOR_API_TOKEN не настроен на сервере — функция всегда
     возвращает False (пункт с ключом OBS тогда просто не появляется, а не
-    остаётся открытым "пока не настроят защиту")."""
+    остаётся открытым "пока не настроят защиту"). Сравниваем байты UTF-8, а
+    не str: compare_digest() для str требует ASCII и падает TypeError на
+    любом не-ASCII символе и в токене, и в заголовке — а заголовок приходит
+    от кого угодно, это не повод валить весь /api/items 500-кой."""
     if not API_MONITOR_TOKEN:
         return False
     supplied = request.headers.get("X-Monitor-Token", "")
-    return hmac.compare_digest(supplied, API_MONITOR_TOKEN)
+    return hmac.compare_digest(supplied.encode("utf-8"), API_MONITOR_TOKEN.encode("utf-8"))
 
 
 def _api_obs_server_url():
