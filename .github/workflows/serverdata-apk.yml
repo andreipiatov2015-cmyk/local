@@ -27,13 +27,12 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      # На раннере обычно уже есть Android SDK, но не всегда с нужными
-      # build-tools/platform под compileSdk 35 — этот шаг доустанавливает,
-      # что нужно, и сам принимает лицензии (без него sdkmanager спросит
-      # согласие интерактивно и шаг зависнет).
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # android-actions/setup-android@v3 пытается доустановить пакет
+      # "tools" — Google убрал его из репозитория SDK много лет назад,
+      # из-за этого шаг падает с "Failed to find package 'tools'". На
+      # ubuntu-latest Android SDK уже предустановлен (ANDROID_HOME) с
+      # принятыми лицензиями — Gradle/AGP сам докачает недостающие
+      # build-tools/platform под compileSdk 35, отдельный шаг не нужен.
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
