@@ -97,6 +97,16 @@ APP_STATE_FILE = "/var/lib/rtmp-server/state.json"
 # самому пакету и останавливается/выключается при удалении RTMP-server.
 UNIT_APP_GUI = "rtmp-server-gui.service"
 
+# Таймер очистки старых HLS-сегментов — тоже принадлежит пакету (см.
+# site_admin/hls_cleanup.py и rtmp-server.prerm). nginx-rtmp сам подчищает
+# HLS (hls_cleanup on в www/nginx.conf), но только пока поток активен —
+# после остановки трансляции последние сегменты остаются на диске
+# навсегда. Этот таймер подчищает по времени файла, не по состоянию потока.
+UNIT_HLS_CLEANUP_SERVICE = "rtmp-server-hls-cleanup.service"
+UNIT_HLS_CLEANUP_TIMER = "rtmp-server-hls-cleanup.timer"
+HLS_CLEANUP_CONFIG_FILE = "/var/lib/rtmp-server/hls_cleanup.json"
+DEFAULT_HLS_RETENTION_SECONDS = 300  # 5 минут — см. запрос владельца
+
 # Беспарольный запуск ярлыка/автозапуска от root (см. запрос владельца).
 APP_SUDOERS_FILE = "/etc/sudoers.d/rtmp-server"
 APP_DESKTOP_MENU_FILE = "/usr/share/applications/rtmp-server.desktop"

@@ -20,6 +20,7 @@ from pathlib import Path
 from rtmp_server import __version__
 from rtmp_server.monitor import site_monitor, system_monitor
 from rtmp_server.services.definitions import get_all_services, get_service
+from rtmp_server.site_admin import hls_cleanup
 from rtmp_server.site_admin import stream_info
 from rtmp_server.site_admin import users as site_users
 from rtmp_server.updates import app_updater, site_updater
@@ -294,6 +295,15 @@ def cmd_stream_restart_vk(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hls_cleanup(args: argparse.Namespace) -> int:
+    result = hls_cleanup.cleanup_once(retention_seconds=args.retention_seconds)
+    mb_freed = result.bytes_freed / 1_000_000
+    print(f"Проверено файлов: {result.checked}, удалено: {result.removed} ({mb_freed:.1f} МБ)")
+    for error in result.errors:
+        print(f"  ошибка: {error}")
+    return 1 if result.errors else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rtmp-server-ctl")
     parser.add_argument("--version", action="version", version=__version__)
@@ -411,6 +421,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_restart_vk = stream_sub.add_parser("restart-vk", help="перезапустить трансляцию в VK/OK")
     p_restart_vk.add_argument("name", nargs="?", default=None)
     p_restart_vk.set_defaults(func=cmd_stream_restart_vk)
+
+    p_hls_cleanup = sub.add_parser(
+        "hls-cleanup", help="удалить HLS-сегменты старше срока хранения (см. вкладку «Трансляция»)"
+    )
+    p_hls_cleanup.add_argument(
+        "--retention-seconds", type=int, default=None,
+        help="переопределить срок хранения на этот запуск (по умолчанию — сохранённая настройка)",
+    )
+    p_hls_cleanup.set_defaults(func=cmd_hls_cleanup)
 
     return parser
 

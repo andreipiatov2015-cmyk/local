@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -31,7 +32,7 @@ from PyQt5.QtWidgets import (
 from rtmp_server.gui.root_confirm import confirm_root_password
 from rtmp_server.gui.workers import WorkerThread
 from rtmp_server.services.definitions import get_service
-from rtmp_server.site_admin import stream_info
+from rtmp_server.site_admin import hls_cleanup, stream_info
 
 TARGET_COLUMNS = ["Название", "URL", "Включена"]
 RESOLUTION_OPTIONS = [
@@ -81,10 +82,12 @@ class StreamTab(QWidget):
         self._build_ui()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh_incoming)
+        self._timer.timeout.connect(self._refresh_retention_usage)
         self._timer.start(5000)
         self.refresh_incoming()
         self._load_vk_settings()
         self._load_stream_key()
+        self._load_retention()
 
     # ------------------------------------------------------------------
     # UI
@@ -113,6 +116,26 @@ class StreamTab(QWidget):
         self.stream_key_status_label = QLabel()
         key_layout.addWidget(self.stream_key_status_label)
         layout.addWidget(key_box)
+
+        retention_box = QGroupBox("Хранение файлов трансляции (HLS)")
+        retention_layout = QVBoxLayout(retention_box)
+        retention_layout.addWidget(QLabel(
+            "<i>Старые куски трансляции (.ts/.m3u8) автоматически удаляются с диска "
+            "по возрасту — отдельный таймер проверяет это каждую минуту, независимо "
+            "от того, идёт трансляция сейчас или уже закончилась.</i>"
+        ))
+        retention_row = QHBoxLayout()
+        retention_row.addWidget(QLabel("Хранить (мин.):"))
+        self.retention_spin = QSpinBox()
+        self.retention_spin.setRange(1, 1440)
+        retention_row.addWidget(self.retention_spin)
+        btn_save_retention = QPushButton("Сохранить")
+        btn_save_retention.clicked.connect(self._on_save_retention)
+        retention_row.addWidget(btn_save_retention)
+        retention_layout.addLayout(retention_row)
+        self.retention_status_label = QLabel()
+        retention_layout.addWidget(self.retention_status_label)
+        layout.addWidget(retention_box)
 
         incoming_box = QGroupBox("Входящий поток (от стримера)")
         incoming_layout = QVBoxLayout(incoming_box)
@@ -280,6 +303,29 @@ class StreamTab(QWidget):
             "Сохранено. Чтобы сайт начал искать трансляцию по новому ключу, "
             "перезапустите live-server (вкладка «Сервисы»)."
         )
+
+    # ------------------------------------------------------------------
+    # Хранение HLS
+    # ------------------------------------------------------------------
+
+    def _load_retention(self) -> None:
+        self.retention_spin.setValue(max(1, hls_cleanup.get_retention_seconds() // 60))
+        self._refresh_retention_usage()
+
+    def _refresh_retention_usage(self) -> None:
+        usage_mb = hls_cleanup.hls_directory_usage_bytes() / 1_000_000
+        self.retention_status_label.setText(f"Сейчас занято на диске: ~{usage_mb:.1f} МБ")
+
+    def _on_save_retention(self) -> None:
+        minutes = self.retention_spin.value()
+        if not confirm_root_password(self, "изменение срока хранения HLS-сегментов"):
+            return
+        try:
+            hls_cleanup.set_retention_seconds(minutes * 60)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Некорректное значение", str(exc))
+            return
+        self.retention_status_label.setText(f"Сохранено: {minutes} мин. Применится в течение минуты.")
 
     # ------------------------------------------------------------------
     # Настройки VK
