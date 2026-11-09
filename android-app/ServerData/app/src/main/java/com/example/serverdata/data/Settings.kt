@@ -30,6 +30,12 @@ class Settings(context: Context) {
         get() = prefs.getString(KEY_PORT, "8000") ?: "8000"
         set(value) = prefs.edit().putString(KEY_PORT, value).apply()
 
+    /** Токен доступа к серверу (необязательно) — открывает доп. записи вроде
+     * настройки OBS, которые сервер без верного токена не отдаёт. */
+    var lastToken: String
+        get() = prefs.getString(KEY_TOKEN, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_TOKEN, value).apply()
+
     /** Секунды между автообновлениями. */
     val intervalSec: Int get() = prefs.getInt(KEY_INTERVAL, 30)
 
@@ -53,6 +59,7 @@ class Settings(context: Context) {
     private companion object {
         const val KEY_HOST = "host"
         const val KEY_PORT = "port"
+        const val KEY_TOKEN = "token"
         const val KEY_INTERVAL = "interval_sec"
         const val KEY_RECENT = "recent"
     }

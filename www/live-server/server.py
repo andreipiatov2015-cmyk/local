@@ -5529,6 +5529,14 @@ API_HLS_CLEANUP_CONFIG_FILE = os.environ.get(
 # (см. www/nginx.conf); если файл давно не менялся — трансляция не идёт.
 API_LIVE_FRESHNESS_SECONDS = 15
 FFPROBE_BIN = os.environ.get("FFPROBE_PATH", "ffprobe")
+API_RTMP_PORT = os.environ.get("RTMP_PORT", "1936")
+API_RTMP_APP_NAME = os.environ.get("RTMP_APP_NAME", "live")
+# Ключ трансляции (API_STREAM_NAME) работает как пароль на публикацию — кто
+# его знает, может перехватить/подменить эфир. Без настроенного токена этот
+# пункт в /api/items просто не появляется (закрыто по умолчанию, а не
+# "открыто пока не попросили закрыть"); с токеном — доступен только тому,
+# кто его прислал (см. _api_token_valid).
+API_MONITOR_TOKEN = (os.environ.get("MONITOR_API_TOKEN") or "").strip()
 
 
 def _api_json(payload, status=200):
@@ -5654,17 +5662,15 @@ def _api_vk_push_running(stream_name=None):
         return True
 
 
-def _api_stream_playback_url(stream_name):
-    """Ссылка, по которой трансляцию реально смотрят (публичный HLS-плейлист) —
-    не секрет, её и так видит в браузере любой зритель сайта. Это НЕ адрес
-    для публикации из OBS (там ключ, его в открытый API отдавать нельзя,
-    см. _api_redact_push_url)."""
-    if HLS_STREAM_URL:
-        return HLS_STREAM_URL
+def _api_stream_playback_url():
+    """Ссылка на страницу сайта со встроенным плеером (не на голый HLS-файл) —
+    так пользователю есть что открыть одним тапом. Не секрет: та же страница
+    открыта любому зрителю сайта. Это НЕ адрес для публикации из OBS (там
+    ключ, его в открытый API так просто не отдать, см. _api_obs_item)."""
     try:
-        return f"{request.host_url.rstrip('/')}/hls/{stream_name}.m3u8"
+        return f"{request.host_url.rstrip('/')}/broadcast"
     except RuntimeError:
-        return f"/hls/{stream_name}.m3u8"
+        return "/broadcast"
 
 
 def _api_stream_item():
@@ -5693,7 +5699,7 @@ def _api_stream_item():
             ).astimezone().isoformat(timespec="seconds")
         except OSError:
             updated_at = None
-    fields["Ссылка на просмотр"] = _api_stream_playback_url(stream_name)
+    fields["Ссылка на просмотр"] = _api_stream_playback_url()
     vk_settings = load_vk_settings()
     vk_on = bool(vk_settings.get("enabled")) and _api_vk_push_running()
     fields["Трансляция в VK/OK"] = "идёт" if vk_on else "выключена"
@@ -5861,8 +5867,49 @@ def _api_target_items():
     return items
 
 
+def _api_token_valid():
+    """Токен сравнивается константным по времени способом (hmac.compare_digest) —
+    обычное == на секретных строках теоретически позволяет подбор по времени
+    ответа. Если MONITOR_API_TOKEN не настроен на сервере — функция всегда
+    возвращает False (пункт с ключом OBS тогда просто не появляется, а не
+    остаётся открытым "пока не настроят защиту")."""
+    if not API_MONITOR_TOKEN:
+        return False
+    supplied = request.headers.get("X-Monitor-Token", "")
+    return hmac.compare_digest(supplied, API_MONITOR_TOKEN)
+
+
+def _api_obs_server_url():
+    host = request.host.rsplit(":", 1)[0] if request.host else "127.0.0.1"
+    return f"rtmp://{host}:{API_RTMP_PORT}/{API_RTMP_APP_NAME}"
+
+
+def _api_obs_item():
+    """Сервер и ключ для публикации из OBS — то же самое, что показывает
+    вкладка "Обзор" в RTMP-server (site_admin/stream_info.py), только через
+    телефон. В отличие от остальных записей, эта ВСЕГДА требует верный токен
+    (_api_token_valid) — см. _api_all_items."""
+    return {
+        "id": "obs",
+        "title": "Настройка OBS",
+        "subtitle": "Сервер и ключ для публикации трансляции",
+        "updated_at": _api_now_iso(),
+        "fields": {
+            "Сервер (Server)": _api_obs_server_url(),
+            "Ключ потока (Stream Key)": API_STREAM_NAME,
+            "Куда вставлять": (
+                "В OBS: Настройки → Трансляция → Сервис «Особый...» → "
+                "сначала поле «Сервер», потом «Ключ потока»"
+            ),
+        },
+    }
+
+
 def _api_all_items():
-    return [_api_stream_item(), _api_server_item(), _api_storage_item()] + _api_target_items()
+    items = [_api_stream_item(), _api_server_item(), _api_storage_item()] + _api_target_items()
+    if _api_token_valid():
+        items.append(_api_obs_item())
+    return items
 
 
 @app.route("/api/info", methods=["GET"])

@@ -109,7 +109,17 @@ fun ConnectScreen(state: UiState, vm: MainViewModel) {
                 placeholder = { Text("8000") },
                 singleLine = true,
                 enabled = !state.connecting,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Go),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = state.tokenInput,
+                onValueChange = vm::setToken,
+                label = { Text("Токен доступа (необязательно)") },
+                placeholder = { Text("оставьте пустым, если не настроен") },
+                singleLine = true,
+                enabled = !state.connecting,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Go),
                 keyboardActions = KeyboardActions(onGo = { vm.connect() }),
                 modifier = Modifier.fillMaxWidth(),
             )
