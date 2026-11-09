@@ -5654,6 +5654,19 @@ def _api_vk_push_running(stream_name=None):
         return True
 
 
+def _api_stream_playback_url(stream_name):
+    """Ссылка, по которой трансляцию реально смотрят (публичный HLS-плейлист) —
+    не секрет, её и так видит в браузере любой зритель сайта. Это НЕ адрес
+    для публикации из OBS (там ключ, его в открытый API отдавать нельзя,
+    см. _api_redact_push_url)."""
+    if HLS_STREAM_URL:
+        return HLS_STREAM_URL
+    try:
+        return f"{request.host_url.rstrip('/')}/hls/{stream_name}.m3u8"
+    except RuntimeError:
+        return f"/hls/{stream_name}.m3u8"
+
+
 def _api_stream_item():
     stream_name = API_STREAM_NAME
     live = _api_stream_is_live(stream_name)
@@ -5664,11 +5677,11 @@ def _api_stream_item():
         if probe.get("width") and probe.get("height"):
             fields["Разрешение"] = f"{probe['width']}×{probe['height']}"
         if probe.get("fps"):
-            fields["FPS"] = probe["fps"]
+            fields["Кадров в секунду"] = probe["fps"]
         if probe.get("video_codec"):
-            fields["Видео"] = probe["video_codec"]
+            fields["Видеокодек"] = probe["video_codec"]
         if probe.get("audio_codec"):
-            fields["Аудио"] = probe["audio_codec"]
+            fields["Аудиокодек"] = probe["audio_codec"]
         bitrate = _api_measure_bitrate_kbps(stream_name)
         if bitrate:
             fields["Битрейт, кбит/с"] = bitrate
@@ -5680,6 +5693,7 @@ def _api_stream_item():
             ).astimezone().isoformat(timespec="seconds")
         except OSError:
             updated_at = None
+    fields["Ссылка на просмотр"] = _api_stream_playback_url(stream_name)
     vk_settings = load_vk_settings()
     vk_on = bool(vk_settings.get("enabled")) and _api_vk_push_running()
     fields["Трансляция в VK/OK"] = "идёт" if vk_on else "выключена"
@@ -5704,6 +5718,106 @@ def _api_storage_item():
             "Занято места, МБ": usage_mb,
             "Срок хранения сегментов, мин": retention_min,
         },
+    }
+
+
+def _api_bytes_to_gb(value):
+    return round(value / 1024 / 1024 / 1024, 1)
+
+
+def _api_cpu_percent():
+    """Грубая оценка загрузки ЦП по средней нагрузке за 1 минуту (os.getloadavg) —
+    без доп. задержки на запрос (в отличие от честного замера через /proc/stat,
+    которому нужен интервал между двумя чтениями)."""
+    try:
+        load1, _, _ = os.getloadavg()
+        cores = os.cpu_count() or 1
+        return min(100, round(load1 / cores * 100))
+    except OSError:
+        return None
+
+
+def _api_memory_info():
+    try:
+        values = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                parts = rest.strip().split()
+                if parts:
+                    values[key.strip()] = int(parts[0]) * 1024  # кБ -> байты
+        total = values.get("MemTotal")
+        available = values.get("MemAvailable")
+        if not total or available is None:
+            return None
+        used = total - available
+        return {
+            "percent": round(used / total * 100),
+            "used_gb": _api_bytes_to_gb(used),
+            "total_gb": _api_bytes_to_gb(total),
+        }
+    except (OSError, ValueError):
+        return None
+
+
+def _api_disk_info(path="/"):
+    try:
+        usage = shutil.disk_usage(path)
+        return {
+            "percent": round(usage.used / usage.total * 100),
+            "used_gb": _api_bytes_to_gb(usage.used),
+            "total_gb": _api_bytes_to_gb(usage.total),
+        }
+    except OSError:
+        return None
+
+
+def _api_uptime_human():
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as f:
+            seconds = float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+    days, rem = divmod(int(seconds), 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    parts = []
+    if days:
+        parts.append(f"{days} дн.")
+    if days or hours:
+        parts.append(f"{hours} ч.")
+    parts.append(f"{minutes} мин.")
+    return " ".join(parts)
+
+
+def _api_server_item():
+    """Общая нагрузка сервера — отдельно от "Хранилище HLS" (там конкретно
+    про место под сегменты трансляции и срок их хранения)."""
+    cpu = _api_cpu_percent()
+    mem = _api_memory_info()
+    disk = _api_disk_info()
+    fields = {}
+    subtitle_bits = []
+    if cpu is not None:
+        fields["Загрузка процессора, %"] = cpu
+        subtitle_bits.append(f"ЦП {cpu}%")
+    if mem:
+        fields["Оперативная память, %"] = mem["percent"]
+        fields["Оперативная память"] = f"{mem['used_gb']} из {mem['total_gb']} ГБ"
+        subtitle_bits.append(f"ОЗУ {mem['percent']}%")
+    if disk:
+        fields["Диск, %"] = disk["percent"]
+        fields["Диск"] = f"{disk['used_gb']} из {disk['total_gb']} ГБ"
+        subtitle_bits.append(f"Диск {disk['percent']}%")
+    uptime = _api_uptime_human()
+    if uptime:
+        fields["Время работы без перезагрузки"] = uptime
+    return {
+        "id": "server",
+        "title": "Сервер",
+        "subtitle": ", ".join(subtitle_bits) if subtitle_bits else "нет данных",
+        "updated_at": _api_now_iso(),
+        "fields": fields,
     }
 
 
@@ -5748,7 +5862,7 @@ def _api_target_items():
 
 
 def _api_all_items():
-    return [_api_stream_item(), _api_storage_item()] + _api_target_items()
+    return [_api_stream_item(), _api_server_item(), _api_storage_item()] + _api_target_items()
 
 
 @app.route("/api/info", methods=["GET"])
