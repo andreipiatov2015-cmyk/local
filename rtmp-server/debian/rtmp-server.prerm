@@ -13,6 +13,8 @@ case "$1" in
   remove)
     systemctl stop rtmp-server-gui.service >/dev/null 2>&1 || true
     systemctl disable rtmp-server-gui.service >/dev/null 2>&1 || true
+    systemctl stop rtmp-server-hls-cleanup.timer >/dev/null 2>&1 || true
+    systemctl disable rtmp-server-hls-cleanup.timer >/dev/null 2>&1 || true
     ;;
   upgrade|failed-upgrade|deconfigure)
     # Ничего не делаем — новые файлы просто ложатся поверх старых,

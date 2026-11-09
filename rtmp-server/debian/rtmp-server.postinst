@@ -105,16 +105,20 @@ case "$1" in
         fi
     done
 
-    # --- Юнит самого RTMP-server (GUI, автозапуск при старте сервера) ---
-    # В отличие от юнитов сайта выше — этот принадлежит пакету, поэтому
-    # обновляем его безусловно при каждой установке/обновлении.
+    # --- Юнит самого RTMP-server (GUI, автозапуск при старте сервера) и
+    # таймер очистки старых HLS-сегментов — оба принадлежат пакету, поэтому
+    # обновляем безусловно при каждой установке/обновлении (в отличие от
+    # юнитов сайта выше, которые никогда не перезаписываются молча).
     cp "$UNITS_SRC/rtmp-server-gui.service" "$UNITS_DST/rtmp-server-gui.service"
+    cp "$UNITS_SRC/rtmp-server-hls-cleanup.service" "$UNITS_DST/rtmp-server-hls-cleanup.service"
+    cp "$UNITS_SRC/rtmp-server-hls-cleanup.timer" "$UNITS_DST/rtmp-server-hls-cleanup.timer"
 
     systemctl daemon-reload >/dev/null 2>&1 || true
-    for unit in live-server.service reboot-server.service rtmp-server-gui.service; do
+    for unit in live-server.service reboot-server.service rtmp-server-gui.service rtmp-server-hls-cleanup.timer; do
         systemctl enable "$unit" >/dev/null 2>&1 || true
     done
     systemctl start rtmp-server-gui.service >/dev/null 2>&1 || true
+    systemctl start rtmp-server-hls-cleanup.timer >/dev/null 2>&1 || true
 
     # --- nginx-rtmp.service: НЕ включаем и не стартуем, если nginx уже
     # запущен вне systemd (например, старым restart_astra.sh на боте) —

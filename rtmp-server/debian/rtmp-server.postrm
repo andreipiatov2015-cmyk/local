@@ -7,6 +7,8 @@ set -e
 case "$1" in
   remove|purge)
     rm -f /etc/systemd/system/rtmp-server-gui.service
+    rm -f /etc/systemd/system/rtmp-server-hls-cleanup.service
+    rm -f /etc/systemd/system/rtmp-server-hls-cleanup.timer
     rm -f /etc/sudoers.d/rtmp-server
     rm -f /etc/xdg/autostart/rtmp-server.desktop
     rm -f /etc/skel/Desktop/rtmp-server.desktop

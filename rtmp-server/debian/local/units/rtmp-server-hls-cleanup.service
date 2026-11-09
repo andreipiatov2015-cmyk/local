@@ -1,0 +1,7 @@
+[Unit]
+Description=RTMP-server: удаление старых HLS-сегментов трансляции
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rtmp-server-ctl hls-cleanup

@@ -45,6 +45,20 @@ class UnitFileConsistencyTests(unittest.TestCase):
         for unit in C.ALL_MANAGED_UNITS:
             self.assertIn(unit, text)
 
+    def test_hls_cleanup_timer_matches_constants(self):
+        text = (UNITS_DIR / C.UNIT_HLS_CLEANUP_TIMER).read_text()
+        self.assertIn(C.UNIT_HLS_CLEANUP_SERVICE, text)
+
+    def test_hls_cleanup_service_and_timer_wired_into_postinst_prerm_postrm(self):
+        base = UNITS_DIR.parent.parent
+        postinst = (base / "rtmp-server.postinst").read_text()
+        prerm = (base / "rtmp-server.prerm").read_text()
+        postrm = (base / "rtmp-server.postrm").read_text()
+        for unit in (C.UNIT_HLS_CLEANUP_SERVICE, C.UNIT_HLS_CLEANUP_TIMER):
+            self.assertIn(unit, postinst)
+            self.assertIn(unit, postrm)
+        self.assertIn(C.UNIT_HLS_CLEANUP_TIMER, prerm)
+
 
 if __name__ == "__main__":
     unittest.main()
