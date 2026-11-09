@@ -1,3 +1,27 @@
+rtmp-server (1.0.16-1) stable; urgency=medium
+
+  * Юнит rtmp-server-gui.service: максимальная защита от OOM-killer
+    (OOMScoreAdjust=-1000), высокий приоритет планировщика CPU
+    (Nice=-15) и дисковый I/O (IOSchedulingClass=realtime) — без
+    полноценного realtime-планирования CPU, чтобы GUI-приложение,
+    управляющее остальными сервисами сайта, не могло само "подвесить"
+    весь X-сеанс при затяжной перерисовке.
+  * Самовосстановление при падении — Restart=always вместо
+    Restart=on-failure (перезапуск при любом завершении процесса, не
+    только при ошибке), RestartSec снижен с 10 до 2 секунд,
+    StartLimitIntervalSec=0 отключает штатный предел systemd "сдаться
+    после N падений за T секунд" — приложение должно быть поднято
+    всегда.
+  * Watchdog через sd_notify (новый rtmp_server/gui/watchdog.py, без
+    внешних зависимостей — датаграмма в $NOTIFY_SOCKET): приложение
+    пингует systemd по таймеру, пока жив Qt event loop. Юнит переведён
+    на Type=notify с WatchdogSec=30 — если пинги прекратятся (GUI
+    завис, но не упал и не вернул код ошибки), systemd сам убьёт и
+    перезапустит процесс. Обычный Restart=on-failure зависание не
+    ловит вообще.
+
+ -- RTMP-server maintainers <support@rtmp-server.local>  Sun, 09 Nov 2026 12:00:00 +0000
+
 rtmp-server (1.0.15-1) stable; urgency=medium
 
   * Прогресс-бары для обновления приложения и сайта. on_progress
