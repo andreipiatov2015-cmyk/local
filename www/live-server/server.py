@@ -5631,11 +5631,27 @@ def _api_hls_retention_seconds():
     return 300
 
 
-def _api_vk_push_running():
+def _api_vk_push_running(stream_name=None):
+    """start_vk.py — это только короткоживущий запускатор: он стартует ffmpeg
+    в фоне (preexec_fn=os.setsid) и сразу завершается, не дожидаясь его —
+    поэтому pgrep по "start_vk.py" почти всегда не находит ничего, даже
+    когда пуш реально идёт. Проверяем вместо этого PID самого ffmpeg из
+    lock-файла, который start_vk.py для него и пишет (см. write_lock в
+    start_vk.py: "<pid> <unix_ts>")."""
+    stream_name = stream_name or API_STREAM_NAME
+    lock_file = VK_LOCK_TEMPLATE.format(stream=stream_name)
     try:
-        return subprocess.run(["pgrep", "-f", "start_vk.py"], capture_output=True, timeout=3).returncode == 0
-    except Exception:
+        with open(lock_file, "r", encoding="utf-8") as f:
+            pid = int(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
         return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
 
 
 def _api_stream_item():
@@ -5691,6 +5707,23 @@ def _api_storage_item():
     }
 
 
+def _api_redact_push_url(url):
+    """Публичный /api/items без авторизации — полный URL цели пуша (VK/OK)
+    почти всегда содержит секретный ключ публикации прямо в пути
+    (rtmp://.../<ключ>): отдавать его в открытом виде позволило бы кому
+    угодно перехватить или подменить трансляцию. Показываем только
+    протокол и хост, без пути/ключа."""
+    if not url:
+        return "—"
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    except ValueError:
+        pass
+    return "скрыт"
+
+
 def _api_target_items():
     vk_settings = load_vk_settings()
     enabled_ids = set(vk_settings.get("target_ids") or [])
@@ -5708,7 +5741,7 @@ def _api_target_items():
             "fields": {
                 "Статус": status,
                 "Включена в настройках": "да" if target.get("enabled", True) else "нет",
-                "URL": target.get("url") or "—",
+                "Адрес назначения": _api_redact_push_url(target.get("url")),
             },
         })
     return items
