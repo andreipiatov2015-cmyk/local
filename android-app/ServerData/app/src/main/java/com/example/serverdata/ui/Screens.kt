@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -109,10 +110,36 @@ fun ConnectScreen(state: UiState, vm: MainViewModel) {
                 placeholder = { Text("8000") },
                 singleLine = true,
                 enabled = !state.connecting,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Go),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = state.tokenInput,
+                onValueChange = vm::setToken,
+                label = { Text("Токен доступа (необязательно)") },
+                placeholder = { Text("оставьте пустым, если не настроен") },
+                singleLine = true,
+                enabled = !state.connecting,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Go),
                 keyboardActions = KeyboardActions(onGo = { vm.connect() }),
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Подключаться по HTTPS", modifier = Modifier.weight(1f))
+                Switch(checked = state.useHttps, onCheckedChange = vm::setUseHttps, enabled = !state.connecting)
+            }
+            if (state.tokenInput.isNotBlank() && !state.useHttps) {
+                Text(
+                    "Без HTTPS токен передаётся по сети открытым текстом. Включите, если " +
+                        "сервер поддерживает https, иначе используйте только в доверенной сети.",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
 
             state.connectError?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)

@@ -31,7 +31,7 @@ class ApiException(message: String, cause: Throwable? = null) : Exception(messag
  * Клиент для API сервера (см. SERVER_API.md).
  * Использует только стандартные средства Android: HttpURLConnection и org.json.
  */
-class ApiClient(baseUrl: String) {
+class ApiClient(baseUrl: String, private val token: String = "") {
 
     private val base = normalizeUrl(baseUrl)
 
@@ -92,6 +92,9 @@ class ApiClient(baseUrl: String) {
         conn.readTimeout = 15_000
         conn.useCaches = false
         conn.setRequestProperty("Accept", "application/json")
+        if (token.isNotBlank()) {
+            conn.setRequestProperty("X-Monitor-Token", token)
+        }
         try {
             val code = conn.responseCode
             if (code !in 200..299) {

@@ -30,12 +30,17 @@ data class UiState(
     // экран подключения
     val hostInput: String = "",
     val portInput: String = "8000",
+    /** Токен доступа (необязательно) — открывает доп. данные вроде ключа OBS. */
+    val tokenInput: String = "",
+    /** https вместо http — без этого токен уходит по сети открытым текстом. */
+    val useHttps: Boolean = false,
     val recent: kotlin.collections.List<ServerAddress> = emptyList(),
     val connecting: Boolean = false,
     val connectError: String? = null,
 
     // после подключения
     val server: ServerAddress? = null,
+    val token: String = "",
     val serverName: String? = null,
     val items: kotlin.collections.List<Item> = emptyList(),
     val loading: Boolean = false,
@@ -54,6 +59,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         UiState(
             hostInput = settings.lastHost,
             portInput = settings.lastPort,
+            tokenInput = settings.lastToken,
+            useHttps = settings.lastSecure,
             recent = settings.recent,
         )
     )
@@ -68,9 +75,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setHost(text: String) = _state.update { it.copy(hostInput = text, connectError = null) }
     fun setPort(text: String) =
         _state.update { it.copy(portInput = text.filter(Char::isDigit).take(5), connectError = null) }
+    fun setToken(text: String) = _state.update { it.copy(tokenInput = text) }
+    fun setUseHttps(value: Boolean) = _state.update { it.copy(useHttps = value) }
 
     fun pickRecent(address: ServerAddress) = _state.update {
-        it.copy(hostInput = address.host, portInput = address.port.toString(), connectError = null)
+        it.copy(
+            hostInput = address.host,
+            portInput = address.port.toString(),
+            useHttps = address.secure,
+            connectError = null,
+        )
     }
 
     fun removeRecent(address: ServerAddress) {
@@ -81,22 +95,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Проверить адрес, загрузить данные и перейти к списку. */
     fun connect() {
         val s = _state.value
-        val address = validate(s.hostInput, s.portInput) ?: return
+        val address = validate(s.hostInput, s.portInput)?.copy(secure = s.useHttps) ?: return
         if (connectJob?.isActive == true) return
+        val token = s.tokenInput.trim()
         connectJob = viewModelScope.launch {
             _state.update { it.copy(connecting = true, connectError = null) }
-            val client = ApiClient(address.baseUrl)
+            val client = ApiClient(address.baseUrl, token)
             try {
                 val data = client.items()
                 val name = runCatching { client.info().name }.getOrNull()
                 settings.lastHost = address.host
                 settings.lastPort = address.port.toString()
+                settings.lastToken = token
+                settings.lastSecure = address.secure
                 settings.addRecent(address)
                 _state.update {
                     it.copy(
                         connecting = false,
                         screen = Screen.List,
                         server = address,
+                        token = token,
                         serverName = name,
                         items = data.items,
                         lastSync = System.currentTimeMillis(),
@@ -147,6 +165,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 screen = Screen.Connect,
                 server = null,
+                token = "",
                 serverName = null,
                 items = emptyList(),
                 lastSync = null,
@@ -174,11 +193,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Загрузить данные с сервера. Повторный вызов во время загрузки игнорируется. */
     fun refresh() {
-        val address = _state.value.server ?: return
+        val s = _state.value
+        val address = s.server ?: return
         if (refreshJob?.isActive == true) return
         refreshJob = viewModelScope.launch {
             _state.update { it.copy(loading = true) }
-            val client = ApiClient(address.baseUrl)
+            val client = ApiClient(address.baseUrl, s.token)
             try {
                 val data = client.items()
                 val name = runCatching { client.info().name }.getOrNull()
