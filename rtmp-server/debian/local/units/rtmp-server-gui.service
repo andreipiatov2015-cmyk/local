@@ -2,9 +2,11 @@
 Description=RTMP-server GUI (автозапуск при старте сервера)
 After=graphical.target
 Wants=graphical.target
+StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 # ВНИМАНИЕ: предполагается локальная X-сессия на дисплее :0 с автологином
 # (типичная настройка для "киоск"-машин с монитором). Если у вас другой
 # display manager/автологин — поправьте DISPLAY/XAUTHORITY под свою систему,
@@ -12,8 +14,34 @@ Type=simple
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/root/.Xauthority
 ExecStart=/usr/bin/rtmp-server
-Restart=on-failure
-RestartSec=10
+# Самовосстановление в кратчайшие сроки: перезапуск при ЛЮБОМ завершении
+# процесса (не только ошибке), почти без паузы, и без ограничения на
+# количество попыток — приложение должно быть поднято всегда, даже если
+# пришлось перезапускаться десятки раз подряд (StartLimitIntervalSec=0
+# в [Unit] выше отключает штатный "сдаюсь после N падений за T секунд").
+Restart=always
+RestartSec=2
+# Watchdog: приложение само пингует systemd через NOTIFY_SOCKET (см.
+# rtmp_server/gui/watchdog.py) — если пинги прекратятся дольше WatchdogSec
+# (например, GUI-поток завис и перестал отвечать, но процесс жив), systemd
+# убьёт и перезапустит его сам. Обычный Restart=on-failure зависание не
+# ловит вообще, потому что нет ни падения, ни ненулевого кода выхода.
+WatchdogSec=30
+# Наивысший приоритет в системе:
+# - OOMScoreAdjust=-1000 — ядро никогда не выберет этот процесс для OOM-kill
+#   при нехватке памяти (абсолютная защита, самое сильное значение из
+#   возможных).
+# - Nice=-15 — сильный приоритет планировщика CPU. Не используем полноценный
+#   realtime (CPUSchedulingPolicy=rr/fifo) намеренно: RT-приоритет для
+#   GUI-приложения рискует "заморозить" весь X-сеанс при любом затяжном
+#   перерисовывании/цикле, а это приложение как раз управляет остальными
+#   сервисами сайта — обратный эффект недопустим.
+# - IOSchedulingClass=realtime — приоритет на дисковый I/O (безопасен в
+#   отличие от CPU realtime, не может повесить всю систему).
+OOMScoreAdjust=-1000
+Nice=-15
+IOSchedulingClass=realtime
+IOSchedulingPriority=0
 # Защита от повторного запуска — сам rtmp-server проверяет lock-файл
 # (см. rtmp_server/gui/single_instance.py), поэтому конфликт с ярлыком
 # на рабочем столе исключён.
