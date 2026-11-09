@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Иконка: «сервер» из трёх блоков со стрелкой синхронизации -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M34,32h40a4,4 0,0 1,4 4v8a4,4 0,0 1,-4 4h-40a4,4 0,0 1,-4 -4v-8a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M34,52h40a4,4 0,0 1,4 4v8a4,4 0,0 1,-4 4h-40a4,4 0,0 1,-4 -4v-8a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#1E5AA8"
+        android:pathData="M38,38h4v4h-4zM38,58h4v4h-4z" />
+    <path android:fillColor="#7FD0FF"
+        android:pathData="M44,72h20v4h-20z" />
+</vector>

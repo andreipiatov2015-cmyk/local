@@ -5511,6 +5511,274 @@ def stream_targets_update(target_id):
 #                   END VK STREAMING
 # =====================================================
 
+# =====================================================
+#     PUBLIC MONITORING API (приложение "Данные сервера" на телефоне)
+# =====================================================
+# Контракт — SERVER_API.md: GET /api/info и GET /api/items(/<id>), без
+# авторизации, только чтение. "items" — список того, что отслеживает
+# приложение: сам входящий RTMP-поток, хранилище HLS и каждая цель пуша
+# в VK/OK, со статусом "идёт/не идёт" у каждой.
+
+API_MONITOR_NAME = os.environ.get("MONITOR_API_NAME", "Трансляция")
+API_HLS_DIR = os.environ.get("HLS_DIR", "/var/www/hls")
+API_STREAM_NAME = os.environ.get("RTMP_STREAM_NAME", "stream")
+API_HLS_CLEANUP_CONFIG_FILE = os.environ.get(
+    "HLS_CLEANUP_CONFIG_FILE", "/var/lib/rtmp-server/hls_cleanup.json"
+)
+# .m3u8 активного потока nginx-rtmp непрерывно перезаписывает каждый hls_fragment
+# (см. www/nginx.conf); если файл давно не менялся — трансляция не идёт.
+API_LIVE_FRESHNESS_SECONDS = 15
+FFPROBE_BIN = os.environ.get("FFPROBE_PATH", "ffprobe")
+
+
+def _api_json(payload, status=200):
+    response = jsonify(payload)
+    response.headers["Content-Type"] = "application/json; charset=utf-8"
+    return response, status
+
+
+def _api_now_iso():
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _api_playlist_path(stream_name):
+    return os.path.join(API_HLS_DIR, f"{stream_name}.m3u8")
+
+
+def _api_stream_is_live(stream_name):
+    try:
+        return (time.time() - os.path.getmtime(_api_playlist_path(stream_name))) <= API_LIVE_FRESHNESS_SECONDS
+    except OSError:
+        return False
+
+
+def _api_probe_incoming_stream(stream_name):
+    """Разрешение/fps/кодеки входящего потока через ffprobe по локальному HLS.
+    Если ffprobe недоступен или поток уже остановился — просто нет этих полей,
+    статус live/offline от него не зависит."""
+    url = f"http://127.0.0.1:8082/hls/{stream_name}.m3u8"
+    try:
+        result = subprocess.run(
+            [FFPROBE_BIN, "-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", url],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return {}
+        data = json.loads(result.stdout)
+    except Exception:
+        return {}
+    streams = data.get("streams", []) if isinstance(data, dict) else []
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    fps = None
+    if video and video.get("avg_frame_rate") and video["avg_frame_rate"] != "0/0":
+        num, _, den = video["avg_frame_rate"].partition("/")
+        try:
+            if int(den):
+                fps = round(int(num) / int(den), 2)
+        except (ValueError, ZeroDivisionError):
+            pass
+    return {
+        "width": video.get("width") if video else None,
+        "height": video.get("height") if video else None,
+        "fps": fps,
+        "video_codec": video.get("codec_name") if video else None,
+        "audio_codec": audio.get("codec_name") if audio else None,
+    }
+
+
+def _api_measure_bitrate_kbps(stream_name, last_n=5):
+    """Приближённый битрейт по размеру последних HLS-сегментов (см. ту же
+    идею в rtmp-server/rtmp_server/site_admin/stream_info.py)."""
+    try:
+        segments = sorted(
+            Path(API_HLS_DIR).glob(f"{stream_name}-*.ts"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )[:last_n]
+        if not segments:
+            return None
+        fragment_seconds = 3.0  # hls_fragment в www/nginx.conf
+        values = [(p.stat().st_size * 8 / 1000) / fragment_seconds for p in segments]
+    except OSError:
+        return None
+    return round(sum(values) / len(values), 1)
+
+
+def _api_hls_usage_bytes():
+    total = 0
+    try:
+        for p in Path(API_HLS_DIR).iterdir():
+            if p.is_file():
+                try:
+                    total += p.stat().st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
+def _api_hls_retention_seconds():
+    try:
+        with open(API_HLS_CLEANUP_CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        value = int(data.get("retention_seconds"))
+        if value > 0:
+            return value
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    return 300
+
+
+def _api_vk_push_running(stream_name=None):
+    """start_vk.py — это только короткоживущий запускатор: он стартует ffmpeg
+    в фоне (preexec_fn=os.setsid) и сразу завершается, не дожидаясь его —
+    поэтому pgrep по "start_vk.py" почти всегда не находит ничего, даже
+    когда пуш реально идёт. Проверяем вместо этого PID самого ffmpeg из
+    lock-файла, который start_vk.py для него и пишет (см. write_lock в
+    start_vk.py: "<pid> <unix_ts>")."""
+    stream_name = stream_name or API_STREAM_NAME
+    lock_file = VK_LOCK_TEMPLATE.format(stream=stream_name)
+    try:
+        with open(lock_file, "r", encoding="utf-8") as f:
+            pid = int(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+
+
+def _api_stream_item():
+    stream_name = API_STREAM_NAME
+    live = _api_stream_is_live(stream_name)
+    fields = {"Статус": "В эфире" if live else "Не в эфире"}
+    updated_at = None
+    if live:
+        probe = _api_probe_incoming_stream(stream_name)
+        if probe.get("width") and probe.get("height"):
+            fields["Разрешение"] = f"{probe['width']}×{probe['height']}"
+        if probe.get("fps"):
+            fields["FPS"] = probe["fps"]
+        if probe.get("video_codec"):
+            fields["Видео"] = probe["video_codec"]
+        if probe.get("audio_codec"):
+            fields["Аудио"] = probe["audio_codec"]
+        bitrate = _api_measure_bitrate_kbps(stream_name)
+        if bitrate:
+            fields["Битрейт, кбит/с"] = bitrate
+        updated_at = _api_now_iso()
+    else:
+        try:
+            updated_at = datetime.datetime.fromtimestamp(
+                os.path.getmtime(_api_playlist_path(stream_name))
+            ).astimezone().isoformat(timespec="seconds")
+        except OSError:
+            updated_at = None
+    vk_settings = load_vk_settings()
+    vk_on = bool(vk_settings.get("enabled")) and _api_vk_push_running()
+    fields["Трансляция в VK/OK"] = "идёт" if vk_on else "выключена"
+    return {
+        "id": "stream",
+        "title": "Входящая трансляция",
+        "subtitle": "В эфире" if live else "Не в эфире",
+        "updated_at": updated_at,
+        "fields": fields,
+    }
+
+
+def _api_storage_item():
+    usage_mb = round(_api_hls_usage_bytes() / 1024 / 1024, 1)
+    retention_min = round(_api_hls_retention_seconds() / 60, 1)
+    return {
+        "id": "storage",
+        "title": "Хранилище HLS",
+        "subtitle": f"{usage_mb} МБ",
+        "updated_at": _api_now_iso(),
+        "fields": {
+            "Занято места, МБ": usage_mb,
+            "Срок хранения сегментов, мин": retention_min,
+        },
+    }
+
+
+def _api_redact_push_url(url):
+    """Публичный /api/items без авторизации — полный URL цели пуша (VK/OK)
+    почти всегда содержит секретный ключ публикации прямо в пути
+    (rtmp://.../<ключ>): отдавать его в открытом виде позволило бы кому
+    угодно перехватить или подменить трансляцию. Показываем только
+    протокол и хост, без пути/ключа."""
+    if not url:
+        return "—"
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    except ValueError:
+        pass
+    return "скрыт"
+
+
+def _api_target_items():
+    vk_settings = load_vk_settings()
+    enabled_ids = set(vk_settings.get("target_ids") or [])
+    vk_on = bool(vk_settings.get("enabled")) and _api_vk_push_running()
+    items = []
+    for target in load_stream_targets():
+        target_id = target.get("id") or ""
+        active = vk_on and target_id in enabled_ids and target.get("enabled", True)
+        status = "идёт трансляция" if active else "не активна"
+        items.append({
+            "id": f"target-{target_id}",
+            "title": target.get("name") or "Без названия",
+            "subtitle": status,
+            "updated_at": _api_now_iso(),
+            "fields": {
+                "Статус": status,
+                "Включена в настройках": "да" if target.get("enabled", True) else "нет",
+                "Адрес назначения": _api_redact_push_url(target.get("url")),
+            },
+        })
+    return items
+
+
+def _api_all_items():
+    return [_api_stream_item(), _api_storage_item()] + _api_target_items()
+
+
+@app.route("/api/info", methods=["GET"])
+def api_monitor_info():
+    return _api_json({
+        "name": API_MONITOR_NAME,
+        "version": "1.0",
+        "updated_at": _api_now_iso(),
+    })
+
+
+@app.route("/api/items", methods=["GET"])
+def api_monitor_items():
+    return _api_json({
+        "updated_at": _api_now_iso(),
+        "items": _api_all_items(),
+    })
+
+
+@app.route("/api/items/<item_id>", methods=["GET"])
+def api_monitor_item(item_id):
+    item = next((i for i in _api_all_items() if i["id"] == item_id), None)
+    if item is None:
+        return _api_json({"detail": "Запись не найдена"}, status=404)
+    return _api_json(item)
+
+# =====================================================
+#                 END PUBLIC MONITORING API
+# =====================================================
+
 # ------------ Запуск ------------
 init_table_header_tags()
 init_db()

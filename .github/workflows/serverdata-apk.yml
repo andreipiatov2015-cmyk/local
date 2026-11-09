@@ -1,0 +1,59 @@
+name: Build ServerData APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android-app/ServerData/**"
+      - ".github/workflows/serverdata-apk.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-app/ServerData
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      # На раннере обычно уже есть Android SDK, но не всегда с нужными
+      # build-tools/platform под compileSdk 35 — этот шаг доустанавливает,
+      # что нужно, и сам принимает лицензии (без него sdkmanager спросит
+      # согласие интерактивно и шаг зависнет).
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ServerData-debug-apk
+          path: android-app/ServerData/app/build/outputs/apk/debug/app-debug.apk
+
+      # Публикуем/обновляем один и тот же релиз "serverdata-latest" — у
+      # пользователя получается постоянная ссылка для скачивания apk, без
+      # необходимости заходить во вкладку Actions за каждым новым файлом.
+      - name: Publish release with APK
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: serverdata-latest
+          name: "Данные сервера — последняя сборка"
+          body: |
+            Автоматическая сборка debug-APK приложения «Данные сервера» из ветки main (коммит ${{ github.sha }}).
+            Скачайте `app-debug.apk`, при установке на телефоне разрешите «установку из неизвестных источников».
+          prerelease: true
+          files: android-app/ServerData/app/build/outputs/apk/debug/app-debug.apk
