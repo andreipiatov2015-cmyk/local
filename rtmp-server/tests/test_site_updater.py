@@ -174,6 +174,27 @@ class RsyncPreservesDestinationOwnershipTests(unittest.TestCase):
         self.assertIn("--no-owner", captured["args"])
         self.assertIn("--no-group", captured["args"])
 
+    def test_rsync_command_does_not_preserve_times(self):
+        """Регрессия: деплой почти всегда идёт от одного пользователя
+        (self-hosted раннер) на дерево, которым владеет другой (живой
+        сервис, www-data) — rsync -t пытается выставить на уже
+        существующих dest-файлах mtime источника, а это требует быть их
+        владельцем (или root), write-доступа через группу недостаточно.
+        Из-за этого реальный деплой падал на каждом прогоне с "failed to
+        set times... Operation not permitted" (воспроизведено 2026-11-09)."""
+        captured = {}
+
+        def fake_run(args, **kwargs):
+            captured["args"] = args
+            return mock.Mock(returncode=0, stderr="")
+
+        with mock.patch("subprocess.run", side_effect=fake_run):
+            _rsync(self.src, self.dest)
+
+        flags = captured["args"][1]
+        self.assertTrue(flags.startswith("-"))
+        self.assertNotIn("t", flags)
+
 
 class FetchLatestSiteSourceTests(unittest.TestCase):
     """download_file() подменяется моком — реальный сетевой запрос к GitHub

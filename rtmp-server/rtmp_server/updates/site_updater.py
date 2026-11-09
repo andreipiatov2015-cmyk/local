@@ -109,7 +109,17 @@ def _rsync(src: Path, dest: Path) -> None:
     # в restart-loop сразу на старте с "attempt to write a readonly
     # database". --no-owner --no-group — явно, а не просто "не передавать
     # -o/-g", чтобы намерение было видно в самой команде.
-    args = ["rsync", "-rlptD", "--no-owner", "--no-group"]
+    # Без -t ("times"): rsync -t пытается выставить на уже существующих
+    # dest-файлах/папках mtime источника, а это требует либо быть их
+    # владельцем, либо root — write-доступа через группу недостаточно
+    # (POSIX: произвольный, не "текущий", mtime можно выставить только
+    # владельцу/CAP_FOWNER). Деплой почти всегда идёт от одного
+    # пользователя (self-hosted раннер) на дерево, которым владеет другой
+    # (живой сервис), так что -t раньше валил rsync на каждом повторном
+    # деплое с "failed to set times... Operation not permitted" — найдено
+    # и воспроизведено вживую 2026-11-09. Точный mtime задеплоенным
+    # файлам не нужен, это не влияет на поведение приложения.
+    args = ["rsync", "-rlpD", "--no-owner", "--no-group"]
     for pattern in C.SITE_UPDATE_EXCLUDES:
         args += ["--exclude", pattern]
     args += [f"{src}/", f"{dest}/"]
