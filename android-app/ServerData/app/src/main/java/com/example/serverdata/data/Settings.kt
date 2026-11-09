@@ -2,18 +2,22 @@ package com.example.serverdata.data
 
 import android.content.Context
 
-/** Адрес сервера в виде IP (или имени) и порта. */
-data class ServerAddress(val host: String, val port: Int) {
-    val baseUrl: String get() = "http://$host:$port"
-    override fun toString() = "$host:$port"
+/** Адрес сервера в виде IP (или имени) и порта. secure — https вместо http
+ * (важно, когда указан токен доступа: по обычному http он уходит открытым
+ * текстом, его может перехватить кто угодно в той же сети). */
+data class ServerAddress(val host: String, val port: Int, val secure: Boolean = false) {
+    val baseUrl: String get() = "${if (secure) "https" else "http"}://$host:$port"
+    override fun toString() = "${if (secure) "https://" else ""}$host:$port"
 
     companion object {
-        /** "192.168.1.10:8000" → ServerAddress, иначе null. */
+        /** "192.168.1.10:8000" или "https://192.168.1.10:8000" → ServerAddress, иначе null. */
         fun parse(text: String): ServerAddress? {
-            val idx = text.lastIndexOf(':')
+            val secure = text.startsWith("https://")
+            val rest = text.removePrefix("https://").removePrefix("http://")
+            val idx = rest.lastIndexOf(':')
             if (idx <= 0) return null
-            val port = text.substring(idx + 1).toIntOrNull() ?: return null
-            return ServerAddress(text.substring(0, idx), port)
+            val port = rest.substring(idx + 1).toIntOrNull() ?: return null
+            return ServerAddress(rest.substring(0, idx), port, secure)
         }
     }
 }
@@ -35,6 +39,10 @@ class Settings(context: Context) {
     var lastToken: String
         get() = prefs.getString(KEY_TOKEN, "") ?: ""
         set(value) = prefs.edit().putString(KEY_TOKEN, value).apply()
+
+    var lastSecure: Boolean
+        get() = prefs.getBoolean(KEY_SECURE, false)
+        set(value) = prefs.edit().putBoolean(KEY_SECURE, value).apply()
 
     /** Секунды между автообновлениями. */
     val intervalSec: Int get() = prefs.getInt(KEY_INTERVAL, 30)
@@ -60,6 +68,7 @@ class Settings(context: Context) {
         const val KEY_HOST = "host"
         const val KEY_PORT = "port"
         const val KEY_TOKEN = "token"
+        const val KEY_SECURE = "secure"
         const val KEY_INTERVAL = "interval_sec"
         const val KEY_RECENT = "recent"
     }

@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -123,6 +124,22 @@ fun ConnectScreen(state: UiState, vm: MainViewModel) {
                 keyboardActions = KeyboardActions(onGo = { vm.connect() }),
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Подключаться по HTTPS", modifier = Modifier.weight(1f))
+                Switch(checked = state.useHttps, onCheckedChange = vm::setUseHttps, enabled = !state.connecting)
+            }
+            if (state.tokenInput.isNotBlank() && !state.useHttps) {
+                Text(
+                    "Без HTTPS токен передаётся по сети открытым текстом. Включите, если " +
+                        "сервер поддерживает https, иначе используйте только в доверенной сети.",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
 
             state.connectError?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)

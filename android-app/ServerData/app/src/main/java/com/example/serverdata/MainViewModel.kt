@@ -32,6 +32,8 @@ data class UiState(
     val portInput: String = "8000",
     /** Токен доступа (необязательно) — открывает доп. данные вроде ключа OBS. */
     val tokenInput: String = "",
+    /** https вместо http — без этого токен уходит по сети открытым текстом. */
+    val useHttps: Boolean = false,
     val recent: kotlin.collections.List<ServerAddress> = emptyList(),
     val connecting: Boolean = false,
     val connectError: String? = null,
@@ -58,6 +60,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             hostInput = settings.lastHost,
             portInput = settings.lastPort,
             tokenInput = settings.lastToken,
+            useHttps = settings.lastSecure,
             recent = settings.recent,
         )
     )
@@ -73,9 +76,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setPort(text: String) =
         _state.update { it.copy(portInput = text.filter(Char::isDigit).take(5), connectError = null) }
     fun setToken(text: String) = _state.update { it.copy(tokenInput = text) }
+    fun setUseHttps(value: Boolean) = _state.update { it.copy(useHttps = value) }
 
     fun pickRecent(address: ServerAddress) = _state.update {
-        it.copy(hostInput = address.host, portInput = address.port.toString(), connectError = null)
+        it.copy(
+            hostInput = address.host,
+            portInput = address.port.toString(),
+            useHttps = address.secure,
+            connectError = null,
+        )
     }
 
     fun removeRecent(address: ServerAddress) {
@@ -86,7 +95,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Проверить адрес, загрузить данные и перейти к списку. */
     fun connect() {
         val s = _state.value
-        val address = validate(s.hostInput, s.portInput) ?: return
+        val address = validate(s.hostInput, s.portInput)?.copy(secure = s.useHttps) ?: return
         if (connectJob?.isActive == true) return
         val token = s.tokenInput.trim()
         connectJob = viewModelScope.launch {
@@ -98,6 +107,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 settings.lastHost = address.host
                 settings.lastPort = address.port.toString()
                 settings.lastToken = token
+                settings.lastSecure = address.secure
                 settings.addRecent(address)
                 _state.update {
                     it.copy(
