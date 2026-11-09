@@ -16,6 +16,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"RTMP-server {__version__}")
         self.resize(1100, 700)
+        # Пока не поднят трей (main() ниже решает, доступен ли он на этой
+        # системе) — закрытие окна работает как обычно, то есть завершает
+        # приложение. Если трей поднят, main() переключит это в False, и
+        # закрытие окна будет сворачивать в трей, а не выходить.
+        self.allow_close = True
 
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
@@ -26,6 +31,59 @@ class MainWindow(QMainWindow):
         tabs.addTab(StreamTab(), "Трансляция")
         tabs.addTab(UpdatesTab(), "Обновления")
         self.setCentralWidget(tabs)
+
+    def closeEvent(self, event):
+        if self.allow_close:
+            event.accept()
+            return
+        # Крестик окна сворачивает в трей, а не завершает процесс —
+        # приложение управляет остальными сервисами сайта и должно быть
+        # под рукой постоянно, как значок громкости или сети. Настоящий
+        # выход — только через пункт "Выход" в меню значка трея.
+        event.ignore()
+        self.hide()
+
+
+def _build_tray_icon(app, window: MainWindow):
+    from PyQt5.QtGui import QIcon
+    from PyQt5.QtWidgets import QMenu, QStyle, QSystemTrayIcon
+
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        return None
+
+    icon = QIcon.fromTheme("utilities-system-monitor")
+    if icon.isNull():
+        icon = app.style().standardIcon(QStyle.SP_ComputerIcon)
+
+    tray = QSystemTrayIcon(icon, app)
+    tray.setToolTip(f"RTMP-server {__version__}")
+
+    def show_window():
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def quit_app():
+        window.allow_close = True
+        app.quit()
+
+    menu = QMenu()
+    menu.addAction("Открыть RTMP-server", show_window)
+    menu.addSeparator()
+    menu.addAction("Выход", quit_app)
+    tray.setContextMenu(menu)
+
+    def on_activated(reason):
+        if reason not in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            return
+        if window.isVisible():
+            window.hide()
+        else:
+            show_window()
+
+    tray.activated.connect(on_activated)
+    tray.show()
+    return tray
 
 
 def main() -> int:
@@ -53,6 +111,12 @@ def main() -> int:
     try:
         window = MainWindow()
         window.show()
+
+        tray = _build_tray_icon(app, window)
+        if tray is not None:
+            app.setQuitOnLastWindowClosed(False)
+            window.allow_close = False
+
         watchdog.notify_ready()
 
         interval_ms = watchdog.watchdog_interval_ms()
