@@ -148,5 +148,52 @@ class ProbeIncomingStreamTests(unittest.TestCase):
         self.assertIsNotNone(info.error)
 
 
+class StreamKeyTests(unittest.TestCase):
+    """Ключ трансляции (RTMP_STREAM_NAME) — должен совпадать с тем, что
+    www/live-server/server.py реально читает из окружения, иначе сайт не
+    найдёт HLS-плейлист под новым ключом."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._orig_config_file = C.SITE_CONFIG_ENV_FILE
+        C.SITE_CONFIG_ENV_FILE = str(Path(self.tmp.name) / "site-config.env")
+
+    def tearDown(self):
+        C.SITE_CONFIG_ENV_FILE = self._orig_config_file
+        self.tmp.cleanup()
+
+    def test_default_key_when_file_missing(self):
+        self.assertEqual(stream_info.get_stream_key(), C.DEFAULT_RTMP_STREAM_NAME)
+
+    def test_set_and_get_roundtrip(self):
+        stream_info.set_stream_key("myevent2026")
+        self.assertEqual(stream_info.get_stream_key(), "myevent2026")
+
+    def test_set_rejects_invalid_characters(self):
+        for bad in ("has space", "slash/es", "", "a" * 65):
+            with self.assertRaises(stream_info.StreamInfoError):
+                stream_info.set_stream_key(bad)
+
+    def test_set_overwrites_without_duplicating_line(self):
+        stream_info.set_stream_key("first")
+        stream_info.set_stream_key("second")
+        text = Path(C.SITE_CONFIG_ENV_FILE).read_text(encoding="utf-8")
+        self.assertEqual(text.count("RTMP_STREAM_NAME="), 1)
+        self.assertEqual(stream_info.get_stream_key(), "second")
+
+    def test_set_preserves_other_lines_in_the_file(self):
+        """Файл не только наш — не должны стирать чужие строки при записи."""
+        Path(C.SITE_CONFIG_ENV_FILE).write_text("SOME_OTHER_VAR=keep-me\n", encoding="utf-8")
+        stream_info.set_stream_key("mykey")
+        text = Path(C.SITE_CONFIG_ENV_FILE).read_text(encoding="utf-8")
+        self.assertIn("SOME_OTHER_VAR=keep-me", text)
+        self.assertIn("RTMP_STREAM_NAME=mykey", text)
+
+    def test_obs_server_url_uses_configured_port_and_app(self):
+        url = stream_info.obs_server_url()
+        self.assertTrue(url.startswith("rtmp://"))
+        self.assertTrue(url.endswith(f":{C.RTMP_PORT}/{C.RTMP_APP_NAME}"))
+
+
 if __name__ == "__main__":
     unittest.main()

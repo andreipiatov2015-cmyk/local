@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import json
+import re
+import socket
 import subprocess
 import time
 import urllib.request
@@ -269,3 +271,79 @@ def restart_vk_push(stream_name: str) -> None:
         start_new_session=True,
         cwd=C.LIVE_SERVER_DIR,
     )
+
+
+# ---------------------------------------------------------------------------
+# Ключ трансляции (RTMP stream key) — см. config/constants.py для контекста:
+# сайт ищет HLS-плейлист и запускает пуш в VK строго под именем из
+# RTMP_STREAM_NAME (по умолчанию "stream"), а не под любым ключом, которым
+# стример решил опубликовать поток.
+# ---------------------------------------------------------------------------
+
+_STREAM_KEY_LINE_RE = re.compile(r"^RTMP_STREAM_NAME=(.*)$")
+_VALID_STREAM_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def is_valid_stream_key(value: str) -> bool:
+    """Ограничение символов намеренное: ключ попадает в URL (rtmp://.../live/<ключ>)
+    и в имя файла HLS-сегментов (<ключ>-NNNN.ts) — пробелы, слэши и спецсимволы
+    там либо ломают путь, либо открывают directory traversal."""
+    return bool(_VALID_STREAM_KEY_RE.match(value or ""))
+
+
+def get_stream_key() -> str:
+    path = Path(C.SITE_CONFIG_ENV_FILE)
+    if path.exists():
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                match = _STREAM_KEY_LINE_RE.match(line.strip())
+                if match:
+                    value = match.group(1).strip().strip('"').strip("'")
+                    if value:
+                        return value
+        except OSError:
+            pass
+    return C.DEFAULT_RTMP_STREAM_NAME
+
+
+def set_stream_key(value: str) -> None:
+    value = (value or "").strip()
+    if not is_valid_stream_key(value):
+        raise StreamInfoError(
+            "Ключ трансляции может содержать только латинские буквы, цифры, '-' и '_' (до 64 символов)"
+        )
+    path = Path(C.SITE_CONFIG_ENV_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = []
+    found = False
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if _STREAM_KEY_LINE_RE.match(line.strip()):
+                lines.append(f"RTMP_STREAM_NAME={value}")
+                found = True
+            else:
+                lines.append(line)
+    if not found:
+        lines.append(f"RTMP_STREAM_NAME={value}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def detect_server_address() -> str:
+    """LAN/внешний IP этой машины — для показа в инструкции OBS. Соединение
+    UDP на 8.8.8.8:80 не отправляет реальных пакетов, только даёт ОС выбрать
+    исходящий интерфейс/адрес для маршрута; если сети нет вообще — откат
+    на loopback, чтобы вкладка не падала."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+        finally:
+            sock.close()
+    except OSError:
+        return "127.0.0.1"
+
+
+def obs_server_url() -> str:
+    return f"rtmp://{detect_server_address()}:{C.RTMP_PORT}/{C.RTMP_APP_NAME}"

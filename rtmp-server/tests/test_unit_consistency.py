@@ -29,6 +29,7 @@ class UnitFileConsistencyTests(unittest.TestCase):
         self.assertIn(C.LIVE_SERVER_SCRIPT, text)
         self.assertIn(C.LIVE_SERVER_DIR, text)
         self.assertIn(C.LIVE_SERVER_LOG, text)
+        self.assertIn(C.SITE_CONFIG_ENV_FILE, text)  # ключ трансляции — see stream_info.py
         self.assertNotIn(".venv", text)  # подтверждено владельцем: venv на сайте нет
 
     def test_reboot_server_unit_matches_constants(self):

@@ -84,6 +84,7 @@ class StreamTab(QWidget):
         self._timer.start(5000)
         self.refresh_incoming()
         self._load_vk_settings()
+        self._load_stream_key()
 
     # ------------------------------------------------------------------
     # UI
@@ -91,6 +92,27 @@ class StreamTab(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+
+        key_box = QGroupBox("Ключ трансляции (для OBS)")
+        key_layout = QVBoxLayout(key_box)
+        key_note = QLabel(
+            "<i>Сайт ищет трансляцию строго под этим ключом — если указать в OBS "
+            "другой, поток не появится ни на сайте, ни в пуше VK, хотя сам приём "
+            "RTMP ключ никак не проверяет и примет любой. Адрес сервера и "
+            "текущий ключ для вставки в OBS — на вкладке «Обзор».</i>"
+        )
+        key_note.setWordWrap(True)
+        key_layout.addWidget(key_note)
+        key_row = QHBoxLayout()
+        self.stream_key_edit = QLineEdit()
+        key_row.addWidget(self.stream_key_edit)
+        btn_save_key = QPushButton("Сохранить")
+        btn_save_key.clicked.connect(self._on_save_stream_key)
+        key_row.addWidget(btn_save_key)
+        key_layout.addLayout(key_row)
+        self.stream_key_status_label = QLabel()
+        key_layout.addWidget(self.stream_key_status_label)
+        layout.addWidget(key_box)
 
         incoming_box = QGroupBox("Входящий поток (от стримера)")
         incoming_layout = QVBoxLayout(incoming_box)
@@ -237,6 +259,27 @@ class StreamTab(QWidget):
             self.bandwidth_label.setText(f"Канал сервера наружу: ~{result.mbps} Мбит/с")
         else:
             self.bandwidth_label.setText(f"Не удалось проверить: {result.error}")
+
+    # ------------------------------------------------------------------
+    # Ключ трансляции
+    # ------------------------------------------------------------------
+
+    def _load_stream_key(self) -> None:
+        self.stream_key_edit.setText(stream_info.get_stream_key())
+
+    def _on_save_stream_key(self) -> None:
+        value = self.stream_key_edit.text().strip()
+        if not confirm_root_password(self, "изменение ключа трансляции"):
+            return
+        try:
+            stream_info.set_stream_key(value)
+        except stream_info.StreamInfoError as exc:
+            QMessageBox.warning(self, "Некорректный ключ", str(exc))
+            return
+        self.stream_key_status_label.setText(
+            "Сохранено. Чтобы сайт начал искать трансляцию по новому ключу, "
+            "перезапустите live-server (вкладка «Сервисы»)."
+        )
 
     # ------------------------------------------------------------------
     # Настройки VK
