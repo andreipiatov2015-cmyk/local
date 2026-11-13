@@ -559,6 +559,18 @@ def init_db():
         )
     """)
 
+    # "Один блок auto_number на форму" — проверка в create_registration_desk_question
+    # смотрит "уже есть такой?" ДО вставки, а это две отдельные операции с БД:
+    # при двойном клике/параллельных запросах обе могут пройти проверку раньше,
+    # чем успеет закоммититься первая вставка, и блоков окажется два. Частичный
+    # уникальный индекс закрывает это на уровне БД — гонка упадёт в
+    # IntegrityError независимо от того, что успела проверить сама проверка.
+    cur.execute(f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_registration_desk_one_auto_number
+        ON registration_desk_questions (desk_id)
+        WHERE qtype = '{REGISTRATION_AUTO_NUMBER_QTYPE}'
+    """)
+
     cur.execute(
         """
         INSERT OR REPLACE INTO deprecated_features (feature_key, description, deprecated_at)
@@ -2847,11 +2859,12 @@ def insert_and_get_id(query, args):
     мероприятия в "Стойке регистрации", чтобы перейти на его страницу без
     повторного запроса списка."""
     con = sqlite3.connect(DB_FILE)
-    cur = con.execute(query, args)
-    con.commit()
-    new_id = cur.lastrowid
-    con.close()
-    return new_id
+    try:
+        cur = con.execute(query, args)
+        con.commit()
+        return cur.lastrowid
+    finally:
+        con.close()
 
 
 # =====================================================
@@ -3007,11 +3020,17 @@ def create_registration_desk_question(desk_id):
         (desk_id,), one=True,
     )["p"]
     ts = now_iso()
-    new_id = insert_and_get_id(
-        "INSERT INTO registration_desk_questions (desk_id, qtype, label, options_json, position, created_at, updated_at) "
-        "VALUES (?, ?, ?, NULL, ?, ?, ?)",
-        (desk_id, qtype, label, next_pos, ts, ts),
-    )
+    try:
+        new_id = insert_and_get_id(
+            "INSERT INTO registration_desk_questions (desk_id, qtype, label, options_json, position, created_at, updated_at) "
+            "VALUES (?, ?, ?, NULL, ?, ?, ?)",
+            (desk_id, qtype, label, next_pos, ts, ts),
+        )
+    except sqlite3.IntegrityError:
+        # Частичный уникальный индекс idx_registration_desk_one_auto_number —
+        # сюда попадаем, если два запроса одновременно проскочили проверку
+        # "уже есть такой?" выше до того, как один из них закоммитился.
+        return jsonify({"detail": "Блок «№» уже добавлен — он один на форму"}), 400
     return jsonify({"id": new_id, "qtype": qtype, "label": label, "options_json": None, "position": next_pos})
 
 
