@@ -11,3 +11,4 @@ debian/local/units/reboot-server.service opt/rtmp-server/systemd-units/
 debian/local/units/rtmp-server-gui.service opt/rtmp-server/systemd-units/
 debian/local/units/rtmp-server-hls-cleanup.service opt/rtmp-server/systemd-units/
 debian/local/units/rtmp-server-hls-cleanup.timer opt/rtmp-server/systemd-units/
+debian/local/units/registration-public.service opt/rtmp-server/systemd-units/
