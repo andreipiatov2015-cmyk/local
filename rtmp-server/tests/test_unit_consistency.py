@@ -63,6 +63,23 @@ class UnitFileConsistencyTests(unittest.TestCase):
         for unit in C.ALL_MANAGED_UNITS:
             self.assertIn(unit, text)
 
+    def test_every_unit_file_is_listed_in_install_manifest(self):
+        """Регрессия 2026-11-13, воспроизведена вживую на реальном сервере:
+        добавили debian/local/units/registration-public.service и прописали
+        его копирование в postinst, но забыли добавить строку в
+        debian/rtmp-server.install — файл не попадал в собранный .deb, и
+        postinst падал на `cp: ... Нет такого файла или каталога` прямо при
+        установке пакета. Проверяем на будущее для ЛЮБОГО юнита в этой
+        папке, а не только для этого конкретного."""
+        install_text = (UNITS_DIR.parent.parent / "rtmp-server.install").read_text()
+        unit_files = sorted(p.name for p in UNITS_DIR.iterdir() if p.is_file())
+        self.assertTrue(unit_files, "debian/local/units/ пуста — подозрительно")
+        for name in unit_files:
+            self.assertIn(
+                f"debian/local/units/{name} ", install_text,
+                f"{name} лежит в debian/local/units/, но не прописан в debian/rtmp-server.install",
+            )
+
     def test_hls_cleanup_timer_matches_constants(self):
         text = (UNITS_DIR / C.UNIT_HLS_CLEANUP_TIMER).read_text()
         self.assertIn(C.UNIT_HLS_CLEANUP_SERVICE, text)

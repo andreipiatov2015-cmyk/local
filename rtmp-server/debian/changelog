@@ -1,3 +1,16 @@
+rtmp-server (1.0.22-1) stable; urgency=high
+
+  * Исправлена поломанная установка 1.0.21: debian/local/units/
+    registration-public.service не был прописан в debian/rtmp-server.install,
+    поэтому файл не попадал в собранный .deb — postinst падал на
+    `cp: ... registration-public.service: Нет такого файла или каталога`
+    прямо при установке пакета (воспроизведено на реальном сервере).
+    Добавлен тест (tests/test_unit_consistency.py), который проверяет
+    для ЛЮБОГО юнита из debian/local/units/, что он прописан в .install,
+    — чтобы это не повторилось для следующих юнитов.
+
+ -- RTMP-server maintainers <support@rtmp-server.local>  Fri, 13 Nov 2026 16:40:00 +0000
+
 rtmp-server (1.0.21-1) stable; urgency=medium
 
   * Публикация формы регистрации в открытом доступе: "Стойка регистрации"
