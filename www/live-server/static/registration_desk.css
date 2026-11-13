@@ -1,3 +1,14 @@
+/* admin.css не задаёт box-sizing глобально (это делает только
+   tables.css, scoped через .tables-page *, но tables.css на этих
+   страницах не подключён) — без этого правила width:100% у
+   .desk-question-label считался БЕЗ padding/border и вылезал за рамку
+   карточки вопроса. */
+.tables-page *,
+.tables-page *::before,
+.tables-page *::after {
+  box-sizing: border-box;
+}
+
 /* Список мероприятий — тот же визуальный стиль, что у соседней вкладки
    "Таблицы заявок" (тёмные карточки-строки на светлой странице). */
 
@@ -73,6 +84,10 @@
 
 .desk-detail-header .page-title {
   margin: 0;
+}
+
+.desk-gear-btn {
+  font-size: 20px;
 }
 
 .desk-section-title {

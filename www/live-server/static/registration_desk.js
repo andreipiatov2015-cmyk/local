@@ -41,15 +41,12 @@ function esc(v) {
 
 // Иконки для панели выбора вопроса — ключи совпадают с REGISTRATION_QUESTION_TYPES на сервере.
 const QUESTION_TYPE_ICONS = {
-  text: '📝',
-  yesno: '✅',
-  file: '📎',
-  list: '📂',
-  text_plain: '💬',
-  date: '📅',
-  number: '🔢',
-  scale: '📊',
-  series: '📋',
+  auto_number: '#️⃣',
+  territory: '🏢',
+  team_name: '👥',
+  people_count: '🔢',
+  supervisor: '🧑‍🏫',
+  department: '🏭',
 };
 
 // ======================= Список мероприятий =======================
@@ -183,6 +180,13 @@ async function initDeskDetailPage() {
   const typeGrid = document.getElementById('questionTypeGrid');
   const canvas = document.getElementById('questionCanvas');
 
+  const openSettingsBtn = document.getElementById('openSettingsBtn');
+  const settingsModal = document.getElementById('settingsModal');
+  const modalDateInput = document.getElementById('modalEventDateInput');
+  const modalSaveBtn = document.getElementById('modalSaveSettingsBtn');
+  const modalCloseBtn = document.getElementById('modalCloseSettingsBtn');
+  const modalStatus = document.getElementById('modalSettingsStatus');
+
   function renderTypeGrid() {
     typeGrid.innerHTML = '';
     Object.entries(QUESTION_TYPES).forEach(([qtype, label]) => {
@@ -197,12 +201,19 @@ async function initDeskDetailPage() {
   }
 
   function renderQuestions(questions) {
+    // "№" — один на форму и не переименовывается (см. REGISTRATION_AUTO_NUMBER_QTYPE
+    // на сервере), поэтому его кнопку в панели слева выключаем, как только он уже добавлен.
+    const hasAutoNumber = questions.some((q) => q.qtype === AUTO_NUMBER_QTYPE);
+    const autoNumberBtn = typeGrid.querySelector(`[data-qtype="${AUTO_NUMBER_QTYPE}"]`);
+    if (autoNumberBtn) autoNumberBtn.disabled = hasAutoNumber;
+
     if (!questions.length) {
       canvas.innerHTML = '<p class="hint">Пока нет вопросов — выберите тип слева, чтобы добавить первый.</p>';
       return;
     }
     canvas.innerHTML = '';
     questions.forEach((q) => {
+      const isAutoNumber = q.qtype === AUTO_NUMBER_QTYPE;
       const card = document.createElement('div');
       card.className = 'desk-question-card';
       card.innerHTML = `
@@ -211,7 +222,8 @@ async function initDeskDetailPage() {
           <span class="desk-question-type">${esc(QUESTION_TYPES[q.qtype] || q.qtype)}</span>
           <button class="icon-btn desk-question-del" data-id="${q.id}" type="button" title="Удалить вопрос">✕</button>
         </div>
-        <input type="text" class="desk-question-label" data-id="${q.id}" value="${esc(q.label)}">
+        <input type="text" class="desk-question-label" data-id="${q.id}" value="${esc(q.label)}" ${isAutoNumber ? 'readonly' : ''}>
+        ${isAutoNumber ? '<p class="hint">Присваивается автоматически каждой записи, участнику не показывается.</p>' : ''}
       `;
       canvas.appendChild(card);
     });
@@ -267,8 +279,25 @@ async function initDeskDetailPage() {
     }
   }
 
-  function showBuilder(show) {
+  // Пока дата не указана — настройка всегда на виду (так же, как раньше:
+  // "первым делом открывается настройка мероприятия"). Как только дата
+  // сохранена один раз, карточка уходит, вместо неё — кнопка ⚙️ рядом с
+  // названием (по образцу настроек, вынесенных отдельно — как у Яндекс.Форм),
+  // которая открывает ту же настройку в модальном окне.
+  function showConfiguredState(show) {
     builderCard.hidden = !show;
+    settingsCard.hidden = show;
+    openSettingsBtn.hidden = !show;
+  }
+
+  function openSettingsModal(currentDate) {
+    modalDateInput.value = currentDate || '';
+    setStatus(modalStatus, '', 'muted');
+    settingsModal.classList.add('visible');
+  }
+
+  function closeSettingsModal() {
+    settingsModal.classList.remove('visible');
   }
 
   saveSettingsBtn?.addEventListener('click', async () => {
@@ -280,13 +309,37 @@ async function initDeskDetailPage() {
     try {
       saveSettingsBtn.disabled = true;
       await apiSendJson(`/api/registration-desk/${DESK_ID}/settings`, 'POST', { event_date });
-      setStatus(settingsStatus, 'Сохранено.', 'success');
-      showBuilder(true);
+      showConfiguredState(true);
       await loadQuestions();
     } catch (e) {
       setStatus(settingsStatus, `Ошибка сохранения: ${e.message}`, 'error');
     } finally {
       saveSettingsBtn.disabled = false;
+    }
+  });
+
+  openSettingsBtn?.addEventListener('click', () => openSettingsModal(dateInput.value));
+  modalCloseBtn?.addEventListener('click', closeSettingsModal);
+  settingsModal?.addEventListener('click', (event) => {
+    if (event.target === settingsModal) closeSettingsModal();
+  });
+
+  modalSaveBtn?.addEventListener('click', async () => {
+    const event_date = modalDateInput.value;
+    if (!event_date) {
+      setStatus(modalStatus, 'Укажите дату проведения.', 'warning');
+      return;
+    }
+    try {
+      modalSaveBtn.disabled = true;
+      await apiSendJson(`/api/registration-desk/${DESK_ID}/settings`, 'POST', { event_date });
+      dateInput.value = event_date;
+      setStatus(modalStatus, 'Сохранено.', 'success');
+      closeSettingsModal();
+    } catch (e) {
+      setStatus(modalStatus, `Ошибка сохранения: ${e.message}`, 'error');
+    } finally {
+      modalSaveBtn.disabled = false;
     }
   });
 
@@ -298,7 +351,7 @@ async function initDeskDetailPage() {
     document.title = `${desk.title} — Стойка регистрации`;
     if (desk.event_date) {
       dateInput.value = desk.event_date;
-      showBuilder(true);
+      showConfiguredState(true);
       await loadQuestions();
     }
   } catch (e) {

@@ -15,6 +15,7 @@
     <div class="desk-detail-header">
       <a href="/registration-desk" class="btn btn-secondary">← К списку мероприятий</a>
       <h1 class="page-title" id="deskTitle">Мероприятие</h1>
+      <button id="openSettingsBtn" class="icon-btn desk-gear-btn" type="button" title="Настройки мероприятия" hidden>⚙️</button>
     </div>
 
     <section class="card page-card" id="settingsCard">
@@ -43,9 +44,28 @@
     </section>
   </main>
 
+  <!-- Настройки мероприятия после того, как дата уже указана однажды —
+       дальше открываются по кнопке ⚙️, а не висят всегда на странице
+       (как в примере с Яндекс.Формами). -->
+  <div id="settingsModal" class="modal">
+    <div class="modal-content">
+      <h2>Настройка мероприятия</h2>
+      <div class="form-field">
+        <label for="modalEventDateInput">Дата проведения</label>
+        <input type="date" id="modalEventDateInput">
+      </div>
+      <p id="modalSettingsStatus" class="status status-muted"></p>
+      <div class="row wrap">
+        <button id="modalSaveSettingsBtn" class="btn btn-primary" type="button">Сохранить</button>
+        <button id="modalCloseSettingsBtn" class="btn btn-secondary" type="button">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const DESK_ID = {{ desk_id | tojson }};
     const QUESTION_TYPES = {{ question_types | tojson }};
+    const AUTO_NUMBER_QTYPE = {{ auto_number_qtype | tojson }};
   </script>
   <script src="/static/layout.js"></script>
   <script src="/static/registration_desk.js"></script>
