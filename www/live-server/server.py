@@ -19,6 +19,7 @@ import uuid
 import traceback
 import logging
 import zipfile
+import base64
 from functools import wraps
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -47,6 +48,12 @@ try:
 except Exception:
     sync_playwright = None
     PlaywrightTimeoutError = Exception
+
+try:
+    import nacl.public
+    import nacl.exceptions
+except Exception:
+    nacl = None
 
 # Папка, где лежит server.py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -139,6 +146,186 @@ REGISTRATION_QUESTION_TYPES = {
 # сам, в отличие от остальных блоков) — поэтому не переименовывается и
 # добавляется не больше одного раза на форму.
 REGISTRATION_AUTO_NUMBER_QTYPE = "auto_number"
+
+# Приватный ключ (NaCl) для расшифровки ответов публичной формы регистрации
+# (см. www/registration-public — изолированный сервис, который шифрует
+# ответы участников публичным ключом перед тем, как уронить файл в
+# drop-директорию). Публичный ключ не секрет — лежит открытым текстом в
+# экспорте для изолированного сервиса (sync_public_forms_export). Путь
+# по умолчанию — туда, куда его кладёт пакет rtmp-server на проде; для
+# локальной разработки можно переопределить через env.
+REGISTRATION_FORM_PRIVATE_KEY_FILE = os.environ.get(
+    "REGISTRATION_FORM_PRIVATE_KEY_FILE", "/etc/rtmp-server/registration-form-private.key"
+)
+
+_registration_form_keypair_cache = None
+
+
+def get_registration_form_keypair():
+    """Возвращает (private_key, public_key_b64) для формы регистрации.
+
+    Ключ генерируется один раз при первом обращении, если файла ещё нет,
+    и дальше читается из REGISTRATION_FORM_PRIVATE_KEY_FILE (0600)."""
+    global _registration_form_keypair_cache
+    if _registration_form_keypair_cache is not None:
+        return _registration_form_keypair_cache
+    if nacl is None:
+        raise RuntimeError("pynacl не установлен — публикация формы регистрации недоступна")
+
+    key_path = Path(REGISTRATION_FORM_PRIVATE_KEY_FILE)
+    if key_path.exists():
+        raw = base64.b64decode(key_path.read_text(encoding="utf-8").strip())
+        private_key = nacl.public.PrivateKey(raw)
+    else:
+        private_key = nacl.public.PrivateKey.generate()
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        key_path.write_text(base64.b64encode(bytes(private_key)).decode("ascii"), encoding="utf-8")
+        try:
+            os.chmod(key_path, 0o600)
+        except OSError:
+            pass
+        app.logger.warning("[registration-desk] сгенерирован новый приватный ключ формы регистрации: %s", key_path)
+
+    public_key_b64 = base64.b64encode(bytes(private_key.public_key)).decode("ascii")
+    _registration_form_keypair_cache = (private_key, public_key_b64)
+    return _registration_form_keypair_cache
+
+
+# Единственный файл, которым админка передаёт опубликованные формы
+# изолированному публичному сервису (www/registration-public) — тот его
+# только читает, ни БД, ни HTTP между процессами нет (см. план в
+# curried-weaving-hummingbird.md). Публичный ключ не секрет, поэтому лежит
+# прямо здесь же.
+PUBLIC_FORMS_EXPORT_FILE = os.environ.get(
+    "REGISTRATION_PUBLIC_FORMS_EXPORT_FILE", "/var/lib/rtmp-server/registration-public-forms.json"
+)
+# Базовый URL, на котором показываются опубликованные формы (см.
+# www/nginx.conf — location под случайную ссылку на том же домене/порте).
+PUBLIC_FORM_BASE_URL = os.environ.get("REGISTRATION_PUBLIC_FORM_BASE_URL", "http://kem-sirius.ru").rstrip("/")
+# Та же переменная/значение, что у изолированного сервиса (www/registration-public) —
+# только он туда пишет, только отсюда читаем и удаляем (см. план).
+REGISTRATION_DROP_DIR = os.environ.get("REGISTRATION_DROP_DIR", "/var/lib/rtmp-server/registration-drop")
+
+
+def sync_public_forms_export():
+    """Атомарно перезаписывает PUBLIC_FORMS_EXPORT_FILE по текущему состоянию
+    опубликованных мероприятий. Вызывается после любой публикации/снятия с
+    публикации и после любого изменения вопросов — чтобы изолированный
+    сервис всегда показывал участникам актуальную форму."""
+    if nacl is None:
+        return
+    try:
+        _, public_key_b64 = get_registration_form_keypair()
+    except Exception:
+        app.logger.exception("[registration-desk] не удалось получить ключ для экспорта публичных форм")
+        return
+
+    desks = query_db("SELECT id, title, publish_slug FROM registration_desks WHERE publish_slug IS NOT NULL")
+    forms = {}
+    for desk in desks:
+        questions = query_db(
+            "SELECT qtype, label FROM registration_desk_questions WHERE desk_id=? AND qtype != ? ORDER BY position, id",
+            (desk["id"], REGISTRATION_AUTO_NUMBER_QTYPE),
+        )
+        forms[desk["publish_slug"]] = {
+            "desk_id": desk["id"],
+            "title": desk["title"],
+            "questions": [{"qtype": q["qtype"], "label": q["label"]} for q in questions],
+        }
+
+    payload = {"public_key_b64": public_key_b64, "forms": forms}
+
+    export_path = Path(PUBLIC_FORMS_EXPORT_FILE)
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = export_path.with_name(export_path.name + f".tmp{os.getpid()}")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp_path, export_path)
+
+
+def _generate_unique_publish_slug(desk_id):
+    """secrets.token_urlsafe(16) -> 22 URL-safe символа (~128 бит), этой же
+    длиной (и только ей) в nginx отличаем публичные формы от остальных
+    маршрутов — см. www/nginx.conf. Коллизия практически невозможна, но на
+    случай редкого совпадения — несколько попыток под защитой partial
+    unique index idx_registration_desks_publish_slug."""
+    for _ in range(5):
+        slug = secrets.token_urlsafe(16)
+        try:
+            query_db(
+                "UPDATE registration_desks SET publish_slug=?, published_at=? WHERE id=?",
+                (slug, now_iso(), desk_id),
+            )
+            return slug
+        except sqlite3.IntegrityError:
+            continue
+    raise RuntimeError("не удалось подобрать уникальную ссылку для публикации формы")
+
+
+def _quarantine_registration_drop_file(entry):
+    """Файл, который не удалось расшифровать/распарсить, не удаляем молча —
+    переносим в карантинную подпапку внутри той же drop-директории (права
+    на неё у www-data уже есть, так как он владелец самой директории)."""
+    quarantine_dir = Path(REGISTRATION_DROP_DIR) / "_quarantine"
+    try:
+        quarantine_dir.mkdir(parents=True, exist_ok=True)
+        entry.rename(quarantine_dir / entry.name)
+    except OSError:
+        app.logger.exception("[registration-desk] не удалось переместить файл %s в карантин", entry.name)
+
+
+def process_registration_drop_files():
+    """Разбирает все новые файлы из REGISTRATION_DROP_DIR (их туда кладёт
+    изолированный публичный сервис, см. www/registration-public):
+    расшифровывает приватным ключом формы, парсит и сохраняет в
+    registration_desk_responses, затем удаляет исходный файл. Вызывается по
+    требованию — при открытии вкладки "Ответы", без фонового демона."""
+    if nacl is None:
+        return
+    drop_dir = Path(REGISTRATION_DROP_DIR)
+    if not drop_dir.is_dir():
+        return
+    try:
+        private_key, _ = get_registration_form_keypair()
+    except Exception:
+        app.logger.exception("[registration-desk] не удалось получить приватный ключ для разбора ответов")
+        return
+    box = nacl.public.SealedBox(private_key)
+
+    for entry in sorted(drop_dir.iterdir()):
+        if not entry.is_file() or entry.suffix != ".sealed":
+            continue
+        try:
+            plaintext = box.decrypt(entry.read_bytes())
+            payload = json.loads(plaintext)
+            resp_desk_id = int(payload["desk_id"])
+            submitted_at = str(payload["submitted_at"])
+            answers = payload["answers"]
+            if not isinstance(answers, dict):
+                raise ValueError("answers must be an object")
+        except Exception:
+            app.logger.exception("[registration-desk] не удалось разобрать файл ответа %s — карантин", entry.name)
+            _quarantine_registration_drop_file(entry)
+            continue
+
+        if not query_db("SELECT id FROM registration_desks WHERE id=?", (resp_desk_id,), one=True):
+            # Мероприятие удалено — ответу уже некуда попасть.
+            try:
+                entry.unlink()
+            except OSError:
+                pass
+            continue
+
+        query_db(
+            "INSERT INTO registration_desk_responses (desk_id, submitted_at, data_json, source_file, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (resp_desk_id, submitted_at, json.dumps(answers, ensure_ascii=False), entry.name, now_iso()),
+        )
+        try:
+            entry.unlink()
+        except OSError:
+            app.logger.warning("[registration-desk] не удалось удалить обработанный файл %s", entry.name)
+
+
 DOWNLOAD_RETRIES = 3
 YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS = int(os.environ.get("YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS", "90000"))
 YANDEX_BROWSER_MIN_FILE_SIZE = int(os.environ.get("YANDEX_BROWSER_MIN_FILE_SIZE", "32"))
@@ -571,6 +758,20 @@ def init_db():
         WHERE qtype = '{REGISTRATION_AUTO_NUMBER_QTYPE}'
     """)
 
+    # Ответы участников публичной формы (см. registration-public) — приходят
+    # зашифрованными файлами из drop-директории, после расшифровки и разбора
+    # оседают здесь. source_file — только для отладки, на логику не влияет.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS registration_desk_responses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            desk_id INTEGER NOT NULL,
+            submitted_at TEXT NOT NULL,
+            data_json TEXT NOT NULL,
+            source_file TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
     cur.execute(
         """
         INSERT OR REPLACE INTO deprecated_features (feature_key, description, deprecated_at)
@@ -625,11 +826,23 @@ def init_db():
         "ALTER TABLE import_tables ADD COLUMN documentation_award_preview_json TEXT",
         "ALTER TABLE import_tables ADD COLUMN card_sequence_json TEXT",
         "ALTER TABLE import_table_rows ADD COLUMN participant_edits_json TEXT",
+        "ALTER TABLE registration_desks ADD COLUMN publish_slug TEXT",
+        "ALTER TABLE registration_desks ADD COLUMN published_at TEXT",
     ]:
         try:
             cur.execute(stmt)
         except sqlite3.OperationalError:
             pass
+
+    # publish_slug должен быть уникальным (сгенерированная ссылка на
+    # публичную форму), но ALTER TABLE ADD COLUMN не умеет добавлять
+    # UNIQUE-constraint в этой схеме миграций — поэтому отдельный индекс,
+    # как и для idx_registration_desk_one_auto_number выше.
+    cur.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_registration_desks_publish_slug
+        ON registration_desks (publish_slug)
+        WHERE publish_slug IS NOT NULL
+    """)
 
     # Миграция: разрешаем привязку одного тега к нескольким колонкам.
     # В старой схеме была уникальность по (table_id, field_tag), что блокировало повтор тега.
@@ -2904,10 +3117,10 @@ def list_registration_desks():
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
     rows = query_db(
-        "SELECT id, title, event_date, created_at, updated_at FROM registration_desks WHERE user_id=? ORDER BY id DESC",
+        "SELECT id, title, event_date, created_at, updated_at, publish_slug, published_at FROM registration_desks WHERE user_id=? ORDER BY id DESC",
         (user["id"],),
     )
-    return jsonify([dict(r) for r in rows])
+    return jsonify([_registration_desk_to_dict(r) for r in rows])
 
 
 @app.route("/api/registration-desk", methods=["POST"])
@@ -2933,18 +3146,25 @@ def _registration_desk_owned_by_user(desk_id, user_id):
     return query_db("SELECT id FROM registration_desks WHERE id=? AND user_id=?", (desk_id, user_id), one=True) is not None
 
 
+def _registration_desk_to_dict(row):
+    d = dict(row)
+    slug = d.get("publish_slug")
+    d["publish_url"] = f"{PUBLIC_FORM_BASE_URL}/{slug}" if slug else None
+    return d
+
+
 @app.route("/api/registration-desk/<int:desk_id>", methods=["GET"])
 def get_registration_desk(desk_id):
     user = table_user_from_request()
     if not user:
         return jsonify({"detail": "Не авторизован"}), 401
     row = query_db(
-        "SELECT id, title, event_date, created_at, updated_at FROM registration_desks WHERE id=? AND user_id=?",
+        "SELECT id, title, event_date, created_at, updated_at, publish_slug, published_at FROM registration_desks WHERE id=? AND user_id=?",
         (desk_id, user["id"]), one=True,
     )
     if not row:
         return jsonify({"detail": "Мероприятие не найдено"}), 404
-    return jsonify(dict(row))
+    return jsonify(_registration_desk_to_dict(row))
 
 
 @app.route("/api/registration-desk/<int:desk_id>", methods=["DELETE"])
@@ -2955,7 +3175,9 @@ def delete_registration_desk(desk_id):
     if not _registration_desk_owned_by_user(desk_id, user["id"]):
         return jsonify({"detail": "Мероприятие не найдено"}), 404
     query_db("DELETE FROM registration_desk_questions WHERE desk_id=?", (desk_id,))
+    query_db("DELETE FROM registration_desk_responses WHERE desk_id=?", (desk_id,))
     query_db("DELETE FROM registration_desks WHERE id=?", (desk_id,))
+    sync_public_forms_export()
     return jsonify({"status": "ok"})
 
 
@@ -3031,6 +3253,7 @@ def create_registration_desk_question(desk_id):
         # сюда попадаем, если два запроса одновременно проскочили проверку
         # "уже есть такой?" выше до того, как один из них закоммитился.
         return jsonify({"detail": "Блок «№» уже добавлен — он один на форму"}), 400
+    sync_public_forms_export()
     return jsonify({"id": new_id, "qtype": qtype, "label": label, "options_json": None, "position": next_pos})
 
 
@@ -3056,6 +3279,7 @@ def update_registration_desk_question(desk_id, question_id):
         "UPDATE registration_desk_questions SET label=?, updated_at=? WHERE id=?",
         (label, now_iso(), question_id),
     )
+    sync_public_forms_export()
     return jsonify({"status": "ok", "label": label})
 
 
@@ -3067,7 +3291,94 @@ def delete_registration_desk_question(desk_id, question_id):
     if not _registration_desk_owned_by_user(desk_id, user["id"]):
         return jsonify({"detail": "Мероприятие не найдено"}), 404
     query_db("DELETE FROM registration_desk_questions WHERE id=? AND desk_id=?", (question_id, desk_id))
+    sync_public_forms_export()
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/registration-desk/<int:desk_id>/publish", methods=["POST"])
+def publish_registration_desk(desk_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    row = query_db(
+        "SELECT id, event_date, publish_slug FROM registration_desks WHERE id=? AND user_id=?",
+        (desk_id, user["id"]), one=True,
+    )
+    if not row:
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    if nacl is None:
+        return jsonify({"detail": "Публикация формы недоступна на этом сервере (не установлен pynacl)"}), 500
+    if not row["event_date"]:
+        return jsonify({"detail": "Сначала укажите дату проведения"}), 400
+
+    if row["publish_slug"]:
+        slug = row["publish_slug"]
+    else:
+        q_count = query_db(
+            "SELECT COUNT(*) AS c FROM registration_desk_questions WHERE desk_id=?", (desk_id,), one=True,
+        )["c"]
+        if q_count == 0:
+            return jsonify({"detail": "Добавьте хотя бы один вопрос перед публикацией"}), 400
+        slug = _generate_unique_publish_slug(desk_id)
+
+    sync_public_forms_export()
+    return jsonify({"slug": slug, "url": f"{PUBLIC_FORM_BASE_URL}/{slug}"})
+
+
+@app.route("/api/registration-desk/<int:desk_id>/unpublish", methods=["POST"])
+def unpublish_registration_desk(desk_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    query_db("UPDATE registration_desks SET publish_slug=NULL, published_at=NULL WHERE id=?", (desk_id,))
+    sync_public_forms_export()
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/registration-desk/<int:desk_id>/republish", methods=["POST"])
+def republish_registration_desk(desk_id):
+    """"Обновить ссылку" — перегенерировать slug уже опубликованной формы
+    (старая ссылка перестаёт работать)."""
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    row = query_db(
+        "SELECT id, publish_slug FROM registration_desks WHERE id=? AND user_id=?",
+        (desk_id, user["id"]), one=True,
+    )
+    if not row:
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    if not row["publish_slug"]:
+        return jsonify({"detail": "Форма пока не опубликована"}), 400
+    slug = _generate_unique_publish_slug(desk_id)
+    sync_public_forms_export()
+    return jsonify({"slug": slug, "url": f"{PUBLIC_FORM_BASE_URL}/{slug}"})
+
+
+@app.route("/api/registration-desk/<int:desk_id>/responses", methods=["GET"])
+def list_registration_desk_responses(desk_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+
+    process_registration_drop_files()
+
+    rows = query_db(
+        "SELECT id, submitted_at, data_json FROM registration_desk_responses WHERE desk_id=? ORDER BY submitted_at, id",
+        (desk_id,),
+    )
+    responses = []
+    for r in rows:
+        try:
+            answers = json.loads(r["data_json"])
+        except (json.JSONDecodeError, TypeError):
+            answers = {}
+        responses.append({"id": r["id"], "submitted_at": r["submitted_at"], "answers": answers})
+    return jsonify(responses)
 
 # =====================================================
 #               END СТОЙКА РЕГИСТРАЦИИ

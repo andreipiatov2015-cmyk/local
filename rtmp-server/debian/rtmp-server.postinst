@@ -19,9 +19,24 @@ case "$1" in
 
     # Каталог для секретов сайта (SMTP и т.п.), НЕ отслеживаемых git —
     # см. debian/local/units/live-server.service (EnvironmentFile=).
-    # Только каталог, файл внутри оператор создаёт вручную сам.
+    # Только каталог, файл внутри оператор создаёт вручную сам. Сюда же
+    # live-server кладёт приватный ключ публичной формы регистрации
+    # (registration-form-private.key, создаётся самим сайтом при первом
+    # обращении) — каталог уже 0700, отдельных прав не требуется.
     mkdir -p /etc/rtmp-server
     chmod 700 /etc/rtmp-server
+
+    # --- Публичная форма регистрации: отдельный непривилегированный
+    # пользователь (см. debian/local/units/registration-public.service —
+    # зачем он нужен) и drop-директория для зашифрованных ответов.
+    # live-server (root) должен мочь прочитать и удалить файлы, которые
+    # создаёт regform, — для root это не требует вообще никаких особых
+    # прав (chmod/ACL), поэтому каталог просто владения regform с правами
+    # 0700 (только сам regform и root).
+    id -u regform >/dev/null 2>&1 || useradd -r -s /sbin/nologin regform
+    mkdir -p /var/lib/rtmp-server/registration-drop
+    chown regform:regform /var/lib/rtmp-server/registration-drop
+    chmod 700 /var/lib/rtmp-server/registration-drop
 
     VERSION=$(cat "$APP_DIR/VERSION")
     echo "RTMP-server $VERSION: проверка окружения..."
@@ -75,12 +90,12 @@ case "$1" in
     # venv на продакшене НЕТ — restart_astra.sh запускает сайт системным
     # /usr/bin/python3 напрямую (PYTHON_BIN=/usr/bin/python3). Ставим туда же,
     # а не в venv, которого реально не существует.
-    if python3 -c "import flask, pptx" >/dev/null 2>&1; then
+    if python3 -c "import flask, pptx, nacl" >/dev/null 2>&1; then
         echo "Python-зависимости сайта уже установлены — пропускаю."
     else
         echo "Устанавливаю Python-зависимости сайта в системный python3..."
-        if pip3 install --break-system-packages flask flask-cors requests openpyxl pandas schedule pillow python-pptx websockets gunicorn waitress >/dev/null 2>&1 \
-            || pip3 install flask flask-cors requests openpyxl pandas schedule pillow python-pptx websockets gunicorn waitress >/dev/null 2>&1; then
+        if pip3 install --break-system-packages flask flask-cors requests openpyxl pandas schedule pillow python-pptx websockets gunicorn waitress pynacl >/dev/null 2>&1 \
+            || pip3 install flask flask-cors requests openpyxl pandas schedule pillow python-pptx websockets gunicorn waitress pynacl >/dev/null 2>&1; then
             echo "Python-зависимости сайта установлены."
         else
             echo "ВНИМАНИЕ: pip3 install зависимостей сайта завершился с ошибкой — проверьте вручную." >&2
@@ -96,7 +111,7 @@ case "$1" in
 
     # --- systemd-юниты сайта: никогда не перезаписываем существующие молча ---
     mkdir -p "$UNITS_DST"
-    for unit in nginx-rtmp.service live-server.service reboot-server.service; do
+    for unit in nginx-rtmp.service live-server.service reboot-server.service registration-public.service; do
         if [ -f "$UNITS_DST/$unit" ]; then
             echo "Юнит $unit уже существует — оставляю как есть."
         else
@@ -114,7 +129,7 @@ case "$1" in
     cp "$UNITS_SRC/rtmp-server-hls-cleanup.timer" "$UNITS_DST/rtmp-server-hls-cleanup.timer"
 
     systemctl daemon-reload >/dev/null 2>&1 || true
-    for unit in live-server.service reboot-server.service rtmp-server-gui.service rtmp-server-hls-cleanup.timer; do
+    for unit in live-server.service reboot-server.service registration-public.service rtmp-server-gui.service rtmp-server-hls-cleanup.timer; do
         systemctl enable "$unit" >/dev/null 2>&1 || true
     done
     systemctl start rtmp-server-gui.service >/dev/null 2>&1 || true

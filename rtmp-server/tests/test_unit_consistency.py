@@ -40,6 +40,24 @@ class UnitFileConsistencyTests(unittest.TestCase):
         self.assertIn(C.REBOOT_SERVER_LOG, text)
         self.assertNotIn(".venv", text)
 
+    def test_registration_public_unit_matches_constants(self):
+        text = (UNITS_DIR / "registration-public.service").read_text()
+        self.assertIn(C.SYSTEM_PYTHON_BIN, text)
+        self.assertIn(C.REGISTRATION_PUBLIC_SCRIPT, text)
+        self.assertIn(C.REGISTRATION_PUBLIC_DIR, text)
+        self.assertIn(C.REGISTRATION_PUBLIC_LOG, text)
+        # В отличие от live-server/reboot-server (root) — этот процесс
+        # нарочно запущен от отдельного непривилегированного пользователя,
+        # см. сам юнит-файл и config/constants.py.
+        self.assertIn(f"User={C.REGISTRATION_PUBLIC_USER}", text)
+        self.assertNotIn(".venv", text)
+
+    def test_postinst_creates_registration_public_user_and_drop_dir(self):
+        text = (UNITS_DIR.parent.parent / "rtmp-server.postinst").read_text()
+        self.assertIn(C.REGISTRATION_PUBLIC_USER, text)
+        self.assertIn(C.REGISTRATION_DROP_DIR, text)
+        self.assertIn("pynacl", text)
+
     def test_postinst_references_same_unit_names_as_constants(self):
         text = (UNITS_DIR.parent.parent / "rtmp-server.postinst").read_text()
         for unit in C.ALL_MANAGED_UNITS:

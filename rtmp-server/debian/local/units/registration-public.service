@@ -1,0 +1,23 @@
+[Unit]
+Description=registration-public (Flask, порт 8086) — публичная форма регистрации
+After=network.target
+
+[Service]
+Type=simple
+# В ОТЛИЧИЕ от live-server/reboot-server (без User=, root) — этот процесс
+# принимает данные от кого угодно в открытом интернете (см. www/nginx.conf,
+# location под случайную ссылку), поэтому намеренно запущен от отдельного
+# непривилегированного пользователя без доступа к app.db и остальным
+# файлам сайта. Единственная связь с live-server — два файла в
+# REGISTRATION_PUBLIC_FORMS_EXPORT_FILE/REGISTRATION_DROP_DIR (см.
+# config/constants.py), оба созданы postinst заранее с нужными правами.
+User=regform
+WorkingDirectory=/var/www/registration-public
+ExecStart=/usr/bin/python3 /var/www/registration-public/server.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/registration-public.log
+StandardError=append:/var/log/registration-public.log
+
+[Install]
+WantedBy=multi-user.target
