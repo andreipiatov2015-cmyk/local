@@ -428,12 +428,34 @@ async function initDeskDetailPage() {
     }
   });
 
+  async function copyToClipboard(text) {
+    // navigator.clipboard доступен только в "безопасном контексте"
+    // (HTTPS или localhost) — админка сайта сейчас на обычном HTTP
+    // (:8082), поэтому современный Clipboard API там всегда недоступен
+    // (не ошибка сети — браузер сам запрещает). Резервный способ через
+    // скрытый textarea + document.execCommand('copy') работает и по HTTP.
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    if (!ok) throw new Error('execCommand(copy) failed');
+  }
+
   copyPublishLinkBtn?.addEventListener('click', async () => {
     try {
-      await navigator.clipboard.writeText(copyPublishLinkBtn.dataset.url || '');
+      await copyToClipboard(copyPublishLinkBtn.dataset.url || '');
       setStatus(publishStatus, 'Ссылка скопирована.', 'success');
     } catch {
-      setStatus(publishStatus, 'Не удалось скопировать — скопируйте ссылку вручную.', 'warning');
+      setStatus(publishStatus, 'Не удалось скопировать — скопируйте ссылку вручную (выделите текст выше).', 'warning');
     }
   });
 
