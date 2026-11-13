@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Стойка регистрации</title>
+  <link rel="stylesheet" href="/static/admin.css" />
+  <link rel="stylesheet" href="/static/registration_desk.css" />
+</head>
+<body class="tables-page">
+  {% import "_sidebar.html" as nav %}
+  {{ nav.render_sidebar("registration_desk") }}
+
+  <main class="content container tables-content">
+    <div class="desk-detail-header">
+      <a href="/registration-desk" class="btn btn-secondary">← К списку мероприятий</a>
+      <h1 class="page-title" id="deskTitle">Мероприятие</h1>
+    </div>
+
+    <section class="card page-card" id="settingsCard">
+      <h2 class="desk-section-title">Настройка мероприятия</h2>
+      <div class="form-field">
+        <label for="eventDateInput">Дата проведения</label>
+        <input type="date" id="eventDateInput">
+      </div>
+      <div class="row">
+        <button id="saveSettingsBtn" class="btn btn-primary" type="button">Сохранить</button>
+      </div>
+      <p id="settingsStatus" class="status status-muted"></p>
+    </section>
+
+    <section class="card page-card desk-builder" id="builderCard" hidden>
+      <h2 class="desk-section-title">Форма регистрации</h2>
+      <div class="desk-builder-layout">
+        <aside class="desk-picker">
+          <div class="desk-picker-title">Выберите вопрос</div>
+          <div class="desk-picker-grid" id="questionTypeGrid"></div>
+        </aside>
+        <div class="desk-canvas" id="questionCanvas">
+          <p class="hint">Пока нет вопросов — выберите тип слева, чтобы добавить первый.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const DESK_ID = {{ desk_id | tojson }};
+    const QUESTION_TYPES = {{ question_types | tojson }};
+  </script>
+  <script src="/static/layout.js"></script>
+  <script src="/static/registration_desk.js"></script>
+</body>
+</html>

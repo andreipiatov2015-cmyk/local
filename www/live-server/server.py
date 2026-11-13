@@ -118,6 +118,22 @@ STORAGE_ROOT = os.environ.get("STORAGE_ROOT", "/var/mount_point/nfv/contest_stor
 APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", os.path.join(BASE_DIR, "app_data")))
 RETENTION_DAYS = 60
 MAX_TABLES_PER_USER = 10
+MAX_REGISTRATION_DESKS_PER_USER = 30
+
+# Типы вопросов конструктора формы регистрации (вид и состав — по образцу
+# конструктора Яндекс.Форм). Ключ — то, что хранится в БД и шлётся в API;
+# значение — подпись кнопки в панели "Выберите вопрос".
+REGISTRATION_QUESTION_TYPES = {
+    "text": "Текст",
+    "yesno": "Да/Нет",
+    "file": "Файл",
+    "list": "Список",
+    "text_plain": "Текст без вопроса",
+    "date": "Дата",
+    "number": "Целое число",
+    "scale": "Оценка по шкале",
+    "series": "Серия вопросов",
+}
 DOWNLOAD_RETRIES = 3
 YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS = int(os.environ.get("YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS", "90000"))
 YANDEX_BROWSER_MIN_FILE_SIZE = int(os.environ.get("YANDEX_BROWSER_MIN_FILE_SIZE", "32"))
@@ -507,6 +523,34 @@ def init_db():
             feature_key TEXT PRIMARY KEY,
             description TEXT NOT NULL,
             deprecated_at TEXT NOT NULL
+        )
+    """)
+
+    # Стойка регистрации: отдельный список мероприятий (не путать ни с
+    # events — там настройки трансляции, ни с import_tables — там Excel-
+    # заявки) со своей формой регистрации, которую собирают вопрос за
+    # вопросом (аналог конструктора Яндекс.Форм).
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS registration_desks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            event_date TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS registration_desk_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            desk_id INTEGER NOT NULL,
+            qtype TEXT NOT NULL,
+            label TEXT NOT NULL,
+            options_json TEXT,
+            position INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         )
     """)
 
@@ -2791,6 +2835,203 @@ def create_table():
         (user["id"], title, ts, ts),
     )
     return jsonify({"status": "ok"})
+
+
+def insert_and_get_id(query, args):
+    """query_db() не отдаёт lastrowid — а он нужен сразу после создания
+    мероприятия в "Стойке регистрации", чтобы перейти на его страницу без
+    повторного запроса списка."""
+    con = sqlite3.connect(DB_FILE)
+    cur = con.execute(query, args)
+    con.commit()
+    new_id = cur.lastrowid
+    con.close()
+    return new_id
+
+
+# =====================================================
+#                 СТОЙКА РЕГИСТРАЦИИ
+# =====================================================
+# Отдельный список мероприятий под собственную форму регистрации (вопрос
+# за вопросом, как в конструкторе Яндекс.Форм — см. REGISTRATION_QUESTION_TYPES).
+# Не путать с events (настройки трансляции на /editor) и import_tables
+# (таблицы заявок из Excel) — это три независимых сущности.
+
+@app.route("/registration-desk")
+@login_required
+def registration_desk_page():
+    return render_template("registration_desk.html")
+
+
+@app.route("/registration-desk/<int:desk_id>")
+@login_required
+def registration_desk_detail_page(desk_id):
+    user = table_user_from_request()
+    if not user:
+        return redirect(url_for("login"))
+    row = query_db("SELECT id FROM registration_desks WHERE id=? AND user_id=?", (desk_id, user["id"]), one=True)
+    if not row:
+        abort(404)
+    return render_template("registration_desk_detail.html", desk_id=desk_id, question_types=REGISTRATION_QUESTION_TYPES)
+
+
+@app.route("/api/registration-desk", methods=["GET"])
+def list_registration_desks():
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    rows = query_db(
+        "SELECT id, title, event_date, created_at, updated_at FROM registration_desks WHERE user_id=? ORDER BY id DESC",
+        (user["id"],),
+    )
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/registration-desk", methods=["POST"])
+def create_registration_desk():
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    title = (request.form.get("title") or (request.get_json(silent=True) or {}).get("title") or "").strip()
+    if not title:
+        return jsonify({"detail": "Название обязательно"}), 400
+    cnt = query_db("SELECT COUNT(*) AS c FROM registration_desks WHERE user_id=?", (user["id"],), one=True)["c"]
+    if cnt >= MAX_REGISTRATION_DESKS_PER_USER:
+        return jsonify({"detail": f"Достигнут лимит {MAX_REGISTRATION_DESKS_PER_USER} мероприятий"}), 400
+    ts = now_iso()
+    new_id = insert_and_get_id(
+        "INSERT INTO registration_desks (user_id, title, event_date, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)",
+        (user["id"], title, ts, ts),
+    )
+    return jsonify({"id": new_id, "title": title, "event_date": None, "created_at": ts, "updated_at": ts})
+
+
+def _registration_desk_owned_by_user(desk_id, user_id):
+    return query_db("SELECT id FROM registration_desks WHERE id=? AND user_id=?", (desk_id, user_id), one=True) is not None
+
+
+@app.route("/api/registration-desk/<int:desk_id>", methods=["GET"])
+def get_registration_desk(desk_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    row = query_db(
+        "SELECT id, title, event_date, created_at, updated_at FROM registration_desks WHERE id=? AND user_id=?",
+        (desk_id, user["id"]), one=True,
+    )
+    if not row:
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    return jsonify(dict(row))
+
+
+@app.route("/api/registration-desk/<int:desk_id>", methods=["DELETE"])
+def delete_registration_desk(desk_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    query_db("DELETE FROM registration_desk_questions WHERE desk_id=?", (desk_id,))
+    query_db("DELETE FROM registration_desks WHERE id=?", (desk_id,))
+    return jsonify({"status": "ok"})
+
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.route("/api/registration-desk/<int:desk_id>/settings", methods=["POST"])
+def save_registration_desk_settings(desk_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    data = request.get_json(silent=True) or {}
+    event_date = (data.get("event_date") or "").strip()
+    if not event_date or not _DATE_RE.match(event_date):
+        return jsonify({"detail": "Укажите дату проведения в формате ГГГГ-ММ-ДД"}), 400
+    query_db(
+        "UPDATE registration_desks SET event_date=?, updated_at=? WHERE id=?",
+        (event_date, now_iso(), desk_id),
+    )
+    return jsonify({"status": "ok", "event_date": event_date})
+
+
+@app.route("/api/registration-desk/<int:desk_id>/questions", methods=["GET"])
+def list_registration_desk_questions(desk_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    rows = query_db(
+        "SELECT id, qtype, label, options_json, position FROM registration_desk_questions WHERE desk_id=? ORDER BY position, id",
+        (desk_id,),
+    )
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/registration-desk/<int:desk_id>/questions", methods=["POST"])
+def create_registration_desk_question(desk_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    data = request.get_json(silent=True) or {}
+    qtype = (data.get("qtype") or "").strip()
+    if qtype not in REGISTRATION_QUESTION_TYPES:
+        return jsonify({"detail": "Неизвестный тип вопроса"}), 400
+    label = (data.get("label") or "").strip() or REGISTRATION_QUESTION_TYPES[qtype]
+    next_pos = query_db(
+        "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM registration_desk_questions WHERE desk_id=?",
+        (desk_id,), one=True,
+    )["p"]
+    ts = now_iso()
+    new_id = insert_and_get_id(
+        "INSERT INTO registration_desk_questions (desk_id, qtype, label, options_json, position, created_at, updated_at) "
+        "VALUES (?, ?, ?, NULL, ?, ?, ?)",
+        (desk_id, qtype, label, next_pos, ts, ts),
+    )
+    return jsonify({"id": new_id, "qtype": qtype, "label": label, "options_json": None, "position": next_pos})
+
+
+@app.route("/api/registration-desk/<int:desk_id>/questions/<int:question_id>", methods=["PUT"])
+def update_registration_desk_question(desk_id, question_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    row = query_db(
+        "SELECT id FROM registration_desk_questions WHERE id=? AND desk_id=?", (question_id, desk_id), one=True,
+    )
+    if not row:
+        return jsonify({"detail": "Вопрос не найден"}), 404
+    data = request.get_json(silent=True) or {}
+    label = (data.get("label") or "").strip()
+    if not label:
+        return jsonify({"detail": "Текст вопроса не может быть пустым"}), 400
+    query_db(
+        "UPDATE registration_desk_questions SET label=?, updated_at=? WHERE id=?",
+        (label, now_iso(), question_id),
+    )
+    return jsonify({"status": "ok", "label": label})
+
+
+@app.route("/api/registration-desk/<int:desk_id>/questions/<int:question_id>", methods=["DELETE"])
+def delete_registration_desk_question(desk_id, question_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    query_db("DELETE FROM registration_desk_questions WHERE id=? AND desk_id=?", (question_id, desk_id))
+    return jsonify({"status": "ok"})
+
+# =====================================================
+#               END СТОЙКА РЕГИСТРАЦИИ
+# =====================================================
 
 
 def apply_cookies_to_requests_session(req_session, cookies):
