@@ -1,8 +1,9 @@
 """Таблица управляемых сервисов — строится ТОЛЬКО из config.constants.
 
-Ровно 4 сервиса (было 9 в старом приложении, включая весь VNC-стек,
-который признан неактуальным и полностью убран). Ни один порт/путь
-здесь не хардкодится повторно.
+Ровно 5 сервисов (было 9 в старом приложении, включая весь VNC-стек,
+который признан неактуальным и полностью убран; registration_public
+добавлен для изолированной публичной формы регистрации). Ни один
+порт/путь здесь не хардкодится повторно.
 """
 
 from __future__ import annotations
@@ -30,6 +31,12 @@ SERVICES: dict[str, ServiceHandle] = {
         display_name="reboot-server",
         unit=C.UNIT_REBOOT_SERVER,
         port=C.REBOOT_SERVER_PORT,
+    ),
+    "registration_public": SystemdService(
+        name="registration_public",
+        display_name="registration-public (публичная форма регистрации)",
+        unit=C.UNIT_REGISTRATION_PUBLIC,
+        port=C.REGISTRATION_PUBLIC_PORT,
     ),
     "vk_pusher": ProcessService(
         name="vk_pusher",

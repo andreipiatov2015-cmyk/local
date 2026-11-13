@@ -44,16 +44,19 @@ def _extractall_compat(tar: tarfile.TarFile, path: Path) -> None:
 @dataclass
 class SiteUpdateSource:
     """Источник новой версии кода сайта: директория с подпапками
-    live-server/ и reboot/, в том же виде, что и репозиторий www/."""
+    live-server/, reboot/ и registration-public/, в том же виде, что и
+    репозиторий www/."""
 
     live_server_src: Path
     reboot_src: Path
+    registration_public_src: Path
 
 
 def source_from_extracted_dir(root: Path) -> SiteUpdateSource:
     return SiteUpdateSource(
         live_server_src=root / "live-server",
         reboot_src=root / "reboot",
+        registration_public_src=root / "registration-public",
     )
 
 
@@ -168,32 +171,39 @@ def _restore(dest: Path, backup_tar: Path) -> None:
 def apply(source: SiteUpdateSource) -> UpdateResult:
     live_server_dir = Path(C.LIVE_SERVER_DIR)
     reboot_dir = Path(C.REBOOT_SERVER_DIR)
+    registration_public_dir = Path(C.REGISTRATION_PUBLIC_DIR)
 
     with tempfile.TemporaryDirectory(prefix="rtmp-server-site-backup-") as backup_root:
         backup_root_path = Path(backup_root)
         live_backup = backup_root_path / "live-server.tar"
         reboot_backup = backup_root_path / "reboot.tar"
+        registration_public_backup = backup_root_path / "registration-public.tar"
 
         logger.info("Снимаю бэкап перед обновлением сайта")
         _backup(live_server_dir, live_backup)
         _backup(reboot_dir, reboot_backup)
+        _backup(registration_public_dir, registration_public_backup)
 
         try:
             _rsync(source.live_server_src, live_server_dir)
             _rsync(source.reboot_src, reboot_dir)
+            _rsync(source.registration_public_src, registration_public_dir)
         except RuntimeError as exc:
             logger.error("Копирование не удалось, отката не требуется (запись не начата): %s", exc)
             return UpdateResult(applied=False, message=str(exc))
 
         get_service("live_server").restart()
         get_service("reboot_server").restart()
+        get_service("registration_public").restart()
 
         if not _smoke_test_ok():
             logger.warning("Health-check после обновления сайта не прошёл — откатываю")
             _restore(live_server_dir, live_backup)
             _restore(reboot_dir, reboot_backup)
+            _restore(registration_public_dir, registration_public_backup)
             get_service("live_server").restart()
             get_service("reboot_server").restart()
+            get_service("registration_public").restart()
             return UpdateResult(
                 applied=False,
                 message="Health-check после обновления не прошёл, изменения откачены",

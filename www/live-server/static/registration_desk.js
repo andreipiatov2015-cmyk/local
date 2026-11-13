@@ -343,6 +343,135 @@ async function initDeskDetailPage() {
     }
   });
 
+  // ----------------- Вкладки "Конструктор" / "Ответы" -----------------
+
+  const tabButtons = document.querySelectorAll('.desk-tab');
+  const tabPanels = {
+    constructor: document.getElementById('constructorPanel'),
+    responses: document.getElementById('responsesPanel'),
+  };
+
+  tabButtons.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      tabButtons.forEach((t) => t.classList.toggle('active', t === tab));
+      Object.entries(tabPanels).forEach(([key, el]) => {
+        if (el) el.hidden = key !== tab.dataset.tab;
+      });
+      if (tab.dataset.tab === 'responses') loadResponses();
+    });
+  });
+
+  // ----------------- Публикация формы -----------------
+
+  const publishInfo = document.getElementById('publishInfo');
+  const publishBtn = document.getElementById('publishBtn');
+  const copyPublishLinkBtn = document.getElementById('copyPublishLinkBtn');
+  const republishBtn = document.getElementById('republishBtn');
+  const unpublishBtn = document.getElementById('unpublishBtn');
+  const publishStatus = document.getElementById('publishStatus');
+
+  function renderPublishInfo(desk) {
+    if (desk.publish_url) {
+      publishInfo.innerHTML = `Форма опубликована: <a href="${esc(desk.publish_url)}" target="_blank" rel="noopener">${esc(desk.publish_url)}</a>`;
+      publishBtn.hidden = true;
+      copyPublishLinkBtn.hidden = false;
+      republishBtn.hidden = false;
+      unpublishBtn.hidden = false;
+      copyPublishLinkBtn.dataset.url = desk.publish_url;
+    } else {
+      publishInfo.textContent = 'Форма не опубликована.';
+      publishBtn.hidden = false;
+      copyPublishLinkBtn.hidden = true;
+      republishBtn.hidden = true;
+      unpublishBtn.hidden = true;
+    }
+  }
+
+  async function refreshPublishInfo() {
+    const desk = await apiGet(`/api/registration-desk/${DESK_ID}`);
+    renderPublishInfo(desk);
+    return desk;
+  }
+
+  publishBtn?.addEventListener('click', async () => {
+    try {
+      publishBtn.disabled = true;
+      await apiSendJson(`/api/registration-desk/${DESK_ID}/publish`, 'POST', {});
+      await refreshPublishInfo();
+      setStatus(publishStatus, 'Форма опубликована.', 'success');
+    } catch (e) {
+      setStatus(publishStatus, `Ошибка публикации: ${e.message}`, 'error');
+    } finally {
+      publishBtn.disabled = false;
+    }
+  });
+
+  unpublishBtn?.addEventListener('click', async () => {
+    if (!confirm('Снять форму с публикации? Ссылка перестанет работать.')) return;
+    try {
+      await apiSendJson(`/api/registration-desk/${DESK_ID}/unpublish`, 'POST', {});
+      await refreshPublishInfo();
+      setStatus(publishStatus, 'Форма снята с публикации.', 'muted');
+    } catch (e) {
+      setStatus(publishStatus, `Ошибка: ${e.message}`, 'error');
+    }
+  });
+
+  republishBtn?.addEventListener('click', async () => {
+    if (!confirm('Старая ссылка перестанет работать, появится новая. Продолжить?')) return;
+    try {
+      await apiSendJson(`/api/registration-desk/${DESK_ID}/republish`, 'POST', {});
+      await refreshPublishInfo();
+      setStatus(publishStatus, 'Ссылка обновлена.', 'success');
+    } catch (e) {
+      setStatus(publishStatus, `Ошибка: ${e.message}`, 'error');
+    }
+  });
+
+  copyPublishLinkBtn?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(copyPublishLinkBtn.dataset.url || '');
+      setStatus(publishStatus, 'Ссылка скопирована.', 'success');
+    } catch {
+      setStatus(publishStatus, 'Не удалось скопировать — скопируйте ссылку вручную.', 'warning');
+    }
+  });
+
+  // ----------------- Ответы -----------------
+
+  function formatSubmittedAt(value) {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? (value || '') : d.toLocaleString('ru-RU');
+  }
+
+  async function loadResponses() {
+    const responsesStatus = document.getElementById('responsesStatus');
+    const headRow = document.getElementById('responsesHeadRow');
+    const body = document.getElementById('responsesBody');
+    try {
+      const [questions, responses] = await Promise.all([
+        apiGet(`/api/registration-desk/${DESK_ID}/questions`),
+        apiGet(`/api/registration-desk/${DESK_ID}/responses`),
+      ]);
+      const cols = questions.filter((q) => q.qtype !== AUTO_NUMBER_QTYPE);
+      headRow.innerHTML = `<th>№</th>${cols.map((q) => `<th>${esc(q.label)}</th>`).join('')}<th>Время отправки</th>`;
+
+      if (!responses.length) {
+        body.innerHTML = `<tr><td colspan="${cols.length + 2}" class="hint">Ответов пока нет.</td></tr>`;
+      } else {
+        body.innerHTML = responses.map((r, idx) => {
+          const cells = cols.map((q) => `<td>${esc(r.answers[q.qtype] ?? '')}</td>`).join('');
+          return `<tr><td>${idx + 1}</td>${cells}<td>${esc(formatSubmittedAt(r.submitted_at))}</td></tr>`;
+        }).join('');
+      }
+      setStatus(responsesStatus, '', 'muted');
+    } catch (e) {
+      setStatus(responsesStatus, `Ошибка загрузки ответов: ${e.message}`, 'error');
+    }
+  }
+
+  document.getElementById('refreshResponsesBtn')?.addEventListener('click', loadResponses);
+
   renderTypeGrid();
 
   try {
@@ -353,6 +482,7 @@ async function initDeskDetailPage() {
       dateInput.value = desk.event_date;
       showConfiguredState(true);
       await loadQuestions();
+      renderPublishInfo(desk);
     }
   } catch (e) {
     setStatus(settingsStatus, `Ошибка загрузки: ${e.message}`, 'error');

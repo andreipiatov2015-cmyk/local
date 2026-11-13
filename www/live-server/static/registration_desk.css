@@ -206,3 +206,85 @@
     position: static;
   }
 }
+
+/* Вкладки "Конструктор" / "Ответы" — по образцу верхних вкладок в шапке
+   Яндекс.Форм (см. план curried-weaving-hummingbird.md). */
+
+.desk-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 20px;
+}
+
+.desk-tab {
+  border: none;
+  background: transparent;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.desk-tab:hover {
+  color: #0f172a;
+}
+
+.desk-tab.active {
+  color: #4f8cff;
+  border-bottom-color: #4f8cff;
+}
+
+/* Публикация формы */
+
+.desk-publish-bar {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+
+.desk-publish-bar a {
+  color: #4f8cff;
+  overflow-wrap: anywhere;
+}
+
+/* admin.css задаёт .btn { display: inline-flex } author-стилем, который
+   побеждает [hidden] из UA-стилей даже при равной специфичности (origin
+   решает раньше specificity) — без этого правила кнопки публикации с
+   hidden оставались видимыми. */
+.desk-publish-bar .btn[hidden] {
+  display: none;
+}
+
+/* Вкладка "Ответы" — таблица может оказаться шире карточки (много
+   вопросов), поэтому скролл кладём на обёртку, а не даём таблице вылезти
+   за границу страницы (та же причина, что у .tables-page * выше). */
+
+.desk-responses-wrap {
+  overflow-x: auto;
+}
+
+.desk-responses-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.desk-responses-table th,
+.desk-responses-table td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 10px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.desk-responses-table th {
+  color: #64748b;
+  font-weight: 600;
+  background: #f8fafc;
+}

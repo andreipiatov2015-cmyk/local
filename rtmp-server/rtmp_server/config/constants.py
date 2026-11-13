@@ -30,6 +30,13 @@ HTTP_PROXY_PORT = 8082
 LIVE_SERVER_PORT = 8083
 REBOOT_SERVER_PORT = 8084
 
+# Публичная форма регистрации (www/registration-public) — намеренно
+# ИЗОЛИРОВАННЫЙ от live-server процесс: свой системный пользователь
+# (REGISTRATION_PUBLIC_USER), без доступа к app.db. Наружу торчит через
+# www/nginx.conf (location под случайную ссылку), сам слушает только
+# 127.0.0.1, как и остальные backend-процессы выше.
+REGISTRATION_PUBLIC_PORT = 8086
+
 # ---------------------------------------------------------------------------
 # Пути сайта (продакшен-раскладка — НЕ переносится при установке, см. adopt.py)
 # ---------------------------------------------------------------------------
@@ -37,10 +44,12 @@ REBOOT_SERVER_PORT = 8084
 SITE_ROOT = "/var/www"
 LIVE_SERVER_DIR = f"{SITE_ROOT}/live-server"
 REBOOT_SERVER_DIR = f"{SITE_ROOT}/reboot"
+REGISTRATION_PUBLIC_DIR = f"{SITE_ROOT}/registration-public"
 HLS_DIR = f"{SITE_ROOT}/hls"
 
 LIVE_SERVER_SCRIPT = f"{LIVE_SERVER_DIR}/server.py"
 REBOOT_SERVER_SCRIPT = f"{REBOOT_SERVER_DIR}/server.py"
+REGISTRATION_PUBLIC_SCRIPT = f"{REGISTRATION_PUBLIC_DIR}/server.py"
 VK_PUSHER_SCRIPT = f"{LIVE_SERVER_DIR}/start_vk.py"
 
 # Настройки VK/OK-пуша — читаются/пишутся напрямую вкладкой "Трансляция"
@@ -69,6 +78,24 @@ LEGACY_NGINX_RTMP_INSTALL_SCRIPT = f"{SITE_ROOT}/install-nginx-rtmp.sh"
 # в первой версии этого файла).
 LIVE_SERVER_LOG = "/var/log/live-server.log"
 REBOOT_SERVER_LOG = "/var/log/reboot-server.log"
+REGISTRATION_PUBLIC_LOG = "/var/log/registration-public.log"
+
+# ---------------------------------------------------------------------------
+# Публичная форма регистрации — изоляция от live-server (см. план
+# curried-weaving-hummingbird.md). Единственная связь между процессами —
+# два файла ниже: REGISTRATION_PUBLIC_FORMS_EXPORT_FILE пишет только
+# live-server (запущен от root, см. UNIT_LIVE_SERVER) и читает только
+# registration-public; REGISTRATION_DROP_DIR — наоборот, пишет только
+# registration-public, читает/удаляет только live-server. Ни БД, ни HTTP
+# между процессами нет. Отдельный системный пользователь нужен специально
+# ради того, чтобы даже полная компрометация этого процесса (он принимает
+# данные от кого угодно в интернете) не давала доступа к app.db и остальным
+# файлам сайта — root (live-server) может прочитать/удалить файлы
+# REGISTRATION_PUBLIC_USER независимо от прав на них, обратное неверно.
+REGISTRATION_PUBLIC_USER = "regform"
+REGISTRATION_DROP_DIR = "/var/lib/rtmp-server/registration-drop"
+REGISTRATION_PUBLIC_FORMS_EXPORT_FILE = "/var/lib/rtmp-server/registration-public-forms.json"
+REGISTRATION_FORM_PRIVATE_KEY_FILE = "/etc/rtmp-server/registration-form-private.key"
 
 # ---------------------------------------------------------------------------
 # Кастомная сборка nginx (Astra не поставляет nginx с RTMP-модулем)
@@ -126,6 +153,7 @@ LEGACY_APP_PROCESS_PATTERN = "astra_monitor.py"
 UNIT_NGINX_RTMP = "nginx-rtmp.service"
 UNIT_LIVE_SERVER = "live-server.service"
 UNIT_REBOOT_SERVER = "reboot-server.service"
+UNIT_REGISTRATION_PUBLIC = "registration-public.service"
 
 # Имя юнита reboot-сервера в старых установках (adopt.py принимает его
 # как есть вместо разрушительного переименования).
@@ -136,7 +164,7 @@ LEGACY_UNIT_REBOOT_SERVER = "reboot.service"
 # а не как постоянный демон. Управляется через pgrep по этому паттерну.
 VK_PUSHER_PROCESS_PATTERN = "start_vk.py"
 
-ALL_MANAGED_UNITS = (UNIT_NGINX_RTMP, UNIT_LIVE_SERVER, UNIT_REBOOT_SERVER)
+ALL_MANAGED_UNITS = (UNIT_NGINX_RTMP, UNIT_LIVE_SERVER, UNIT_REBOOT_SERVER, UNIT_REGISTRATION_PUBLIC)
 
 # ---------------------------------------------------------------------------
 # GitHub — публичный репозиторий, откуда постятся релизы с зависимостями
@@ -157,6 +185,10 @@ HEALTH_CHECK_ENDPOINTS = {
     "nginx (public proxy)": (f"http://127.0.0.1:{HTTP_PROXY_PORT}/", 200),
     "live-server (direct)": (f"http://127.0.0.1:{LIVE_SERVER_PORT}/", None),
     "reboot-server (direct)": (f"http://127.0.0.1:{REBOOT_SERVER_PORT}/", None),
+    # GET / на registration-public всегда 404 (роут там только "/<slug>"),
+    # но это и значит "процесс жив, слушает порт" — см. check_site_health,
+    # HTTPError там тоже считается reachable=True.
+    "registration-public (direct)": (f"http://127.0.0.1:{REGISTRATION_PUBLIC_PORT}/", None),
 }
 
 # ---------------------------------------------------------------------------

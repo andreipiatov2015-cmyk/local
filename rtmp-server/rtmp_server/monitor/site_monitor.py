@@ -65,6 +65,7 @@ def check_site_layout() -> list[SiteComponent]:
     paths = {
         "live-server": C.LIVE_SERVER_SCRIPT,
         "reboot-server": C.REBOOT_SERVER_SCRIPT,
+        "registration-public": C.REGISTRATION_PUBLIC_SCRIPT,
         "HLS directory": C.HLS_DIR,
         "nginx config": C.NGINX_CONF,
     }

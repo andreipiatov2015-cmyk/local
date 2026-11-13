@@ -31,14 +31,47 @@
     </section>
 
     <section class="card page-card desk-builder" id="builderCard" hidden>
-      <h2 class="desk-section-title">Форма регистрации</h2>
-      <div class="desk-builder-layout">
-        <aside class="desk-picker">
-          <div class="desk-picker-title">Выберите вопрос</div>
-          <div class="desk-picker-grid" id="questionTypeGrid"></div>
-        </aside>
-        <div class="desk-canvas" id="questionCanvas">
-          <p class="hint">Пока нет вопросов — выберите тип слева, чтобы добавить первый.</p>
+      <div class="desk-tabs" role="tablist">
+        <button class="desk-tab active" data-tab="constructor" type="button" role="tab">Конструктор</button>
+        <button class="desk-tab" data-tab="responses" type="button" role="tab">Ответы</button>
+      </div>
+
+      <div class="desk-tab-panel" id="constructorPanel">
+        <div class="desk-publish-bar">
+          <div class="row wrap" style="justify-content: space-between; align-items: flex-start;">
+            <div id="publishInfo" class="hint">Форма не опубликована.</div>
+            <div class="row wrap">
+              <button id="publishBtn" class="btn btn-primary" type="button">Опубликовать</button>
+              <button id="copyPublishLinkBtn" class="btn btn-secondary" type="button" hidden>Скопировать ссылку</button>
+              <button id="republishBtn" class="btn btn-secondary" type="button" hidden>Обновить ссылку</button>
+              <button id="unpublishBtn" class="btn btn-danger" type="button" hidden>Снять с публикации</button>
+            </div>
+          </div>
+          <p id="publishStatus" class="status status-muted"></p>
+        </div>
+
+        <h2 class="desk-section-title">Форма регистрации</h2>
+        <div class="desk-builder-layout">
+          <aside class="desk-picker">
+            <div class="desk-picker-title">Выберите вопрос</div>
+            <div class="desk-picker-grid" id="questionTypeGrid"></div>
+          </aside>
+          <div class="desk-canvas" id="questionCanvas">
+            <p class="hint">Пока нет вопросов — выберите тип слева, чтобы добавить первый.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="desk-tab-panel" id="responsesPanel" hidden>
+        <div class="row wrap" style="margin-bottom: 12px;">
+          <button id="refreshResponsesBtn" class="btn btn-secondary" type="button">Обновить</button>
+        </div>
+        <p id="responsesStatus" class="status status-muted"></p>
+        <div class="desk-responses-wrap">
+          <table class="desk-responses-table" id="responsesTable">
+            <thead><tr id="responsesHeadRow"></tr></thead>
+            <tbody id="responsesBody"></tbody>
+          </table>
         </div>
       </div>
     </section>
