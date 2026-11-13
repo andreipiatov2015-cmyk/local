@@ -120,20 +120,25 @@ RETENTION_DAYS = 60
 MAX_TABLES_PER_USER = 10
 MAX_REGISTRATION_DESKS_PER_USER = 30
 
-# Типы вопросов конструктора формы регистрации (вид и состав — по образцу
-# конструктора Яндекс.Форм). Ключ — то, что хранится в БД и шлётся в API;
-# значение — подпись кнопки в панели "Выберите вопрос".
+# Типы блоков конструктора формы регистрации. Ключ — то, что хранится в БД
+# и шлётся в API; значение — подпись кнопки в панели "Выберите вопрос".
+# Это стандартный набор полей регистрации участника/коллектива (вместо
+# универсального набора в духе Яндекс.Форм, который был здесь раньше) —
+# повторяется от мероприятия к мероприятию, поэтому зафиксирован здесь, а
+# не придумывается оператором каждый раз заново.
 REGISTRATION_QUESTION_TYPES = {
-    "text": "Текст",
-    "yesno": "Да/Нет",
-    "file": "Файл",
-    "list": "Список",
-    "text_plain": "Текст без вопроса",
-    "date": "Дата",
-    "number": "Целое число",
-    "scale": "Оценка по шкале",
-    "series": "Серия вопросов",
+    "auto_number": "№",
+    "territory": "Территория/учреждение",
+    "team_name": "Название коллектива/ участник",
+    "people_count": "Количество человек",
+    "supervisor": "Руководитель/ Фамилия, имя, отчество (при наличии) лица, прошедшего вводный инструктаж по ОТ",
+    "department": "Наименование подразделения, в которое направляется инструктируемый",
 }
+# "№" — порядковый номер записи, присваивается автоматически и не
+# показывается участнику при заполнении (не то, что оператор подписывает
+# сам, в отличие от остальных блоков) — поэтому не переименовывается и
+# добавляется не больше одного раза на форму.
+REGISTRATION_AUTO_NUMBER_QTYPE = "auto_number"
 DOWNLOAD_RETRIES = 3
 YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS = int(os.environ.get("YANDEX_BROWSER_DOWNLOAD_TIMEOUT_MS", "90000"))
 YANDEX_BROWSER_MIN_FILE_SIZE = int(os.environ.get("YANDEX_BROWSER_MIN_FILE_SIZE", "32"))
@@ -552,6 +557,18 @@ def init_db():
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
+    """)
+
+    # "Один блок auto_number на форму" — проверка в create_registration_desk_question
+    # смотрит "уже есть такой?" ДО вставки, а это две отдельные операции с БД:
+    # при двойном клике/параллельных запросах обе могут пройти проверку раньше,
+    # чем успеет закоммититься первая вставка, и блоков окажется два. Частичный
+    # уникальный индекс закрывает это на уровне БД — гонка упадёт в
+    # IntegrityError независимо от того, что успела проверить сама проверка.
+    cur.execute(f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_registration_desk_one_auto_number
+        ON registration_desk_questions (desk_id)
+        WHERE qtype = '{REGISTRATION_AUTO_NUMBER_QTYPE}'
     """)
 
     cur.execute(
@@ -2842,11 +2859,12 @@ def insert_and_get_id(query, args):
     мероприятия в "Стойке регистрации", чтобы перейти на его страницу без
     повторного запроса списка."""
     con = sqlite3.connect(DB_FILE)
-    cur = con.execute(query, args)
-    con.commit()
-    new_id = cur.lastrowid
-    con.close()
-    return new_id
+    try:
+        cur = con.execute(query, args)
+        con.commit()
+        return cur.lastrowid
+    finally:
+        con.close()
 
 
 # =====================================================
@@ -2872,7 +2890,12 @@ def registration_desk_detail_page(desk_id):
     row = query_db("SELECT id FROM registration_desks WHERE id=? AND user_id=?", (desk_id, user["id"]), one=True)
     if not row:
         abort(404)
-    return render_template("registration_desk_detail.html", desk_id=desk_id, question_types=REGISTRATION_QUESTION_TYPES)
+    return render_template(
+        "registration_desk_detail.html",
+        desk_id=desk_id,
+        question_types=REGISTRATION_QUESTION_TYPES,
+        auto_number_qtype=REGISTRATION_AUTO_NUMBER_QTYPE,
+    )
 
 
 @app.route("/api/registration-desk", methods=["GET"])
@@ -2982,17 +3005,32 @@ def create_registration_desk_question(desk_id):
     qtype = (data.get("qtype") or "").strip()
     if qtype not in REGISTRATION_QUESTION_TYPES:
         return jsonify({"detail": "Неизвестный тип вопроса"}), 400
-    label = (data.get("label") or "").strip() or REGISTRATION_QUESTION_TYPES[qtype]
+    if qtype == REGISTRATION_AUTO_NUMBER_QTYPE:
+        exists = query_db(
+            "SELECT id FROM registration_desk_questions WHERE desk_id=? AND qtype=?",
+            (desk_id, REGISTRATION_AUTO_NUMBER_QTYPE), one=True,
+        )
+        if exists:
+            return jsonify({"detail": "Блок «№» уже добавлен — он один на форму"}), 400
+        label = REGISTRATION_QUESTION_TYPES[qtype]
+    else:
+        label = (data.get("label") or "").strip() or REGISTRATION_QUESTION_TYPES[qtype]
     next_pos = query_db(
         "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM registration_desk_questions WHERE desk_id=?",
         (desk_id,), one=True,
     )["p"]
     ts = now_iso()
-    new_id = insert_and_get_id(
-        "INSERT INTO registration_desk_questions (desk_id, qtype, label, options_json, position, created_at, updated_at) "
-        "VALUES (?, ?, ?, NULL, ?, ?, ?)",
-        (desk_id, qtype, label, next_pos, ts, ts),
-    )
+    try:
+        new_id = insert_and_get_id(
+            "INSERT INTO registration_desk_questions (desk_id, qtype, label, options_json, position, created_at, updated_at) "
+            "VALUES (?, ?, ?, NULL, ?, ?, ?)",
+            (desk_id, qtype, label, next_pos, ts, ts),
+        )
+    except sqlite3.IntegrityError:
+        # Частичный уникальный индекс idx_registration_desk_one_auto_number —
+        # сюда попадаем, если два запроса одновременно проскочили проверку
+        # "уже есть такой?" выше до того, как один из них закоммитился.
+        return jsonify({"detail": "Блок «№» уже добавлен — он один на форму"}), 400
     return jsonify({"id": new_id, "qtype": qtype, "label": label, "options_json": None, "position": next_pos})
 
 
@@ -3004,10 +3042,12 @@ def update_registration_desk_question(desk_id, question_id):
     if not _registration_desk_owned_by_user(desk_id, user["id"]):
         return jsonify({"detail": "Мероприятие не найдено"}), 404
     row = query_db(
-        "SELECT id FROM registration_desk_questions WHERE id=? AND desk_id=?", (question_id, desk_id), one=True,
+        "SELECT id, qtype FROM registration_desk_questions WHERE id=? AND desk_id=?", (question_id, desk_id), one=True,
     )
     if not row:
         return jsonify({"detail": "Вопрос не найден"}), 404
+    if row["qtype"] == REGISTRATION_AUTO_NUMBER_QTYPE:
+        return jsonify({"detail": "Блок «№» присваивается автоматически, его нельзя переименовать"}), 400
     data = request.get_json(silent=True) or {}
     label = (data.get("label") or "").strip()
     if not label:
