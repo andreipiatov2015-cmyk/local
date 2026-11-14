@@ -3,6 +3,7 @@ import json
 import os
 import io
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 import sqlite3
 import hashlib
@@ -482,7 +483,11 @@ def init_table_header_tags():
     app.logger.info("[table_tags] loaded tags=%s aliases=%s from %s", len(MAPPING_FIELDS), sum(len(v) for v in HEADER_ALIASES.values()), TABLE_HEADER_TAGS_FILE)
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+# 587 (STARTTLS) — транспорт, которым реально пользуемся (Unisender Go и
+# большинство современных релеев). 465 (неявный SSL) по-прежнему
+# поддерживается ниже в send_email(), если его явно укажут в SMTP_PORT —
+# на случай возврата к другому провайдеру без правки кода.
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", "noreply@example.com")
@@ -917,9 +922,22 @@ def send_email(to_email, subject, body):
     msg["To"] = to_email
 
     try:
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
+        if SMTP_PORT == 465:
+            # Неявный SSL — старый транспорт (например, Яндекс), оставлен
+            # для обратной совместимости, если когда-нибудь вернутся к нему.
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
+        else:
+            # STARTTLS (порт 587) — транспорт Unisender Go: соединение
+            # начинается в открытом виде и шифруется командой STARTTLS,
+            # в отличие от неявного SSL выше.
+            tls_context = ssl.create_default_context()
+            tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                server.starttls(context=tls_context)
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
     except Exception as exc:
         # Логируем traceback целиком для диагностики проблем SMTP.
         app.logger.error(
