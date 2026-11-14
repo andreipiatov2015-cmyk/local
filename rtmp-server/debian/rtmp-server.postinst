@@ -75,6 +75,46 @@ case "$1" in
                 echo "$VERSION" > "$NGINX_MARKER"
                 id -u nginx >/dev/null 2>&1 || useradd -r -s /sbin/nologin nginx
                 echo "nginx+RTMP установлен в /usr/local/nginx."
+
+                # Автоматический перезапуск нового бинарника — по прямому
+                # запросу владельца (обновляет пакет только тогда, когда
+                # сайтом и сервером никто не пользуется, так что обрыв
+                # RTMP-трансляции на несколько секунд допустим). ВАЖНО:
+                # без этого новый бинарник просто лежит на диске, а старый
+                # процесс продолжает работать в памяти — именно так
+                # обнаружилась поломка 1.0.23 (новый бинарник не запускался
+                # из-за отсутствующей системной библиотеки, но это
+                # вскрылось только при РУЧНОЙ попытке reload много позже).
+                # nginx -t ПЕРЕД остановкой старого процесса — если новый
+                # бинарник или конфиг не в порядке, старый рабочий процесс
+                # не трогаем вообще, только предупреждаем.
+                NGINX_TEST_LOG=$(mktemp)
+                if /usr/local/nginx/sbin/nginx -t >"$NGINX_TEST_LOG" 2>&1; then
+                    if [ "$(sh "$APP_DIR/lib/check_nginx_running.sh")" = "true" ]; then
+                        echo "Перезапускаю nginx, чтобы применить новый бинарник..."
+                        if systemctl is-active nginx-rtmp.service >/dev/null 2>&1; then
+                            systemctl restart nginx-rtmp.service >/dev/null 2>&1 \
+                                && echo "nginx-rtmp.service перезапущен." \
+                                || echo "ВНИМАНИЕ: не удалось перезапустить nginx-rtmp.service — перезапустите вручную." >&2
+                        else
+                            # "Старый способ" (не через systemd) — сам nginx
+                            # умеет остановиться по своему pid-файлу и
+                            # запуститься заново, независимо от того, чем
+                            # именно он был изначально запущен.
+                            /usr/local/nginx/sbin/nginx -s stop >/dev/null 2>&1 || true
+                            sleep 1
+                            if /usr/local/nginx/sbin/nginx; then
+                                echo "nginx перезапущен с новым бинарником."
+                            else
+                                echo "ВНИМАНИЕ: nginx не запустился после остановки старого процесса — запустите вручную: /usr/local/nginx/sbin/nginx" >&2
+                            fi
+                        fi
+                    fi
+                else
+                    echo "ВНИМАНИЕ: новый бинарник nginx не проходит nginx -t — автоматический перезапуск пропущен, старый процесс продолжает работать на прежней версии:" >&2
+                    cat "$NGINX_TEST_LOG" >&2
+                fi
+                rm -f "$NGINX_TEST_LOG"
             else
                 echo "ВНИМАНИЕ: чексумма $ASSET не совпала — установка nginx+RTMP пропущена." >&2
                 echo "  Повторить можно вручную: rtmp-server-ctl (или мастер первого запуска GUI)." >&2
@@ -132,8 +172,13 @@ case "$1" in
     for unit in live-server.service reboot-server.service registration-public.service rtmp-server-gui.service rtmp-server-hls-cleanup.timer; do
         systemctl enable "$unit" >/dev/null 2>&1 || true
     done
-    systemctl start rtmp-server-gui.service >/dev/null 2>&1 || true
-    systemctl start rtmp-server-hls-cleanup.timer >/dev/null 2>&1 || true
+    # restart, а не start — по прямому запросу владельца: start на уже
+    # активном юните ничего не делает, старый код/бинарник остаётся висеть
+    # в памяти до тех пор, пока его не перезапустят вручную (именно так
+    # не применялись обновления самого GUI-приложения). restart безопасен
+    # и для уже запущенного, и для остановленного юнита.
+    systemctl restart rtmp-server-gui.service >/dev/null 2>&1 || true
+    systemctl restart rtmp-server-hls-cleanup.timer >/dev/null 2>&1 || true
 
     # --- nginx-rtmp.service: НЕ включаем и не стартуем, если nginx уже
     # запущен вне systemd (например, старым restart_astra.sh на боте) —
@@ -149,7 +194,7 @@ case "$1" in
         echo "    systemctl enable --now nginx-rtmp.service"
     else
         systemctl enable nginx-rtmp.service >/dev/null 2>&1 || true
-        systemctl start nginx-rtmp.service >/dev/null 2>&1 || true
+        systemctl restart nginx-rtmp.service >/dev/null 2>&1 || true
     fi
 
     # --- Обновление кода сайта вместе с приложением ---
@@ -222,9 +267,7 @@ case "$1" in
     echo " Консоль:  rtmp-server-ctl status"
     echo " Лог установки шагов выше — при необходимости повторите вручную."
     if systemctl is-active rtmp-server-gui.service >/dev/null 2>&1; then
-        echo " Приложение уже запущено (systemd) — новый код применится"
-        echo " после перезапуска: systemctl restart rtmp-server-gui.service"
-        echo " (или просто закройте и снова откройте окно вручную)."
+        echo " Приложение уже перезапущено автоматически (systemd) — новый код применён."
     fi
     echo "=================================================================="
     ;;
