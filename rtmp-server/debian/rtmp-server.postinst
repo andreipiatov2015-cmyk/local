@@ -172,12 +172,21 @@ case "$1" in
     for unit in live-server.service reboot-server.service registration-public.service rtmp-server-gui.service rtmp-server-hls-cleanup.timer; do
         systemctl enable "$unit" >/dev/null 2>&1 || true
     done
-    # restart, а не start — по прямому запросу владельца: start на уже
-    # активном юните ничего не делает, старый код/бинарник остаётся висеть
-    # в памяти до тех пор, пока его не перезапустят вручную (именно так
-    # не применялись обновления самого GUI-приложения). restart безопасен
-    # и для уже запущенного, и для остановленного юнита.
-    systemctl restart rtmp-server-gui.service >/dev/null 2>&1 || true
+    # rtmp-server-gui.service — НЕ restart, обратно на start: это PyQt5
+    # GUI, которому нужен графический дисплей (X11) для старта —
+    # воспроизведено вживую: systemctl restart из SSH-сессии без
+    # активного дисплея падает с "qt.qpa.xcb: could not connect to
+    # display :0" (signal/ABRT), причём НЕЗАВИСИМО от того, кто
+    # инициирует restart — вручную оператор или этот же postinst-скрипт
+    # при обновлении пакета по SSH. start на уже активном юните —
+    # безопасный no-op; если юнит не запущен, а дисплей на момент
+    # установки недоступен (apt upgrade по SSH) — start тоже не поднимет
+    # его, но хотя бы не уронит валидный процесс неудачной попыткой.
+    # Итоговое сообщение внизу подсказывает перезапустить вручную, когда
+    # дисплей точно доступен.
+    systemctl start rtmp-server-gui.service >/dev/null 2>&1 || true
+    # Таймер очистки HLS — обычный systemd timer, графический дисплей не
+    # нужен, restart тут безопасен и гарантированно подхватывает новый код.
     systemctl restart rtmp-server-hls-cleanup.timer >/dev/null 2>&1 || true
 
     # --- nginx-rtmp.service: НЕ включаем и не стартуем, если nginx уже
@@ -267,7 +276,12 @@ case "$1" in
     echo " Консоль:  rtmp-server-ctl status"
     echo " Лог установки шагов выше — при необходимости повторите вручную."
     if systemctl is-active rtmp-server-gui.service >/dev/null 2>&1; then
-        echo " Приложение уже перезапущено автоматически (systemd) — новый код применён."
+        echo " Приложение уже запущено (systemd) — новый код применится"
+        echo " после перезапуска: systemctl restart rtmp-server-gui.service"
+        echo " (нужен активный графический дисплей — выполняйте эту команду"
+        echo " с того же компьютера/сессии, где обычно открыто окно"
+        echo " приложения, не по SSH без X11; или просто закройте и"
+        echo " снова откройте окно вручную)."
     fi
     echo "=================================================================="
     ;;
