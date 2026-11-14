@@ -150,6 +150,28 @@ case "$1" in
         fi
     fi
 
+    # --- PAM-биндинг для самого RTMP-server (подтверждение действий паролем
+    # пользователя, см. rtmp_server/site_admin/root_auth.py) — ставим через
+    # pip (пакет python-pam, модуль "pam"), а НЕ через apt (python3-pam):
+    # воспроизведено вживую на сервере владельца — пакета python3-pam не
+    # оказалось в подключённых репозиториях Astra Linux, из-за чего apt при
+    # попытке "apt-get install -f" не смог исправить зависимости и вместо
+    # установки целиком УДАЛИЛ rtmp-server. pip-пакет — чистый Python поверх
+    # ctypes, который сам находит системную libpam.so.0 во время выполнения,
+    # поэтому не зависит от наличия отдельного apt-пакета под конкретную ABI
+    # вообще.
+    if python3 -c "import pam" >/dev/null 2>&1; then
+        echo "PAM-биндинг для RTMP-server уже установлен — пропускаю."
+    else
+        echo "Устанавливаю PAM-биндинг для RTMP-server (pip: python-pam)..."
+        if pip3 install --break-system-packages python-pam >/dev/null 2>&1 \
+            || pip3 install python-pam >/dev/null 2>&1; then
+            echo "PAM-биндинг установлен."
+        else
+            echo "ВНИМАНИЕ: не удалось установить python-pam через pip — подтверждение действий паролем в программе не будет работать, пока не установите вручную: pip3 install python-pam" >&2
+        fi
+    fi
+
     # ffmpeg нужен для трансляции в VK/OK — best-effort, не блокирует установку
     if ! command -v ffmpeg >/dev/null 2>&1; then
         apt-get install -y --no-install-recommends ffmpeg >/dev/null 2>&1 \
