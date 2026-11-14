@@ -1,3 +1,26 @@
+rtmp-server (1.0.23-1) stable; urgency=high
+
+  * Укрепление публичной формы регистрации против спама/ботов и базовые
+    security-заголовки для kem-sirius.ru:
+    - honeypot-поле (невидимое через CSS-позиционирование за экраном, не
+      display:none — часть ботов именно такие поля и проверяют) и
+      подписанный (HMAC) токен формы: не классическая CSRF-защита (на
+      форме нет ни логина, ни сессий), а анти-бот метка времени рендера —
+      заодно бесплатно даёт отсечку "отправлено слишком быстро" (<2с);
+    - серверные лимиты длины полей (2000/5000 символов) и общий лимит
+      тела запроса (128 КиБ) — отсекают мегабайтные payload'ы ещё до
+      разбора формы;
+    - в www/nginx.conf (репо-копия, на боевой сервер — вручную, файл не
+      деплоится автоматически): limit_req на location формы (10 запросов
+      в минуту на IP, всплеск 5), X-Frame-Options/X-Content-Type-Options/
+      Referrer-Policy/Strict-Transport-Security/Content-Security-Policy
+      в блоке kem-sirius.ru, server_tokens off.
+  * Пересборка nginx+RTMP на nginx 1.26.2 (было 1.26.0) — в 1.26.0 не
+    пропатчен CVE-2024-7347 (переполнение буфера в ngx_http_mp4_module,
+    который этой сборке нужен, см. --with-http_mp4_module).
+
+ -- RTMP-server maintainers <support@rtmp-server.local>  Sat, 14 Nov 2026 00:00:00 +0000
+
 rtmp-server (1.0.22-1) stable; urgency=high
 
   * Исправлена поломанная установка 1.0.21: debian/local/units/

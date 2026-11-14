@@ -13,9 +13,12 @@
 """
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import time
 import uuid
 from datetime import datetime, timezone
@@ -25,6 +28,15 @@ from flask import Flask, abort, render_template, request
 import nacl.public
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+
+# Общий лимит тела запроса — защита от мегабайтных payload'ов ДО того, как
+# Flask вообще дочитает и забуферизует их в память (проверки длины
+# отдельных полей ниже срабатывают уже ПОСЛЕ чтения тела, этого
+# недостаточно само по себе). Werkzeug сам вернёт 413 при превышении —
+# отдельного кода не требуется. 128 КиБ — с большим запасом покрывает
+# team_name (≤5000 символов × до 4 байт UTF-8) и остальные поля (≤2000)
+# вместе с multipart-накладными расходами.
+app.config["MAX_CONTENT_LENGTH"] = 128 * 1024
 
 FORMS_EXPORT_FILE = os.environ.get(
     "REGISTRATION_PUBLIC_FORMS_EXPORT_FILE", "/var/lib/rtmp-server/registration-public-forms.json"
@@ -39,6 +51,28 @@ THROTTLE_SECONDS = int(os.environ.get("REGISTRATION_PUBLIC_THROTTLE_SECONDS", "1
 SLUG_RE = re.compile(r"^[A-Za-z0-9_-]{22}$")
 
 NUMERIC_QTYPES = {"people_count"}
+
+# Лимиты длины полей — не для того, чтобы ограничить людей (длинные
+# названия учреждений/коллективов — обычное дело), а чтобы отсечь заведомо
+# аномальные payload'ы. team_name — отдельно пошире по явному запросу.
+DEFAULT_MAX_FIELD_LEN = 2000
+FIELD_MAX_LENGTHS = {"team_name": 5000}
+
+HONEYPOT_FIELD_NAME = "website"
+MIN_FILL_SECONDS = int(os.environ.get("REGISTRATION_PUBLIC_MIN_FILL_SECONDS", "2"))
+# Токен живёт долго (сутки) — это не авторизационная сессия (на форме нет
+# ни логина, ни кук вообще), а просто подписанная метка времени рендера
+# формы: обычный участник мог открыть вкладку и не торопиться с
+# заполнением. Боты, которые шлют POST не глядя на GET-ответ, токен не
+# пришлют вообще — этого достаточно для цели (анти-бот, не анти-CSRF
+# в классическом смысле, который здесь не нужен — нет сессии, которую
+# можно было бы угнать).
+TOKEN_MAX_AGE_SECONDS = int(os.environ.get("REGISTRATION_PUBLIC_TOKEN_MAX_AGE_SECONDS", str(24 * 3600)))
+# Секрет только в памяти процесса — токен привязан к его жизни, рестарт
+# между открытием формы и отправкой (редкий случай, обычно только при
+# деплое) потребует просто обновить страницу. Файл/персистентность ради
+# этого не нужны — тут не защита данных, а фильтр ботов.
+_CSRF_SECRET = secrets.token_bytes(32)
 
 # Простой троттлинг на IP — без внешних зависимостей, в памяти процесса.
 # Этого достаточно только при одном воркере (как и запущено по умолчанию),
@@ -79,6 +113,29 @@ def _client_ip():
     return request.headers.get("X-Real-IP") or request.remote_addr or "unknown"
 
 
+def _make_form_token(slug):
+    issued_at = str(int(time.time()))
+    sig = hmac.new(_CSRF_SECRET, f"{slug}:{issued_at}".encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{issued_at}.{sig}"
+
+
+def _verify_form_token(slug, token):
+    """None при недействительном токене, иначе время выпуска (секунды, int)."""
+    if not token or "." not in token:
+        return None
+    issued_at_str, _, sig = token.partition(".")
+    if not issued_at_str.isdigit():
+        return None
+    expected = hmac.new(_CSRF_SECRET, f"{slug}:{issued_at_str}".encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return None
+    issued_at = int(issued_at_str)
+    now = time.time()
+    if issued_at > now + 5 or now - issued_at > TOKEN_MAX_AGE_SECONDS:
+        return None
+    return issued_at
+
+
 def _get_form_or_404(slug):
     if not SLUG_RE.match(slug):
         abort(404)
@@ -97,7 +154,10 @@ def not_found(_e):
 @app.route("/<slug>", methods=["GET"])
 def show_form(slug):
     _data, form = _get_form_or_404(slug)
-    return render_template("form.html", slug=slug, title=form["title"], questions=form["questions"])
+    return render_template(
+        "form.html", slug=slug, title=form["title"], questions=form["questions"],
+        csrf_token=_make_form_token(slug),
+    )
 
 
 @app.route("/<slug>", methods=["POST"])
@@ -107,18 +167,46 @@ def submit_form(slug):
     if not public_key_b64:
         abort(500)
 
+    # Honeypot: обычный участник это поле не видит (спрятано CSS за
+    # пределами экрана, не display:none — некоторые боты именно его и
+    # проверяют) и не заполняет. Заполнено -> тихо делаем вид, что всё
+    # прошло успешно, ничего не шифруя и не сохраняя — чтобы бот не понял,
+    # что был пойман, и не стал подстраиваться.
+    if (request.form.get(HONEYPOT_FIELD_NAME) or "").strip():
+        return render_template("thanks.html", title=form["title"])
+
+    issued_at = _verify_form_token(slug, request.form.get("csrf_token"))
+    if issued_at is None:
+        return render_template(
+            "form.html", slug=slug, title=form["title"], questions=form["questions"],
+            csrf_token=_make_form_token(slug),
+            error="Истекло время заполнения формы — обновите страницу и заполните заново.",
+        ), 400
+    if time.time() - issued_at < MIN_FILL_SECONDS:
+        return render_template(
+            "form.html", slug=slug, title=form["title"], questions=form["questions"],
+            csrf_token=_make_form_token(slug),
+            error="Форма ещё не успела полностью загрузиться — попробуйте ещё раз.",
+        ), 400
+
     ip = _client_ip()
     if _throttle_blocked(ip):
         return render_template(
             "form.html", slug=slug, title=form["title"], questions=form["questions"],
+            csrf_token=_make_form_token(slug),
             error="Подождите немного перед повторной отправкой.",
         ), 429
 
     answers = {}
     missing_labels = []
+    too_long_labels = []
     for q in form["questions"]:
         qtype = q["qtype"]
         raw = (request.form.get(qtype) or "").strip()
+        max_len = FIELD_MAX_LENGTHS.get(qtype, DEFAULT_MAX_FIELD_LEN)
+        if len(raw) > max_len:
+            too_long_labels.append(q["label"])
+            continue
         if qtype in NUMERIC_QTYPES:
             if not raw.isdigit() or int(raw) <= 0:
                 missing_labels.append(q["label"])
@@ -130,9 +218,17 @@ def submit_form(slug):
                 continue
             answers[qtype] = raw
 
+    if too_long_labels:
+        return render_template(
+            "form.html", slug=slug, title=form["title"], questions=form["questions"],
+            csrf_token=_make_form_token(slug),
+            error="Слишком длинное значение в поле(ях): " + ", ".join(too_long_labels),
+        ), 400
+
     if missing_labels:
         return render_template(
             "form.html", slug=slug, title=form["title"], questions=form["questions"],
+            csrf_token=_make_form_token(slug),
             error="Заполните обязательные поля: " + ", ".join(missing_labels),
             submitted=request.form,
         ), 400

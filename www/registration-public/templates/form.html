@@ -15,6 +15,13 @@
     {% endif %}
 
     <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <!-- honeypot: обычный участник его не видит и не заполняет (спрятано
+           CSS за пределами экрана) — заполнено значит бот, см. server.py -->
+      <div class="hp-field" aria-hidden="true">
+        <label for="website">Website</label>
+        <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+      </div>
       {% for q in questions %}
         <div class="field">
           <label for="q_{{ q.qtype }}">{{ q.label }}</label>
