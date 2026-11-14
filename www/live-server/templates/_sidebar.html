@@ -17,7 +17,28 @@
        <button id="vkStreamButton" class="vk-btn">⚙️ Настройка трансляции</button>
      {% endcall %}
 #}
+{# Пункты, доступные обычному пользователю (роль != admin) — по прямому
+   запросу владельца: остальное показываем серым, некликабельным, с
+   подсказкой "В разработке - доступно только Администратору" и при
+   наведении, и при попытке клика. #}
+{% set viewer_allowed = ['broadcast', 'registration_desk'] %}
+{% macro menu_link(user, active, key, href, icon, label) %}
+{% if (user and user.role == 'admin') or key in viewer_allowed %}
+    <a class="menu-item{{ ' active' if active == key }}" href="{{ href }}">
+      <span class="icon">{{ icon }}</span>
+      <span class="text">{{ label }}</span>
+    </a>
+{% else %}
+    <a class="menu-item disabled" href="#"
+       title="В разработке - доступно только Администратору"
+       onclick="alert('В разработке - доступно только Администратору'); return false;">
+      <span class="icon">{{ icon }}</span>
+      <span class="text">{{ label }}</span>
+    </a>
+{% endif %}
+{% endmacro %}
 {% macro render_sidebar(active) %}
+{% set user = current_site_user() %}
 <aside class="sidebar">
   <div class="sidebar-header">
     <span class="logo">🎥 Live Admin</span>
@@ -25,42 +46,15 @@
   </div>
 
   <nav class="sidebar-menu">
-    <a class="menu-item{{ ' active' if active == 'events' }}" href="/editor">
-      <span class="icon">📅</span>
-      <span class="text">Мероприятие</span>
-    </a>
-    <a class="menu-item{{ ' active' if active == 'competition' }}" href="/competition">
-      <span class="icon">🏆</span>
-      <span class="text">Конкурс</span>
-    </a>
-    <a class="menu-item{{ ' active' if active == 'broadcast' }}" href="/broadcast">
-      <span class="icon">📺</span>
-      <span class="text">Трансляция</span>
-    </a>
-    <a class="menu-item{{ ' active' if active == 'staff' }}" href="/staff">
-      <span class="icon">👥</span>
-      <span class="text">Сотрудники</span>
-    </a>
-    <a class="menu-item{{ ' active' if active == 'tables' }}" href="/tables">
-      <span class="icon">📋</span>
-      <span class="text">Таблицы заявок</span>
-    </a>
-    <a class="menu-item{{ ' active' if active == 'registration_desk' }}" href="/registration-desk">
-      <span class="icon">🛎️</span>
-      <span class="text">Стойка регистрации</span>
-    </a>
-    <a class="menu-item{{ ' active' if active == 'messenger' }}" href="/messenger">
-      <span class="icon">💬</span>
-      <span class="text">Мессенджер</span>
-    </a>
-    <a class="menu-item{{ ' active' if active == 'ai_chat' }}" href="/ai-chat">
-      <span class="icon">🤖</span>
-      <span class="text">Чат AI</span>
-    </a>
-    <a class="menu-item{{ ' active' if active == 'consent_check' }}" href="/consent-check">
-      <span class="icon">📝</span>
-      <span class="text">Проверка заполнения согласий</span>
-    </a>
+    {{ menu_link(user, active, 'events', '/editor', '📅', 'Мероприятие') }}
+    {{ menu_link(user, active, 'competition', '/competition', '🏆', 'Конкурс') }}
+    {{ menu_link(user, active, 'broadcast', '/broadcast', '📺', 'Трансляция') }}
+    {{ menu_link(user, active, 'staff', '/staff', '👥', 'Сотрудники') }}
+    {{ menu_link(user, active, 'tables', '/tables', '📋', 'Таблицы заявок') }}
+    {{ menu_link(user, active, 'registration_desk', '/registration-desk', '🛎️', 'Стойка регистрации') }}
+    {{ menu_link(user, active, 'messenger', '/messenger', '💬', 'Мессенджер') }}
+    {{ menu_link(user, active, 'ai_chat', '/ai-chat', '🤖', 'Чат AI') }}
+    {{ menu_link(user, active, 'consent_check', '/consent-check', '📝', 'Проверка заполнения согласий') }}
   </nav>
 
   <div class="sidebar-footer">

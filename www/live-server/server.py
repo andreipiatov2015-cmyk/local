@@ -124,6 +124,23 @@ HLS_STREAM_URL = (os.environ.get("HLS_STREAM_URL") or "").strip()
 
 STORAGE_ROOT = os.environ.get("STORAGE_ROOT", "/var/mount_point/nfv/contest_storage")
 APP_DATA_ROOT = Path(os.environ.get("APP_DATA_ROOT", os.path.join(BASE_DIR, "app_data")))
+
+
+def user_workspace_dir(user_id):
+    """Личное "рабочее место" пользователя на диске — общий корень для его
+    файлов (сейчас там же физически лежит storage_for_table(), см. ниже:
+    .../users/<user_id>/tables/<id>/ — тот же STORAGE_ROOT/users/<user_id>,
+    просто с подпапкой на конкретную таблицу). Отдельная функция даёт
+    разным будущим фичам общее, предсказуемое место, не привязанное к
+    таблицам, плюс точку, где это место гарантированно создаётся сразу
+    при появлении пользователя, а не только лениво при первой загрузке."""
+    return os.path.join(STORAGE_ROOT, "users", str(user_id))
+
+
+def ensure_user_workspace(user_id):
+    path = user_workspace_dir(user_id)
+    os.makedirs(path, exist_ok=True)
+    return path
 RETENTION_DAYS = 60
 MAX_TABLES_PER_USER = 10
 MAX_REGISTRATION_DESKS_PER_USER = 30
@@ -957,6 +974,21 @@ def get_current_user():
         return dict(row) if row else None
     return None
 
+@app.context_processor
+def inject_current_user():
+    # Общий для всех шаблонов доступ к текущему пользователю (роль и т.п.).
+    return {"current_user": get_current_user()}
+
+# _sidebar.html импортируется через {% import "_sidebar.html" as nav %} БЕЗ
+# "with context" (так исторически сложилось во всех шаблонах, менять везде —
+# лишний риск) — а без "with context" импортированные макросы НЕ видят
+# context_processor выше, current_user внутри макроса был бы Undefined
+# (воспроизведено вживую: все пункты меню показывались как недоступные
+# даже админу). Jinja-глобал, в отличие от контекстной переменной, виден
+# внутри макроса независимо от способа импорта — поэтому роль нужно взять
+# именно так.
+app.jinja_env.globals["current_site_user"] = get_current_user
+
 def login_required(f):
     @wraps(f)
     def wrapper(*a, **kw):
@@ -993,6 +1025,7 @@ def ensure_admin_exists():
         one=True,
     )
     if existing:
+        ensure_user_workspace(existing["id"])
         return existing["id"]
 
     salt = make_salt()
@@ -1004,7 +1037,19 @@ def ensure_admin_exists():
     )
     created = query_db("SELECT id FROM users WHERE username=?", (DEFAULT_ADMIN_USERNAME,), one=True)
     print(f"Создан администратор: {DEFAULT_ADMIN_USERNAME} / {DEFAULT_ADMIN_PASSWORD}")
+    if created:
+        ensure_user_workspace(created["id"])
     return created["id"] if created else None
+
+
+def ensure_all_user_workspaces():
+    """Разово при старте — создаёт рабочее место (см. ensure_user_workspace)
+    для ВСЕХ уже существующих пользователей, не только новых. Иначе те, кто
+    зарегистрировался до появления этой функции, остались бы без папки
+    навсегда — verify() вызывается только один раз, в момент подтверждения
+    e-mail, который для них уже прошёл."""
+    for row in query_db("SELECT id FROM users"):
+        ensure_user_workspace(row["id"])
 
 
 def migrate_tables_to_current_admin():
@@ -1246,6 +1291,7 @@ def verify():
     if not row:
         return render_template("verify_failed.html"), 400
     query_db("UPDATE users SET is_verified=1, verify_token=NULL, updated_at=? WHERE id=?", (datetime.datetime.utcnow().isoformat(), row["id"]))
+    ensure_user_workspace(row["id"])
     return render_template("verify_success.html")
 
 
@@ -6557,6 +6603,7 @@ def api_monitor_item(item_id):
 init_table_header_tags()
 init_db()
 ensure_admin_exists()
+ensure_all_user_workspaces()
 migrate_tables_to_current_admin()
 start_tables_background_jobs()
 
