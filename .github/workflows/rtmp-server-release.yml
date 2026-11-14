@@ -30,7 +30,16 @@ jobs:
           deb [check-valid-until=no] http://archive.debian.org/debian-security buster/updates main
           EOF
           apt-get update
-          apt-get install -y build-essential libpcre3-dev zlib1g-dev libssl-dev git wget ca-certificates
+          # libssl-dev больше НЕ ставим: раньше nginx линковался с ней
+          # динамически (libssl.so.1.1 из buster), и собранный бинарник
+          # не запускался на целевом сервере — "error while loading shared
+          # libraries: libssl.so.1.1: cannot open shared object file"
+          # (воспроизведено вживую при обновлении до 1.0.23). OpenSSL
+          # теперь собираем из исходников и линкуем статически прямо в
+          # nginx (см. шаг ниже, --with-openssl), системная версия (или
+          # её отсутствие) на целевом сервере значения больше не имеет.
+          # perl нужен для Configure-скрипта OpenSSL.
+          apt-get install -y build-essential libpcre3-dev zlib1g-dev perl git wget ca-certificates
 
       - name: Build nginx + RTMP module
         run: |
@@ -40,9 +49,16 @@ jobs:
           # ngx_http_mp4_module, который этой сборке и нужен — см. флаг
           # --with-http_mp4_module ниже) — пропатчено начиная с 1.26.2.
           NGINX_VERSION=1.26.2
+          # Последний релиз ветки 1.1.1 (та же мажорная версия, что уже
+          # была в деле раньше, доказанно совместима с этой сборкой nginx) —
+          # собирается из исходников и линкуется СТАТИЧЕСКИ в сам nginx
+          # (--with-openssl ниже), а не как system shared library.
+          OPENSSL_VERSION=1.1.1w
           WORK=/tmp/nginx-build
           rm -rf "$WORK" && mkdir -p "$WORK" && cd "$WORK"
           git clone --depth=1 https://github.com/arut/nginx-rtmp-module.git
+          wget -q "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz"
+          tar -xzf "openssl-${OPENSSL_VERSION}.tar.gz"
           wget -q "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz"
           tar -xzf "nginx-${NGINX_VERSION}.tar.gz"
           cd "nginx-${NGINX_VERSION}"
@@ -53,6 +69,7 @@ jobs:
             --with-http_flv_module \
             --with-http_mp4_module \
             --with-http_gzip_static_module \
+            --with-openssl=../openssl-${OPENSSL_VERSION} \
             --add-module=../nginx-rtmp-module
           make -j"$(nproc)"
           make install DESTDIR=/tmp/nginx-out
