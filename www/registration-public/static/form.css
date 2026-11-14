@@ -58,6 +58,18 @@ button[type="submit"]:hover {
   background: #3d7aef;
 }
 
+/* Honeypot-поле — не display:none/visibility:hidden (некоторые боты
+   специально это проверяют и игнорируют именно такие поля), а реально
+   видимый для разметки элемент, просто унесённый за пределы экрана. */
+.hp-field {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
 .error {
   background: #fef2f2;
   color: #b91c1c;

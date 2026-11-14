@@ -36,7 +36,10 @@ jobs:
         run: |
           set -e
           VERSION=$(cat rtmp-server/VERSION)
-          NGINX_VERSION=1.26.0
+          # 1.26.0 содержал CVE-2024-7347 (переполнение буфера в
+          # ngx_http_mp4_module, который этой сборке и нужен — см. флаг
+          # --with-http_mp4_module ниже) — пропатчено начиная с 1.26.2.
+          NGINX_VERSION=1.26.2
           WORK=/tmp/nginx-build
           rm -rf "$WORK" && mkdir -p "$WORK" && cd "$WORK"
           git clone --depth=1 https://github.com/arut/nginx-rtmp-module.git
