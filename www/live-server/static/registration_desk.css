@@ -280,7 +280,15 @@
   border-bottom: 1px solid #e2e8f0;
   padding: 10px 12px;
   text-align: left;
-  white-space: nowrap;
+  /* Раньше nowrap заставлял каждую колонку растягиваться под самый
+     длинный заголовок/ответ целиком — таблица вылезала далеко за рамку
+     страницы. Теперь текст переносится внутри ячейки, а колонка не шире
+     max-width; если сумма колонок всё равно не помещается — скролл
+     остаётся только у .desk-responses-wrap (overflow-x: auto выше),
+     то есть вправо, без поломки остального макета страницы. */
+  white-space: normal;
+  word-break: break-word;
+  max-width: 260px;
 }
 
 .desk-responses-table th {
