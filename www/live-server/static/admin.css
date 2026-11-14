@@ -436,6 +436,15 @@ tr:hover {
     background: #2563eb;
 }
 
+.menu-item.disabled {
+    color: #64748b;
+    cursor: not-allowed;
+}
+
+.menu-item.disabled:hover {
+    background: none;
+}
+
 .menu-item .icon {
     width: 24px;
     text-align: center;
