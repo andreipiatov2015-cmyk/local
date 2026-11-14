@@ -22,21 +22,48 @@ case "$1" in
     # Только каталог, файл внутри оператор создаёт вручную сам. Сюда же
     # live-server кладёт приватный ключ публичной формы регистрации
     # (registration-form-private.key, создаётся самим сайтом при первом
-    # обращении) — каталог уже 0700, отдельных прав не требуется.
+    # обращении).
+    #
+    # КРИТИЧНО (воспроизведено вживую на реальном сервере владельца):
+    # раньше здесь стоял голый chmod 700 root:root в расчёте на то, что
+    # live-server работает от root — наш собственный юнит-шаблон (debian/
+    # local/units/live-server.service) действительно без User= (root), но
+    # на реальных серверах юниты сайта часто кастомные, заведённые ДО
+    # установки этого пакета, и постинст их никогда не перезаписывает (см.
+    # ниже "никогда не перезаписываем существующие юниты сайта молча") —
+    # там live-server может работать от www-data. С 0700 root:root
+    # www-data не может даже проверить, существует ли файл ключа
+    # (PermissionError на os.stat самой директории, а не файла), поэтому
+    # sync_public_forms_export() тихо падал на КАЖДОЙ публикации/снятии —
+    # старый экспорт просто никогда не перезаписывался, новые формы не
+    # появлялись у участников, хотя в самой БД slug сохранялся нормально.
+    # group-execute для www-data даёт пройти в каталог и открыть файл по
+    # точному имени, но НЕ даёт листинг (0710, не 0750) — site-secrets.env
+    # рядом остаётся защищён уже своими собственными правами файла.
     mkdir -p /etc/rtmp-server
     chmod 700 /etc/rtmp-server
+    getent group www-data >/dev/null 2>&1 && chgrp www-data /etc/rtmp-server && chmod 710 /etc/rtmp-server || true
 
     # --- Публичная форма регистрации: отдельный непривилегированный
     # пользователь (см. debian/local/units/registration-public.service —
     # зачем он нужен) и drop-директория для зашифрованных ответов.
-    # live-server (root) должен мочь прочитать и удалить файлы, которые
-    # создаёт regform, — для root это не требует вообще никаких особых
-    # прав (chmod/ACL), поэтому каталог просто владения regform с правами
-    # 0700 (только сам regform и root).
+    # live-server должен мочь прочитать и удалить файлы, которые создаёт
+    # regform. Та же ошибка, что и с /etc/rtmp-server выше: раньше
+    # расчёт был только на то, что live-server — root (для root
+    # 0700 regform:regform не помеха), а на реальных серверах он может
+    # оказаться www-data — тогда ни прочитать, ни удалить файлы ответов
+    # вкладка "Ответы" не сможет. Владелец (regform) создаёт файлы —
+    # ему права не нужны группой; группа www-data даёт live-server
+    # прочитать/удалить их, не трогая возможного запуска от root (тому
+    # права группы не важны, у него и так есть всё).
     id -u regform >/dev/null 2>&1 || useradd -r -s /sbin/nologin regform
     mkdir -p /var/lib/rtmp-server/registration-drop
     chown regform:regform /var/lib/rtmp-server/registration-drop
     chmod 700 /var/lib/rtmp-server/registration-drop
+    getent group www-data >/dev/null 2>&1 \
+        && chown regform:www-data /var/lib/rtmp-server/registration-drop \
+        && chmod 770 /var/lib/rtmp-server/registration-drop \
+        || true
 
     VERSION=$(cat "$APP_DIR/VERSION")
     echo "RTMP-server $VERSION: проверка окружения..."
