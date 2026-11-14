@@ -70,8 +70,16 @@ case "$1" in
             EXPECTED=$(grep " $ASSET\$" "$TMP/SHA256SUMS" | awk '{print $1}')
             ACTUAL=$(sha256sum "$TMP/$ASSET" | awk '{print $1}')
             if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ]; then
+                # Сохраняем руками правленный conf/nginx.conf НЕЗАВИСИМО от
+                # того, запущен ли сейчас nginx (см.
+                # debian/local/lib/extract_nginx_release.sh) — воспроизведено
+                # вживую: обновление застало процесс уже остановленным (не по
+                # вине этого пакета), поэтому ветка "nginx уже запущен — не
+                # трогаю" выше не сработала, и tar -xzf затёр боевой конфиг
+                # (8082/1936/kem-sirius.ru/форма регистрации) дефолтным
+                # файлом из чистой сборки — сайт полностью лёг.
                 mkdir -p /usr/local/nginx
-                tar -xzf "$TMP/$ASSET" -C /usr/local/nginx
+                sh "$APP_DIR/lib/extract_nginx_release.sh" "$TMP/$ASSET" /usr/local/nginx
                 echo "$VERSION" > "$NGINX_MARKER"
                 id -u nginx >/dev/null 2>&1 || useradd -r -s /sbin/nologin nginx
                 echo "nginx+RTMP установлен в /usr/local/nginx."
