@@ -10,10 +10,10 @@
 Проверка пароля сделана через PAM, а не crypt()+/etc/shadow: на Astra Linux
 пароли хранятся по ГОСТ-алгоритму ("$gos..."), который crypt() не понимает,
 из-за чего раньше сравнение не проходило никогда, даже с верным паролем
-(воспроизведено вживую на реальном сервере). Модуль PAM (пакет python3-pam)
-импортируется лениво, поэтому в тестах подставляем поддельный через
-sys.modules — реальный компилируется под ABI системного Python и в обычном
-dev-окружении не ставится."""
+(воспроизведено вживую на реальном сервере). Модуль pam (pip-пакет
+python-pam, НЕ apt-пакет python3-pam — его не оказалось в репозиториях
+Astra Linux, воспроизведено вживую) импортируется лениво, поэтому в тестах
+подставляем поддельный через sys.modules."""
 
 from __future__ import annotations
 
@@ -25,57 +25,21 @@ from unittest import mock
 from rtmp_server.site_admin import root_auth
 
 
-class _FakePamError(Exception):
-    pass
-
-
-class _FakePamSession:
-    """Имитирует PAM.pam(): start/set_item/authenticate, как в PyPAM 0.4.x."""
-
-    def __init__(self, module: "_FakePamModule") -> None:
-        self._module = module
-        self._items: dict[str, object] = {}
-
-    def start(self, service: str) -> None:
-        if self._module.start_should_fail:
-            raise self._module.error("no such PAM service: " + service)
-        self._items["service"] = service
-
-    def set_item(self, key: str, value: object) -> None:
-        self._items[key] = value
-
-    def authenticate(self) -> None:
-        if self._module.authenticate_raises is not None:
-            raise self._module.authenticate_raises
-
-        username = self._items.get(self._module.PAM_USER)
-        conv = self._items.get(self._module.PAM_CONV)
-        password = conv(None, [(None, None)], None)[0][0]
-
-        if username != self._module.expected_username or password != self._module.correct_password:
-            raise self._module.error("Authentication failure", 7)
-
-
 class _FakePamModule:
-    PAM_USER = "PAM_USER"
-    PAM_CONV = "PAM_CONV"
+    """Имитирует pip-пакет python-pam: модуль с одной функцией
+    authenticate(username, password, service=...) -> bool."""
 
-    def __init__(
-        self,
-        *,
-        expected_username: str,
-        correct_password: str,
-        start_should_fail: bool = False,
-        authenticate_raises: Exception | None = None,
-    ) -> None:
-        self.error = _FakePamError
+    def __init__(self, *, expected_username, correct_password, raises=None):
         self.expected_username = expected_username
         self.correct_password = correct_password
-        self.start_should_fail = start_should_fail
-        self.authenticate_raises = authenticate_raises
+        self.raises = raises
+        self.calls = []
 
-    def pam(self) -> _FakePamSession:
-        return _FakePamSession(self)
+    def authenticate(self, username, password, service="login"):
+        self.calls.append((username, password, service))
+        if self.raises is not None:
+            raise self.raises
+        return username == self.expected_username and password == self.correct_password
 
 
 class ConfirmingUsernameTests(unittest.TestCase):
@@ -92,27 +56,25 @@ class ConfirmingUsernameTests(unittest.TestCase):
 class VerifyConfirmingPasswordTests(unittest.TestCase):
     def _with_fake_pam(self, **kwargs):
         fake_module = _FakePamModule(**kwargs)
-        return mock.patch.dict(sys.modules, {"PAM": fake_module})
+        return fake_module, mock.patch.dict(sys.modules, {"pam": fake_module})
 
     def test_correct_password_for_sudo_user_passes(self):
-        with mock.patch.dict(os.environ, {"SUDO_USER": "reimov"}), self._with_fake_pam(
-            expected_username="reimov", correct_password="s3cret"
-        ):
+        fake, patcher = self._with_fake_pam(expected_username="reimov", correct_password="s3cret")
+        with mock.patch.dict(os.environ, {"SUDO_USER": "reimov"}), patcher:
             self.assertTrue(root_auth.verify_confirming_password("s3cret"))
+        self.assertEqual(fake.calls, [("reimov", "s3cret", root_auth.PAM_SERVICE)])
 
     def test_root_password_no_longer_accepted_for_sudo_user(self):
         """Регрессия, которую и просили исправить: когда пользователь
         запущен через sudo, ввод пароля ROOT не должен подтверждать
         действие — должен подойти только пароль самого этого пользователя."""
-        with mock.patch.dict(os.environ, {"SUDO_USER": "reimov"}), self._with_fake_pam(
-            expected_username="reimov", correct_password="s3cret"
-        ):
+        _, patcher = self._with_fake_pam(expected_username="reimov", correct_password="s3cret")
+        with mock.patch.dict(os.environ, {"SUDO_USER": "reimov"}), patcher:
             self.assertFalse(root_auth.verify_confirming_password("rootpass"))
 
     def test_wrong_password_rejected(self):
-        with mock.patch.dict(os.environ, {"SUDO_USER": "reimov"}), self._with_fake_pam(
-            expected_username="reimov", correct_password="s3cret"
-        ):
+        _, patcher = self._with_fake_pam(expected_username="reimov", correct_password="s3cret")
+        with mock.patch.dict(os.environ, {"SUDO_USER": "reimov"}), patcher:
             self.assertFalse(root_auth.verify_confirming_password("wrong"))
 
     def test_empty_password_rejected_without_calling_pam(self):
@@ -120,30 +82,25 @@ class VerifyConfirmingPasswordTests(unittest.TestCase):
             self.assertFalse(root_auth.verify_confirming_password(""))
 
     def test_falls_back_to_root_without_sudo_user(self):
+        _, patcher = self._with_fake_pam(expected_username="root", correct_password="rootpass")
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("SUDO_USER", None)
-            with self._with_fake_pam(expected_username="root", correct_password="rootpass"):
+            with patcher:
                 self.assertTrue(root_auth.verify_confirming_password("rootpass"))
 
-    def test_pam_service_start_failure_raises_admin_auth_error(self):
-        with mock.patch.dict(os.environ, {"SUDO_USER": "reimov"}), self._with_fake_pam(
-            expected_username="reimov", correct_password="s3cret", start_should_fail=True
-        ):
-            with self.assertRaises(root_auth.AdminAuthError):
-                root_auth.verify_confirming_password("s3cret")
-
-    def test_unexpected_pam_exception_raises_admin_auth_error(self):
-        with mock.patch.dict(os.environ, {"SUDO_USER": "reimov"}), self._with_fake_pam(
+    def test_pam_exception_raises_admin_auth_error(self):
+        _, patcher = self._with_fake_pam(
             expected_username="reimov",
             correct_password="s3cret",
-            authenticate_raises=RuntimeError("libpam.so.0: cannot open shared object file"),
-        ):
+            raises=OSError("libpam.so.0: cannot open shared object file"),
+        )
+        with mock.patch.dict(os.environ, {"SUDO_USER": "reimov"}), patcher:
             with self.assertRaises(root_auth.AdminAuthError):
                 root_auth.verify_confirming_password("s3cret")
 
     def test_missing_pam_module_raises_admin_auth_error(self):
         with mock.patch.dict(os.environ, {"SUDO_USER": "reimov"}), mock.patch.dict(
-            sys.modules, {"PAM": None}
+            sys.modules, {"pam": None}
         ):
             with self.assertRaises(root_auth.AdminAuthError):
                 root_auth.verify_confirming_password("anything")

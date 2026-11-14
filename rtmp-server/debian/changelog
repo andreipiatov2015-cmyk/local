@@ -1,3 +1,19 @@
+rtmp-server (1.0.29-1) stable; urgency=critical
+
+  * КРИТИЧНО: зависимость python3-pam, добавленная в 1.0.28 в
+    debian/control, оказалась недоступна в репозиториях Astra Linux на
+    сервере владельца — "sudo apt-get install -f" при попытке исправить
+    зависимости вместо установки пакета ПОЛНОСТЬЮ УДАЛИЛ rtmp-server
+    (воспроизведено вживую). Заменили PAM-биндинг с apt-пакета (компилируется
+    под конкретную ABI системного Python, поэтому редко доступен везде) на
+    pip-пакет python-pam (модуль "pam", чистый ctypes поверх системной
+    libpam.so.0, которая есть на любой PAM-based Linux-машине) — ставится
+    тем же best-effort pip3-шагом в postinst, что и остальные Python-
+    зависимости, без повторной жёсткой зависимости apt. См.
+    rtmp_server/site_admin/root_auth.py, tests/test_root_auth.py.
+
+ -- RTMP-server CI <support@rtmp-server.local>  Sat, 14 Nov 2026 14:40:00 +0700
+
 rtmp-server (1.0.28-1) stable; urgency=high
 
   * Проверка пароля при подтверждении действий (введённая в 1.0.27) не

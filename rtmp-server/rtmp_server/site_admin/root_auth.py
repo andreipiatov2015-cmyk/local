@@ -27,11 +27,19 @@ SUDO_USER не задан (например, автозапуск через sys
 любым алгоритмом, который реально настроен на машине (ГОСТ, обычный
 sha512 и т.п.), без необходимости знать о конкретном формате хеша.
 
-Модуль PAM (пакет python3-pam, он же "PyPAM" — компилируемое под ABI
-системного Python расширение, см. debian/control) импортируется ЛЕНИВО,
-внутри verify_confirming_password, а не на верху файла: так этот модуль
-(и confirming_username/AdminAuthError) можно свободно импортировать и
-тестировать в обычном dev-окружении, где python3-pam не установлен."""
+Модуль "pam" ставится через pip (пакет python-pam), а НЕ через apt
+(python3-pam): воспроизведено вживую — на сервере владельца этого apt-
+пакета не оказалось в подключённых репозиториях Astra Linux, и попытка
+"apt-get install -f" вместо установки зависимости УДАЛИЛА весь rtmp-server
+(apt счёл это единственным способом починить дерево зависимостей). pip-
+пакет — чистый Python поверх ctypes, который сам находит системную
+libpam.so.0 во время выполнения и не зависит от наличия отдельного
+apt-пакета под конкретную ABI.
+
+Импортируется ЛЕНИВО, внутри verify_confirming_password, а не на верху
+файла: так этот файл (и confirming_username/AdminAuthError) можно
+свободно импортировать и тестировать в обычном dev-окружении, где pip-
+пакет не установлен."""
 
 from __future__ import annotations
 
@@ -59,36 +67,17 @@ def verify_confirming_password(password: str) -> bool:
         return False
 
     try:
-        import PAM
+        import pam
     except ImportError as exc:
         raise AdminAuthError(
-            "Модуль PAM (пакет python3-pam) не установлен — проверка пароля невозможна."
+            "Модуль pam (пакет python-pam) не установлен — проверка пароля невозможна. "
+            "Установите вручную: pip3 install python-pam"
         ) from exc
 
     username = confirming_username()
-
-    def _conv(_auth, query_list, _user_data):
-        return [(password, 0) for _ in query_list]
-
-    auth = PAM.pam()
     try:
-        auth.start(PAM_SERVICE)
-        auth.set_item(PAM.PAM_USER, username)
-        auth.set_item(PAM.PAM_CONV, _conv)
-    except Exception as exc:
-        # Ошибка настройки PAM-сессии (например, нет такого сервиса) — это
-        # не "неверный пароль", а поломка самой проверки, об этом надо
-        # явно сообщить, а не молча отклонять попытку.
-        raise AdminAuthError(
-            f"Не удалось подготовить проверку пароля через PAM для пользователя {username}: {exc}"
-        ) from exc
-
-    try:
-        auth.authenticate()
-    except PAM.error:
-        return False
+        return bool(pam.authenticate(username, password, service=PAM_SERVICE))
     except Exception as exc:
         raise AdminAuthError(
             f"Не удалось проверить пароль через PAM для пользователя {username}: {exc}"
         ) from exc
-    return True
