@@ -1059,6 +1059,7 @@ EVENT_HUB_SECTIONS = {"events", "staff"}
 
 MENU_VISIBILITY = {
     "registration_desk": {"admin", "manager", "department_head", "viewer"},
+    "broadcast": {"admin", "manager", "department_head", "viewer"},
     "events": {"admin", "manager", "department_head", "viewer"},
     "staff": {"admin", "manager", "department_head"},
     "messenger": {"admin"},
@@ -1748,32 +1749,12 @@ def hub_event_queue_reorder(event_id):
     return jsonify(_hub_queue_build_state(table["id"]))
 
 
-@app.route("/events-hub/<int:event_id>/screen")
-def hub_event_broadcast_screen(event_id):
-    """Публичный экран трансляции мероприятия — БЕЗ авторизации, по
-    прямому запросу ТЗ ("Трансляция" доступна без входа всем, только
-    просмотр), независимо и дополнительно к уже существующему /broadcast,
-    который не трогаем."""
-    row = query_db("SELECT id, title FROM hub_events WHERE id=?", (event_id,), one=True)
-    if not row:
-        abort(404)
-    return render_template("events_hub_screen.html", event=dict(row))
-
-
-@app.route("/api/events-hub/<int:event_id>/screen-state", methods=["GET"])
-def hub_event_screen_state(event_id):
-    table = query_db("SELECT id FROM import_tables WHERE hub_event_id=?", (event_id,), one=True)
-    if not table:
-        return jsonify({"current": None, "next": None})
-    state = _hub_queue_build_state(table["id"])
-    pending = [i for i in state["items"] if i["status"] is None]
-    current = pending[0] if pending else None
-    next_item = pending[1] if len(pending) > 1 else None
-    return jsonify({
-        "current": current["label"] if current else None,
-        "next": next_item["label"] if next_item else None,
-    })
-
+# Отдельного публичного "экрана трансляции мероприятия" здесь больше нет —
+# трансляция (видео + её собственный вывод) одна на весь сайт и не может
+# идти параллельно по нескольким мероприятиям сразу (владелец поправил ТЗ
+# на эту тему), поэтому эту роль продолжает играть уже существующий общий
+# /broadcast, который не трогаем. "Очередь" выше — инструмент just для
+# самого мероприятия (порядок выступающих), без отдельного публичного showcase.
 
 # --- Разделы в разработке (пункты меню-заглушки на будущее) ---
 PLACEHOLDER_DESCRIPTION = "Раздел в разработке — появится в одном из следующих обновлений."

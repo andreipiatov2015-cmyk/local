@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ event.title }} — Мероприятие</title>
   <link rel="stylesheet" href="/static/admin.css" />
+  <link rel="stylesheet" href="/static/tables.css" />
   <link rel="stylesheet" href="/static/registration_desk.css" />
 </head>
 <body class="tables-page">
@@ -98,9 +99,6 @@
     <section class="card page-card" style="margin-top:20px;">
       <div class="desk-detail-header" style="margin-bottom:0;">
         <h2 class="desk-section-title" style="margin:0;">Очередь</h2>
-        <a href="/events-hub/{{ event.id }}/screen" target="_blank" rel="noopener" class="btn btn-secondary">
-          Открыть экран трансляции ↗
-        </a>
       </div>
       <p class="hint">Перетащите за ☰, чтобы изменить порядок. ✓ — выступил, ✗ — не приехал.</p>
       <style>
