@@ -580,7 +580,30 @@ def init_db():
         )
     """)
 
-    # Таблица мероприятий
+    # Новый хаб "Мероприятие" (см. план пересборки) — ПОЛНОСТЬЮ независимая
+    # таблица от старой "events" ниже (та по факту только настройки VK-
+    # трансляции) и от import_tables/registration_desks: по решению
+    # владельца, старые сущности не переносим, новый хаб — только для новых
+    # мероприятий, идущих вперёд. Вкладки хаба (Заявки/Форма/Очередь/
+    # Трансляция) добавляются на следующих этапах через nullable
+    # hub_event_id в соответствующих таблицах — ниже уже добавлена для
+    # registration_desks.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS hub_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            department_id INTEGER,
+            title TEXT NOT NULL,
+            address TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            responsible_list_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    # Таблица мероприятий (старая, "события VK-трансляции" — см. /editor)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -863,6 +886,7 @@ def init_db():
         "ALTER TABLE registration_desks ADD COLUMN publish_slug TEXT",
         "ALTER TABLE registration_desks ADD COLUMN published_at TEXT",
         "ALTER TABLE users ADD COLUMN department_id INTEGER",
+        "ALTER TABLE registration_desks ADD COLUMN hub_event_id INTEGER",
     ]:
         try:
             cur.execute(stmt)
@@ -1237,6 +1261,143 @@ def create_event():
         (data["title"], data["address"], data["start_date"], data["end_date"])
     )
     return jsonify({"status": "ok"})
+
+# --- Хаб "Мероприятие" (пересборка вокруг мероприятия, этап 2) ---
+# ПОЛНОСТЬЮ независим от старой "events" выше (это настройки VK-трансляции)
+# и от import_tables/registration_desks — по решению владельца, старые
+# сущности не мигрируем, хаб только для НОВЫХ мероприятий. Привязка
+# "Стойки регистрации" к мероприятию — через nullable
+# registration_desks.hub_event_id, без него всё работает как раньше.
+
+def _hub_event_can_manage(user, event):
+    """Полная карточка с вкладками и редактированием — создателю, а также
+    department_head своего отдела и manager/admin. Остальным (включая
+    department_head чужого отдела) — только контекст, см. hub_event_detail."""
+    if user["role"] in ("admin", "manager"):
+        return True
+    if user["role"] == "department_head":
+        return event["department_id"] is not None and event["department_id"] == user["department_id"]
+    return event["user_id"] == user["id"]
+
+
+def _hub_event_to_dict(row):
+    d = dict(row)
+    try:
+        d["responsible_list"] = json.loads(d.get("responsible_list_json") or "[]")
+    except (TypeError, ValueError):
+        d["responsible_list"] = []
+    return d
+
+
+@app.route("/events-hub")
+@login_required
+def hub_events_list():
+    # Прошедшие (по дате окончания) уходят из общего списка — ТЗ п.5.
+    # NULL end_date (дата ещё не указана) считаем "не прошедшим".
+    rows = query_db(
+        "SELECT * FROM hub_events WHERE end_date IS NULL OR end_date >= ? "
+        "ORDER BY (start_date IS NULL), start_date",
+        (datetime.date.today().isoformat(),),
+    )
+    return render_template("events_hub_list.html", events=[_hub_event_to_dict(r) for r in rows])
+
+
+@app.route("/api/events-hub", methods=["POST"])
+@login_required
+def hub_events_create():
+    user = get_current_user()
+    title = (request.form.get("title") or "").strip()
+    if not title:
+        return jsonify({"detail": "Название обязательно"}), 400
+    address = (request.form.get("address") or "").strip()
+    start_date = (request.form.get("start_date") or "").strip() or None
+    end_date = (request.form.get("end_date") or "").strip() or None
+    ts = now_iso()
+    new_id = insert_and_get_id(
+        "INSERT INTO hub_events (user_id, department_id, title, address, start_date, end_date, responsible_list_json, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?)",
+        (user["id"], user["department_id"], title, address, start_date, end_date, ts, ts),
+    )
+    return redirect(url_for("hub_event_detail", event_id=new_id))
+
+
+@app.route("/events-hub/<int:event_id>")
+@login_required
+def hub_event_detail(event_id):
+    user = get_current_user()
+    row = query_db("SELECT * FROM hub_events WHERE id=?", (event_id,), one=True)
+    if not row:
+        abort(404)
+    event = _hub_event_to_dict(row)
+    can_manage = _hub_event_can_manage(user, event)
+    registration_desk = None
+    if can_manage:
+        desk_row = query_db(
+            "SELECT id, title, publish_slug, user_id FROM registration_desks WHERE hub_event_id=?",
+            (event_id,), one=True,
+        )
+        if desk_row:
+            registration_desk = dict(desk_row)
+            # Открыть для полного редактирования (конструктор вопросов,
+            # ответы) можно только со страницы самого создателя формы —
+            # /registration-desk/<id> проверяет владение по user_id и пока
+            # не знает о доступе "через мероприятие" (чтобы не расширять
+            # и не рисковать регрессией уже рабочей Стойки регистрации в
+            # этом же PR). Остальным с правами на мероприятие показываем
+            # здесь же только публичную ссылку, без перехода на 404.
+            registration_desk["is_owner"] = registration_desk["user_id"] == user["id"]
+            registration_desk["publish_url"] = (
+                f"{PUBLIC_FORM_BASE_URL}/{registration_desk['publish_slug']}" if registration_desk["publish_slug"] else None
+            )
+    return render_template(
+        "events_hub_detail.html", event=event, can_manage=can_manage, registration_desk=registration_desk,
+    )
+
+
+@app.route("/api/events-hub/<int:event_id>/responsible", methods=["POST"])
+@login_required
+def hub_event_set_responsible(event_id):
+    user = get_current_user()
+    row = query_db("SELECT * FROM hub_events WHERE id=?", (event_id,), one=True)
+    if not row:
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    if not _hub_event_can_manage(user, dict(row)):
+        return jsonify({"detail": "Доступ запрещён"}), 403
+    usernames = [u.strip() for u in (request.form.get("usernames") or "").split(",") if u.strip()]
+    resolved = []
+    for uname in usernames:
+        urow = query_db("SELECT id, username FROM users WHERE username=?", (uname,), one=True)
+        if urow:
+            resolved.append({"id": urow["id"], "username": urow["username"]})
+    query_db(
+        "UPDATE hub_events SET responsible_list_json=?, updated_at=? WHERE id=?",
+        (json.dumps(resolved, ensure_ascii=False), now_iso(), event_id),
+    )
+    return redirect(url_for("hub_event_detail", event_id=event_id))
+
+
+@app.route("/api/events-hub/<int:event_id>/registration-desk", methods=["POST"])
+@login_required
+def hub_event_create_registration_desk(event_id):
+    """Создаёт новую «Стойку регистрации», сразу привязанную к мероприятию
+    (hub_event_id) — переиспользует существующую таблицу registration_desks
+    целиком, ничего не копирует. Если у мероприятия уже есть привязанная
+    форма — просто ведёт на неё, вторую не создаёт."""
+    user = get_current_user()
+    row = query_db("SELECT * FROM hub_events WHERE id=?", (event_id,), one=True)
+    if not row:
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    if not _hub_event_can_manage(user, dict(row)):
+        return jsonify({"detail": "Доступ запрещён"}), 403
+    existing = query_db("SELECT id FROM registration_desks WHERE hub_event_id=?", (event_id,), one=True)
+    if existing:
+        return redirect(url_for("hub_event_detail", event_id=event_id))
+    ts = now_iso()
+    insert_and_get_id(
+        "INSERT INTO registration_desks (user_id, title, event_date, hub_event_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (user["id"], row["title"], row["start_date"], event_id, ts, ts),
+    )
+    return redirect(url_for("hub_event_detail", event_id=event_id))
 
 # --- Разделы в разработке (пункты меню-заглушки на будущее) ---
 PLACEHOLDER_DESCRIPTION = "Раздел в разработке — появится в одном из следующих обновлений."
