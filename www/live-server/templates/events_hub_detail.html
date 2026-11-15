@@ -92,7 +92,147 @@
       {% endif %}
     </section>
 
-    <p class="hint" style="margin-top:12px;">Вкладки «Очередь» и «Трансляция» появятся здесь на следующих этапах пересборки.</p>
+    {% endif %}
+
+    {% if can_manage_queue and has_table %}
+    <section class="card page-card" style="margin-top:20px;">
+      <div class="desk-detail-header" style="margin-bottom:0;">
+        <h2 class="desk-section-title" style="margin:0;">Очередь</h2>
+        <a href="/events-hub/{{ event.id }}/screen" target="_blank" rel="noopener" class="btn btn-secondary">
+          Открыть экран трансляции ↗
+        </a>
+      </div>
+      <p class="hint">Перетащите за ☰, чтобы изменить порядок. ✓ — выступил, ✗ — не приехал.</p>
+      <style>
+        #queueContainer .entry { grid-template-columns: auto 1fr auto auto auto; align-items: center; }
+        #queueContainer .entry.queue-current { border-color: #38bdf8; box-shadow: 0 0 0 1px #38bdf8 inset; }
+        #queueContainer .entry.queue-done { opacity: 0.55; }
+        #queueContainer .move-handle { cursor: grab; }
+        #queueContainer .entry.dragging { opacity: 0.4; }
+      </style>
+      <div class="entries-list" id="queueContainer"></div>
+    </section>
+
+    <script>
+      const QUEUE_EVENT_ID = {{ event.id }};
+      let queueDragInProgress = false;
+
+      function queueEscapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function renderQueue(state) {
+        const container = document.getElementById('queueContainer');
+        if (!state.items.length) {
+          container.innerHTML = '<p class="status status-muted">В таблице заявок пока нет участников.</p>';
+          return;
+        }
+        container.innerHTML = '';
+        state.items.forEach(item => {
+          const entryDiv = document.createElement('div');
+          entryDiv.classList.add('entry');
+          entryDiv.draggable = true;
+          entryDiv.dataset.itemId = item.id;
+          if (item.is_current) entryDiv.classList.add('queue-current');
+          if (item.status) entryDiv.classList.add('queue-done');
+          const statusLabel = item.status === 'done' ? 'выступил' : item.status === 'no_show' ? 'не приехал' : (item.is_current ? 'сейчас' : '');
+          entryDiv.innerHTML = `
+            <span class="move-handle">☰</span>
+            <span class="entry-field">${queueEscapeHtml(item.label)}</span>
+            <span class="entry-field status status-muted">${statusLabel}</span>
+            <button type="button" class="btn btn-secondary queue-mark" data-status="done" title="Выступил">✓</button>
+            <button type="button" class="btn btn-secondary queue-mark" data-status="no_show" title="Не приехал">✗</button>
+          `;
+          container.appendChild(entryDiv);
+        });
+      }
+
+      async function loadQueue() {
+        if (queueDragInProgress) return;
+        try {
+          const resp = await fetch(`/api/events-hub/${QUEUE_EVENT_ID}/queue`);
+          if (!resp.ok) return;
+          renderQueue(await resp.json());
+        } catch (e) {
+          // следующий тик попробует снова
+        }
+      }
+
+      async function markItem(itemId, status) {
+        try {
+          const resp = await fetch(`/api/events-hub/${QUEUE_EVENT_ID}/queue/mark`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({item_id: itemId, status: status}),
+          });
+          if (resp.ok) renderQueue(await resp.json());
+        } catch (e) {
+          // игнорируем - следующий polling-тик синхронизирует состояние
+        }
+      }
+
+      async function reorderQueue() {
+        const ids = Array.from(document.getElementById('queueContainer').querySelectorAll('.entry'))
+          .map(el => parseInt(el.dataset.itemId, 10));
+        try {
+          const resp = await fetch(`/api/events-hub/${QUEUE_EVENT_ID}/queue/reorder`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({item_ids: ids}),
+          });
+          if (resp.ok) renderQueue(await resp.json());
+        } catch (e) {
+          // игнорируем - следующий polling-тик синхронизирует состояние
+        }
+      }
+
+      (function setupQueueInteractions() {
+        const container = document.getElementById('queueContainer');
+        let draggedEntry = null;
+
+        container.addEventListener('click', (e) => {
+          const button = e.target.closest('.queue-mark');
+          if (!button) return;
+          const entry = button.closest('.entry');
+          markItem(parseInt(entry.dataset.itemId, 10), button.dataset.status);
+        });
+
+        container.addEventListener('dragstart', (e) => {
+          const entry = e.target.closest('.entry');
+          if (entry && e.target.classList.contains('move-handle')) {
+            draggedEntry = entry;
+            queueDragInProgress = true;
+            draggedEntry.classList.add('dragging');
+            e.dataTransfer.setData('text/plain', '');
+          }
+        });
+
+        container.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          if (!draggedEntry) return;
+          const targetEntry = e.target.closest('.entry');
+          if (targetEntry && targetEntry !== draggedEntry) {
+            const rect = targetEntry.getBoundingClientRect();
+            const next = (e.clientY - rect.top) / rect.height > 0.5;
+            container.insertBefore(draggedEntry, next ? targetEntry.nextSibling : targetEntry);
+          }
+        });
+
+        container.addEventListener('dragend', () => {
+          queueDragInProgress = false;
+          if (draggedEntry) {
+            draggedEntry.classList.remove('dragging');
+            draggedEntry = null;
+            reorderQueue();
+          }
+        });
+      })();
+
+      loadQueue();
+      setInterval(loadQueue, 1500);
+    </script>
     {% endif %}
   </main>
 

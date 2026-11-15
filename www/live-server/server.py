@@ -890,6 +890,7 @@ def init_db():
         "ALTER TABLE import_tables ADD COLUMN hub_event_id INTEGER",
         "ALTER TABLE hub_events ADD COLUMN retention_extended_days INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE hub_events ADD COLUMN reminders_sent_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE import_tables ADD COLUMN queue_state_json TEXT NOT NULL DEFAULT '{}'",
     ]:
         try:
             cur.execute(stmt)
@@ -1283,6 +1284,16 @@ def _hub_event_can_manage(user, event):
     return event["user_id"] == user["id"]
 
 
+def _hub_event_can_manage_queue(user, event):
+    """Доступ к табу "Очередь" — тем же, кто управляет мероприятием, ПЛЮС
+    разовая выдача "админ 2-го этажа" (ТЗ): любой, кого создатель вписал в
+    Лист ответственных, независимо от его обычной роли в системе."""
+    if _hub_event_can_manage(user, event):
+        return True
+    responsible_ids = {p.get("id") for p in (event.get("responsible_list") or [])}
+    return user["id"] in responsible_ids
+
+
 def _hub_event_to_dict(row):
     d = dict(row)
     try:
@@ -1448,9 +1459,17 @@ def hub_event_detail(event_id):
             import_table = dict(table_row)
             import_table["is_owner"] = import_table["user_id"] == user["id"]
         retention = hub_event_retention_info(event)
+    # "Очередь" — отдельное право (ТЗ "админ 2-го этажа"): шире, чем
+    # can_manage (включает Лист ответственных), но НЕ даёт доступа к
+    # Заявкам/Форме регистрации выше — только к самой очереди.
+    can_manage_queue = _hub_event_can_manage_queue(user, event)
+    has_table = bool(import_table) or query_db(
+        "SELECT 1 FROM import_tables WHERE hub_event_id=?", (event_id,), one=True,
+    ) is not None
     return render_template(
         "events_hub_detail.html", event=event, can_manage=can_manage, registration_desk=registration_desk,
         import_table=import_table, retention=retention,
+        can_manage_queue=can_manage_queue, has_table=has_table,
     )
 
 
@@ -1539,6 +1558,205 @@ def hub_event_extend_retention(event_id):
         (now_iso(), event_id),
     )
     return redirect(url_for("hub_event_detail", event_id=event_id))
+
+
+# --- Очередь выступающих (этап 4) ---
+# Порядок участников — тот же card_sequence_json, что уже реально строит
+# и сохраняет вкладка "Заявки" (/tables), см. table_card_sequence выше —
+# не копируем и не параллелим его. Отметки "выступил"/"не приехал" и
+# указатель "кто сейчас" держим ОТДЕЛЬНО, в своём import_tables.
+# queue_state_json: POST .../card-sequence на /tables перезаписывает
+# card_sequence_json целиком (включая порядок) — если бы статусы очереди
+# жили в том же поле, любое сохранение порядка на /tables молча стирало
+# бы их.
+#
+# Отображаемое имя участника — по решению владельца, первая непустая
+# ячейка его строки Excel (import_table_rows.raw_row_json), БЕЗ повторения
+# клиентской логики сопоставления колонок с tables.js — risk того, что на
+# экране покажется не то поле, если первым столбцом в Excel идёт что-то
+# служебное, принят сознательно ради простоты и надёжности на этом этапе.
+
+def _hub_queue_participant_label(table_id, row_ref):
+    row = query_db(
+        "SELECT raw_row_json FROM import_table_rows WHERE table_id=? AND row_index=?",
+        (table_id, row_ref), one=True,
+    )
+    if row:
+        try:
+            cells = json.loads(row["raw_row_json"] or "[]")
+        except (TypeError, ValueError):
+            cells = []
+        for cell in cells:
+            text = str(cell).strip() if cell is not None else ""
+            if text:
+                return text
+    return f"Участник №{row_ref}"
+
+
+def _hub_queue_build_state(table_id):
+    table = query_db(
+        "SELECT card_sequence_json, queue_state_json FROM import_tables WHERE id=?",
+        (table_id,), one=True,
+    )
+    if not table:
+        return {"items": [], "current_item_id": None}
+    try:
+        sequence = json.loads(table["card_sequence_json"] or "{}")
+    except (TypeError, ValueError):
+        sequence = {}
+    raw_items = sequence.get("items") if isinstance(sequence, dict) else None
+    raw_items = raw_items if isinstance(raw_items, list) else []
+
+    try:
+        state = json.loads(table["queue_state_json"] or "{}")
+    except (TypeError, ValueError):
+        state = {}
+    statuses = state.get("statuses") if isinstance(state, dict) else None
+    statuses = statuses if isinstance(statuses, dict) else {}
+    stored_current = state.get("current_item_id") if isinstance(state, dict) else None
+
+    items = []
+    for raw in raw_items:
+        if not isinstance(raw, dict) or raw.get("type") != "participant":
+            continue
+        item_id = raw.get("id")
+        row_ref = raw.get("rowRef")
+        label = _hub_queue_participant_label(table_id, row_ref) if isinstance(row_ref, int) else f"Участник {item_id}"
+        items.append({"id": item_id, "label": label, "status": statuses.get(item_id)})
+
+    current_id = stored_current
+    if not any(i["id"] == current_id and i["status"] is None for i in items):
+        current_id = next((i["id"] for i in items if i["status"] is None), None)
+    for item in items:
+        item["is_current"] = item["id"] == current_id
+    return {"items": items, "current_item_id": current_id}
+
+
+def _hub_queue_set_status(table_id, item_id, status):
+    table = query_db(
+        "SELECT card_sequence_json, queue_state_json FROM import_tables WHERE id=?",
+        (table_id,), one=True,
+    )
+    if not table:
+        return
+    try:
+        sequence = json.loads(table["card_sequence_json"] or "{}")
+    except (TypeError, ValueError):
+        sequence = {}
+    raw_items = sequence.get("items") if isinstance(sequence, dict) else None
+    raw_items = raw_items if isinstance(raw_items, list) else []
+    participant_ids = [it.get("id") for it in raw_items if isinstance(it, dict) and it.get("type") == "participant"]
+
+    try:
+        state = json.loads(table["queue_state_json"] or "{}")
+    except (TypeError, ValueError):
+        state = {}
+    statuses = state.get("statuses") if isinstance(state, dict) else None
+    statuses = dict(statuses) if isinstance(statuses, dict) else {}
+    statuses[item_id] = status
+
+    next_current = next((pid for pid in participant_ids if statuses.get(pid) is None), None)
+    query_db(
+        "UPDATE import_tables SET queue_state_json=? WHERE id=?",
+        (json.dumps({"statuses": statuses, "current_item_id": next_current}, ensure_ascii=False), table_id),
+    )
+
+
+def _hub_event_and_table_or_error(event_id, user):
+    """Общая проверка для всех роутов очереди — возвращает (table_row, None)
+    или (None, (jsonify(...), status)) для немедленного return у вызывающего."""
+    row = query_db("SELECT * FROM hub_events WHERE id=?", (event_id,), one=True)
+    if not row:
+        return None, (jsonify({"detail": "Мероприятие не найдено"}), 404)
+    event = _hub_event_to_dict(row)
+    if not _hub_event_can_manage_queue(user, event):
+        return None, (jsonify({"detail": "Доступ запрещён"}), 403)
+    table = query_db("SELECT id FROM import_tables WHERE hub_event_id=?", (event_id,), one=True)
+    if not table:
+        return None, (jsonify({"detail": "У мероприятия ещё нет таблицы заявок"}), 404)
+    return table, None
+
+
+@app.route("/api/events-hub/<int:event_id>/queue", methods=["GET"])
+@login_required
+def hub_event_queue_state(event_id):
+    table, error = _hub_event_and_table_or_error(event_id, get_current_user())
+    if error:
+        return error
+    return jsonify(_hub_queue_build_state(table["id"]))
+
+
+@app.route("/api/events-hub/<int:event_id>/queue/mark", methods=["POST"])
+@login_required
+def hub_event_queue_mark(event_id):
+    table, error = _hub_event_and_table_or_error(event_id, get_current_user())
+    if error:
+        return error
+    payload = request.get_json(silent=True) or {}
+    item_id, status = payload.get("item_id"), payload.get("status")
+    if status not in ("done", "no_show"):
+        return jsonify({"detail": "Недопустимый статус"}), 400
+    _hub_queue_set_status(table["id"], item_id, status)
+    return jsonify(_hub_queue_build_state(table["id"]))
+
+
+@app.route("/api/events-hub/<int:event_id>/queue/reorder", methods=["POST"])
+@login_required
+def hub_event_queue_reorder(event_id):
+    table, error = _hub_event_and_table_or_error(event_id, get_current_user())
+    if error:
+        return error
+    payload = request.get_json(silent=True) or {}
+    order = payload.get("item_ids")
+    if not isinstance(order, list):
+        return jsonify({"detail": "Ожидается item_ids"}), 400
+    table_row = query_db("SELECT card_sequence_json FROM import_tables WHERE id=?", (table["id"],), one=True)
+    try:
+        sequence = json.loads(table_row["card_sequence_json"] or "{}")
+    except (TypeError, ValueError):
+        sequence = {}
+    items = sequence.get("items") if isinstance(sequence, dict) else None
+    items = items if isinstance(items, list) else []
+    by_id = {it.get("id"): it for it in items if isinstance(it, dict)}
+    order_set = set(order)
+    reordered = [by_id[i] for i in order if i in by_id]
+    # Элементы, которых почему-то не было в присланном порядке (не должно
+    # случаться при обычной работе интерфейса), дописываем в конец, а не
+    # теряем молча.
+    reordered += [it for it in items if it.get("id") not in order_set]
+    query_db(
+        "UPDATE import_tables SET card_sequence_json=?, updated_at=? WHERE id=?",
+        (json.dumps({"items": reordered}, ensure_ascii=False), now_iso(), table["id"]),
+    )
+    return jsonify(_hub_queue_build_state(table["id"]))
+
+
+@app.route("/events-hub/<int:event_id>/screen")
+def hub_event_broadcast_screen(event_id):
+    """Публичный экран трансляции мероприятия — БЕЗ авторизации, по
+    прямому запросу ТЗ ("Трансляция" доступна без входа всем, только
+    просмотр), независимо и дополнительно к уже существующему /broadcast,
+    который не трогаем."""
+    row = query_db("SELECT id, title FROM hub_events WHERE id=?", (event_id,), one=True)
+    if not row:
+        abort(404)
+    return render_template("events_hub_screen.html", event=dict(row))
+
+
+@app.route("/api/events-hub/<int:event_id>/screen-state", methods=["GET"])
+def hub_event_screen_state(event_id):
+    table = query_db("SELECT id FROM import_tables WHERE hub_event_id=?", (event_id,), one=True)
+    if not table:
+        return jsonify({"current": None, "next": None})
+    state = _hub_queue_build_state(table["id"])
+    pending = [i for i in state["items"] if i["status"] is None]
+    current = pending[0] if pending else None
+    next_item = pending[1] if len(pending) > 1 else None
+    return jsonify({
+        "current": current["label"] if current else None,
+        "next": next_item["label"] if next_item else None,
+    })
+
 
 # --- Разделы в разработке (пункты меню-заглушки на будущее) ---
 PLACEHOLDER_DESCRIPTION = "Раздел в разработке — появится в одном из следующих обновлений."
