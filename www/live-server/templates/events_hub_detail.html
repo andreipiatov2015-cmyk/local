@@ -61,7 +61,38 @@
       {% endif %}
     </section>
 
-    <p class="hint" style="margin-top:12px;">Вкладки «Заявки», «Очередь» и «Трансляция» появятся здесь на следующих этапах пересборки.</p>
+    <section class="card page-card desk-builder" style="margin-top:20px;">
+      <h2 class="desk-section-title">Заявки</h2>
+      {% if import_table %}
+        {% if import_table.is_owner %}
+          <p>
+            <a href="/tables/{{ import_table.id }}" class="btn btn-primary">Открыть таблицу заявок</a>
+          </p>
+        {% else %}
+          <p class="status status-muted">Таблица заявок уже создана (статус: {{ import_table.status }}) — открыть её может только создатель.</p>
+        {% endif %}
+        {% if retention %}
+          {% if retention.days_left > 0 %}
+            <p class="hint">
+              Материалы будут автоматически удалены {{ retention.deletion_date }}
+              (через {{ retention.days_left }} дн.) после окончания мероприятия.
+            </p>
+            <form method="post" action="/api/events-hub/{{ event.id }}/extend-retention">
+              <button type="submit" class="btn btn-secondary">Продлить +30 дней</button>
+            </form>
+          {% else %}
+            <p class="status status-error">Срок хранения истёк — материалы будут удалены в ближайшей проверке.</p>
+          {% endif %}
+        {% endif %}
+      {% else %}
+        <p class="hint">У этого мероприятия ещё нет таблицы заявок.</p>
+        <form method="post" action="/api/events-hub/{{ event.id }}/table">
+          <button type="submit" class="btn btn-primary">Создать таблицу заявок</button>
+        </form>
+      {% endif %}
+    </section>
+
+    <p class="hint" style="margin-top:12px;">Вкладки «Очередь» и «Трансляция» появятся здесь на следующих этапах пересборки.</p>
     {% endif %}
   </main>
 

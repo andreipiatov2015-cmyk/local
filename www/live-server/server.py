@@ -887,6 +887,9 @@ def init_db():
         "ALTER TABLE registration_desks ADD COLUMN published_at TEXT",
         "ALTER TABLE users ADD COLUMN department_id INTEGER",
         "ALTER TABLE registration_desks ADD COLUMN hub_event_id INTEGER",
+        "ALTER TABLE import_tables ADD COLUMN hub_event_id INTEGER",
+        "ALTER TABLE hub_events ADD COLUMN retention_extended_days INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE hub_events ADD COLUMN reminders_sent_json TEXT NOT NULL DEFAULT '[]'",
     ]:
         try:
             cur.execute(stmt)
@@ -1289,6 +1292,91 @@ def _hub_event_to_dict(row):
     return d
 
 
+# --- Хранение/напоминания для материалов "Заявок" привязанного мероприятия ---
+HUB_EVENT_RETENTION_DAYS = 30
+HUB_EVENT_REMINDER_DAYS_BEFORE = [15, 10, 5, 2, 1]
+
+
+def hub_event_deletion_date(event):
+    """Дата удаления материалов «Заявок» — None, если дата окончания
+    мероприятия ещё не указана (отсчитывать не от чего)."""
+    if not event.get("end_date"):
+        return None
+    end = datetime.date.fromisoformat(event["end_date"])
+    return end + datetime.timedelta(days=HUB_EVENT_RETENTION_DAYS + (event.get("retention_extended_days") or 0))
+
+
+def hub_event_retention_info(event):
+    """Для отображения в карточке — None, если дата окончания не указана."""
+    deletion_date = hub_event_deletion_date(event)
+    if deletion_date is None:
+        return None
+    return {
+        "deletion_date": deletion_date.isoformat(),
+        "days_left": (deletion_date - datetime.date.today()).days,
+    }
+
+
+_hub_events_retention_started = False
+
+
+def hub_events_retention_worker():
+    """Раз в сутки: напоминает создателю за 15/10/5/2/1 день до удаления
+    материалов «Заявок» привязанной к мероприятию таблицы (по образцу
+    cleanup_old_tables, но от hub_events.end_date, а не от created_at
+    мёртвой table_workspaces) и удаляет их по истечении срока."""
+    while True:
+        rows = query_db(
+            "SELECT he.id AS event_id, he.title, he.user_id, he.end_date, he.retention_extended_days, "
+            "he.reminders_sent_json, it.id AS table_id, it.user_id AS table_user_id "
+            "FROM hub_events he JOIN import_tables it ON it.hub_event_id = he.id "
+            "WHERE he.end_date IS NOT NULL"
+        )
+        for row in rows:
+            event = dict(row)
+            deletion_date = hub_event_deletion_date(event)
+            if deletion_date is None:
+                continue
+            days_left = (deletion_date - datetime.date.today()).days
+            if days_left <= 0:
+                delete_import_table_materials(event["table_id"], event["table_user_id"])
+                continue
+            if days_left not in HUB_EVENT_REMINDER_DAYS_BEFORE:
+                continue
+            try:
+                already_sent = json.loads(event.get("reminders_sent_json") or "[]")
+            except (TypeError, ValueError):
+                already_sent = []
+            if days_left in already_sent:
+                continue
+            creator = query_db("SELECT email FROM users WHERE id=?", (event["user_id"],), one=True)
+            if creator and creator["email"]:
+                try:
+                    send_email(
+                        creator["email"],
+                        "Скоро удалятся материалы мероприятия",
+                        f"Материалы «Заявок» мероприятия «{event['title']}» будут удалены через {days_left} дн. "
+                        "Чтобы продлить хранение ещё на 30 дней, откройте карточку мероприятия и нажмите "
+                        "«Продлить +30 дней».",
+                    )
+                except RuntimeError:
+                    app.logger.exception("[hub_events_retention] не удалось отправить напоминание event=%s", event["event_id"])
+            already_sent.append(days_left)
+            query_db(
+                "UPDATE hub_events SET reminders_sent_json=? WHERE id=?",
+                (json.dumps(already_sent), event["event_id"]),
+            )
+        time.sleep(24 * 3600)
+
+
+def start_hub_events_background_jobs():
+    global _hub_events_retention_started
+    if _hub_events_retention_started:
+        return
+    threading.Thread(target=hub_events_retention_worker, daemon=True).start()
+    _hub_events_retention_started = True
+
+
 @app.route("/events-hub")
 @login_required
 def hub_events_list():
@@ -1349,8 +1437,20 @@ def hub_event_detail(event_id):
             registration_desk["publish_url"] = (
                 f"{PUBLIC_FORM_BASE_URL}/{registration_desk['publish_slug']}" if registration_desk["publish_slug"] else None
             )
+    import_table = None
+    retention = None
+    if can_manage:
+        table_row = query_db(
+            "SELECT id, title, status, user_id FROM import_tables WHERE hub_event_id=?",
+            (event_id,), one=True,
+        )
+        if table_row:
+            import_table = dict(table_row)
+            import_table["is_owner"] = import_table["user_id"] == user["id"]
+        retention = hub_event_retention_info(event)
     return render_template(
         "events_hub_detail.html", event=event, can_manage=can_manage, registration_desk=registration_desk,
+        import_table=import_table, retention=retention,
     )
 
 
@@ -1396,6 +1496,47 @@ def hub_event_create_registration_desk(event_id):
     insert_and_get_id(
         "INSERT INTO registration_desks (user_id, title, event_date, hub_event_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
         (user["id"], row["title"], row["start_date"], event_id, ts, ts),
+    )
+    return redirect(url_for("hub_event_detail", event_id=event_id))
+
+
+@app.route("/api/events-hub/<int:event_id>/table", methods=["POST"])
+@login_required
+def hub_event_create_table(event_id):
+    """Аналогично hub_event_create_registration_desk — создаёт «Таблицу
+    заявок», сразу привязанную к мероприятию (import_tables.hub_event_id),
+    переиспользуя существующую таблицу import_tables целиком."""
+    user = get_current_user()
+    row = query_db("SELECT * FROM hub_events WHERE id=?", (event_id,), one=True)
+    if not row:
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    if not _hub_event_can_manage(user, dict(row)):
+        return jsonify({"detail": "Доступ запрещён"}), 403
+    existing = query_db("SELECT id FROM import_tables WHERE hub_event_id=?", (event_id,), one=True)
+    if existing:
+        return redirect(url_for("hub_event_detail", event_id=event_id))
+    ts = now_iso()
+    insert_and_get_id(
+        "INSERT INTO import_tables (user_id, title, status, hub_event_id, created_at, updated_at) VALUES (?, ?, 'new', ?, ?, ?)",
+        (user["id"], row["title"], event_id, ts, ts),
+    )
+    return redirect(url_for("hub_event_detail", event_id=event_id))
+
+
+@app.route("/api/events-hub/<int:event_id>/extend-retention", methods=["POST"])
+@login_required
+def hub_event_extend_retention(event_id):
+    user = get_current_user()
+    row = query_db("SELECT * FROM hub_events WHERE id=?", (event_id,), one=True)
+    if not row:
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    if not _hub_event_can_manage(user, dict(row)):
+        return jsonify({"detail": "Доступ запрещён"}), 403
+    # Сбрасываем уже отправленные напоминания — после продления отсчёт идёт
+    # заново, и за 15/10/5/2/1 день до НОВОГО срока нужно напомнить снова.
+    query_db(
+        "UPDATE hub_events SET retention_extended_days = retention_extended_days + 30, reminders_sent_json='[]', updated_at=? WHERE id=?",
+        (now_iso(), event_id),
     )
     return redirect(url_for("hub_event_detail", event_id=event_id))
 
@@ -4150,6 +4291,17 @@ def yandex_refresh(table_id):
     return jsonify(body)
 
 
+def delete_import_table_materials(table_id, user_id):
+    """Полное удаление таблицы заявок и файлов на диске — общая логика для
+    ручного удаления через API и для автоматической очистки по истечении
+    срока хранения привязанного к мероприятию "Заявки" (см.
+    hub_events_retention_worker)."""
+    query_db("DELETE FROM import_table_mappings WHERE table_id=?", (table_id,))
+    query_db("DELETE FROM import_table_rows WHERE table_id=?", (table_id,))
+    query_db("DELETE FROM import_tables WHERE id=?", (table_id,))
+    shutil.rmtree(storage_for_table(user_id, table_id), ignore_errors=True)
+
+
 @app.route("/api/tables/<int:table_id>", methods=["GET", "DELETE"])
 def table_info_or_delete(table_id):
     user = table_user_from_request()
@@ -4164,10 +4316,7 @@ def table_info_or_delete(table_id):
         return jsonify({"detail": "Таблица не найдена"}), 404
     if request.method == "GET":
         return jsonify(dict(table))
-    query_db("DELETE FROM import_table_mappings WHERE table_id=?", (table_id,))
-    query_db("DELETE FROM import_table_rows WHERE table_id=?", (table_id,))
-    query_db("DELETE FROM import_tables WHERE id=?", (table_id,))
-    shutil.rmtree(storage_for_table(user["id"], table_id), ignore_errors=True)
+    delete_import_table_materials(table_id, user["id"])
     return jsonify({"status": "ok"})
 
 
@@ -6881,6 +7030,7 @@ ensure_admin_exists()
 ensure_all_user_workspaces()
 migrate_tables_to_current_admin()
 start_tables_background_jobs()
+start_hub_events_background_jobs()
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8083, debug=True)
