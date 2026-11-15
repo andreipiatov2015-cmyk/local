@@ -568,6 +568,18 @@ def init_db():
         )
     """)
 
+    # Отделы — для роли "начальник отдела" (видит/управляет только своим
+    # отделом) и будущего "Листа ответственных" на мероприятиях. Отдельная
+    # таблица, а не просто TEXT-поле на users, чтобы отдел можно было
+    # переименовать в одном месте и не плодить опечатки в написании.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS departments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+
     # Таблица мероприятий
     cur.execute("""
         CREATE TABLE IF NOT EXISTS events (
@@ -850,6 +862,7 @@ def init_db():
         "ALTER TABLE import_table_rows ADD COLUMN participant_edits_json TEXT",
         "ALTER TABLE registration_desks ADD COLUMN publish_slug TEXT",
         "ALTER TABLE registration_desks ADD COLUMN published_at TEXT",
+        "ALTER TABLE users ADD COLUMN department_id INTEGER",
     ]:
         try:
             cur.execute(stmt)
@@ -970,7 +983,7 @@ def send_email(to_email, subject, body):
 # ------------ Авторизация ------------
 def get_current_user():
     if "user_id" in session:
-        row = query_db("SELECT id, username, email, role, is_verified FROM users WHERE id=?", (session["user_id"],), one=True)
+        row = query_db("SELECT id, username, email, role, is_verified, department_id FROM users WHERE id=?", (session["user_id"],), one=True)
         return dict(row) if row else None
     return None
 
@@ -988,6 +1001,41 @@ def inject_current_user():
 # внутри макроса независимо от способа импорта — поэтому роль нужно взять
 # именно так.
 app.jinja_env.globals["current_site_user"] = get_current_user
+
+# --- Видимость разделов меню (пересборка вокруг "Мероприятия") ---
+# Общий рубильник "хаб мероприятий ещё не готов для обычных пользователей" —
+# владелец переключит на True, когда согласует готовность. До этого разделы
+# из EVENT_HUB_SECTIONS видны только admin, даже если роль формально входит
+# в множество MENU_VISIBILITY ниже. Разделы НЕ в EVENT_HUB_SECTIONS (сейчас
+# только "registration_desk") считаются уже готовыми и показываются сразу
+# по роли, без оглядки на рубильник.
+EVENT_HUB_ROLLED_OUT = False
+EVENT_HUB_SECTIONS = {"events", "staff"}
+
+MENU_VISIBILITY = {
+    "registration_desk": {"admin", "manager", "department_head", "viewer"},
+    "events": {"admin", "manager", "department_head", "viewer"},
+    "staff": {"admin", "manager", "department_head"},
+    "messenger": {"admin"},
+    "ai_chat": {"admin"},
+    "consent_check": {"admin"},
+}
+
+
+def menu_item_visible(key, user):
+    """True, если пункт меню `key` должен быть кликабелен для `user`
+    (dict с полем role, либо None для неавторизованного)."""
+    role = user["role"] if user else None
+    if role == "admin":
+        return True
+    if role not in MENU_VISIBILITY.get(key, set()):
+        return False
+    if key in EVENT_HUB_SECTIONS and not EVENT_HUB_ROLLED_OUT:
+        return False
+    return True
+
+
+app.jinja_env.globals["menu_item_visible"] = menu_item_visible
 
 def login_required(f):
     @wraps(f)
@@ -1112,10 +1160,49 @@ def index():
     return redirect("/login")
 
 @app.route("/staff")
-@roles_required("admin")
+@roles_required("admin", "department_head")
 def staff():
-    users = query_db("SELECT id, username, email, role, is_verified FROM users ORDER BY id")
-    return render_template("staff.html", users=users, stream_url=resolve_stream_url())
+    current = get_current_user()
+    if current["role"] == "department_head":
+        users = query_db(
+            "SELECT u.id, u.username, u.email, u.role, u.is_verified, u.department_id, d.name AS department_name "
+            "FROM users u LEFT JOIN departments d ON d.id = u.department_id "
+            "WHERE u.department_id = ? ORDER BY u.id",
+            (current["department_id"],),
+        )
+    else:
+        users = query_db(
+            "SELECT u.id, u.username, u.email, u.role, u.is_verified, u.department_id, d.name AS department_name "
+            "FROM users u LEFT JOIN departments d ON d.id = u.department_id "
+            "ORDER BY u.id"
+        )
+    departments = query_db("SELECT id, name FROM departments ORDER BY name")
+    return render_template(
+        "staff.html", users=users, departments=departments, current_user=current,
+        stream_url=resolve_stream_url(),
+    )
+
+
+@app.route("/staff/departments", methods=["POST"])
+@roles_required("admin")
+def staff_create_department():
+    # Создание/переименование отделов — пока сознательно только для admin:
+    # "переназначать" в ТЗ для начальника отдела относится к сотрудникам
+    # внутри своего отдела, а не к самой структуре отделов в компании.
+    name = (request.form.get("name") or "").strip()
+    if not name:
+        return "Название отдела обязательно", 400
+    query_db("INSERT INTO departments (name, created_at) VALUES (?, ?)", (name, now_iso()))
+    return redirect(url_for("staff"))
+
+
+@app.route("/staff/set_department/<int:user_id>", methods=["POST"])
+@roles_required("admin")
+def staff_set_department(user_id):
+    raw = (request.form.get("department_id") or "").strip()
+    department_id = int(raw) if raw else None
+    query_db("UPDATE users SET department_id=?, updated_at=? WHERE id=?", (department_id, now_iso(), user_id))
+    return redirect(url_for("staff"))
 
 @app.route("/profile")
 @login_required
@@ -1162,12 +1249,12 @@ def messenger():
 @app.route("/ai-chat")
 @login_required
 def ai_chat():
-    return render_template("placeholder.html", active="ai_chat", title="Чат AI", description=PLACEHOLDER_DESCRIPTION)
+    return render_template("placeholder.html", active="ai_chat", title="Помощник", description=PLACEHOLDER_DESCRIPTION)
 
 @app.route("/consent-check")
 @login_required
 def consent_check():
-    return render_template("placeholder.html", active="consent_check", title="Проверка заполнения согласий", description=PLACEHOLDER_DESCRIPTION)
+    return render_template("placeholder.html", active="consent_check", title="Проверка согласий", description=PLACEHOLDER_DESCRIPTION)
 
 # --- Участники / пресеты ---
 @app.route("/entries")
@@ -1190,18 +1277,45 @@ def reorder_entries():
     return jsonify({"message": "Порядок обновлён"}), 200
 
 # --- Управление пользователями ---
+VALID_ROLES = ["admin", "editor", "viewer", "manager", "department_head"]
+# Роли, которые начальник отдела смеет назначать своим сотрудникам — не
+# admin/editor: иначе любой начальник отдела мог бы сам выдать себе или
+# кому-то полный доступ, это уже привилегия уровня администратора.
+DEPARTMENT_HEAD_ASSIGNABLE_ROLES = ["viewer", "manager", "department_head"]
+
+
+def _staff_member_in_own_department_or_403(current, user_id):
+    """Для department_head — 403, если целевой пользователь не из его отдела.
+    Для admin — всегда пропускает (единственный вызывающий уже проверил роль)."""
+    if current["role"] != "department_head":
+        return None
+    target = query_db("SELECT department_id FROM users WHERE id=?", (user_id,), one=True)
+    if not target or target["department_id"] != current["department_id"]:
+        return "Сотрудник не из вашего отдела", 403
+    return None
+
+
 @app.route("/staff/change_role/<int:user_id>", methods=["POST"])
-@roles_required("admin")
+@roles_required("admin", "department_head")
 def staff_change_role(user_id):
+    current = get_current_user()
+    forbidden = _staff_member_in_own_department_or_403(current, user_id)
+    if forbidden:
+        return forbidden
     new_role = request.form.get("role")
-    if new_role not in ["admin", "editor", "viewer"]:
+    allowed_roles = VALID_ROLES if current["role"] == "admin" else DEPARTMENT_HEAD_ASSIGNABLE_ROLES
+    if new_role not in allowed_roles:
         return "Недопустимая роль", 400
     query_db("UPDATE users SET role=?, updated_at=? WHERE id=?", (new_role, datetime.datetime.utcnow().isoformat(), user_id))
     return redirect(url_for("staff"))
 
 @app.route("/staff/change_password/<int:user_id>", methods=["POST"])
-@roles_required("admin")
+@roles_required("admin", "department_head")
 def staff_change_password(user_id):
+    current = get_current_user()
+    forbidden = _staff_member_in_own_department_or_403(current, user_id)
+    if forbidden:
+        return forbidden
     new_password = request.form.get("new_password")
     if not new_password:
         return "Пароль не может быть пустым", 400
