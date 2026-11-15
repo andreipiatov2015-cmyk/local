@@ -71,7 +71,7 @@ async function initDeskListPage() {
       li.innerHTML = `
         <a class="desk-main" href="/registration-desk/${d.id}">
           <strong>${esc(d.title)}</strong>
-          <div class="hint">${d.event_date ? `Дата проведения: ${esc(d.event_date)}` : 'Дата проведения не указана'}</div>
+          <div class="hint">${d.event_date ? `Дата проведения: ${esc(formatDateRu(d.event_date))}` : 'Дата проведения не указана'}</div>
         </a>
         <div class="row wrap">
           <a class="btn btn-secondary" href="/registration-desk/${d.id}">Открыть</a>
@@ -230,6 +230,7 @@ async function initDeskDetailPage() {
 
     canvas.querySelectorAll('.desk-question-del').forEach((btn) => {
       btn.addEventListener('click', async () => {
+        if (!confirm('Удалить этот вопрос из формы?')) return;
         try {
           await apiDelete(`/api/registration-desk/${DESK_ID}/questions/${btn.dataset.id}`);
           await loadQuestions();
@@ -462,30 +463,154 @@ async function initDeskDetailPage() {
   // ----------------- Ответы -----------------
 
   function formatSubmittedAt(value) {
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? (value || '') : d.toLocaleString('ru-RU');
+    return formatDateTimeRu(value);
   }
+
+  let responsesCols = [];
+  let responsesRaw = [];
+  let responsesSortKey = null;
+  let responsesSortDir = 1;
+  let responsesFilterText = '';
+  let responsesEditingId = null;
+
+  const responsesFilterInput = document.getElementById('responsesFilterInput');
+  const exportResponsesBtn = document.getElementById('exportResponsesBtn');
+  if (exportResponsesBtn && typeof DESK_ID !== 'undefined') {
+    exportResponsesBtn.href = `/api/registration-desk/${DESK_ID}/responses/export.xlsx`;
+  }
+
+  function responsesCellText(r, key) {
+    if (key === 'submitted_at') return formatSubmittedAt(r.submitted_at);
+    return (r.answers[key] ?? '').toString();
+  }
+
+  function visibleResponses() {
+    let list = responsesRaw;
+    const needle = responsesFilterText.trim().toLowerCase();
+    if (needle) {
+      list = list.filter((r) => responsesCols.some((q) => responsesCellText(r, q.qtype).toLowerCase().includes(needle))
+        || responsesCellText(r, 'submitted_at').toLowerCase().includes(needle));
+    }
+    if (responsesSortKey) {
+      list = [...list].sort((a, b) => {
+        const av = responsesCellText(a, responsesSortKey);
+        const bv = responsesCellText(b, responsesSortKey);
+        return av.localeCompare(bv, 'ru') * responsesSortDir;
+      });
+    }
+    return list;
+  }
+
+  function renderResponsesHead() {
+    const headRow = document.getElementById('responsesHeadRow');
+    const sortArrow = (key) => (responsesSortKey === key ? (responsesSortDir === 1 ? ' ▲' : ' ▼') : '');
+    headRow.innerHTML = `<th>№</th>${responsesCols.map((q) => (
+      `<th class="desk-responses-sortable" data-sort-key="${q.qtype}">${esc(q.label)}${sortArrow(q.qtype)}</th>`
+    )).join('')}<th class="desk-responses-sortable" data-sort-key="submitted_at">Время отправки${sortArrow('submitted_at')}</th><th>Действия</th>`;
+    headRow.querySelectorAll('[data-sort-key]').forEach((th) => {
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', () => {
+        const key = th.dataset.sortKey;
+        responsesSortDir = responsesSortKey === key ? -responsesSortDir : 1;
+        responsesSortKey = key;
+        renderResponsesHead();
+        renderResponsesBody();
+      });
+    });
+  }
+
+  function renderResponsesBody() {
+    const body = document.getElementById('responsesBody');
+    const list = visibleResponses();
+    if (!responsesRaw.length) {
+      body.innerHTML = `<tr><td colspan="${responsesCols.length + 3}" class="hint">Ответов пока нет.</td></tr>`;
+      return;
+    }
+    if (!list.length) {
+      body.innerHTML = `<tr><td colspan="${responsesCols.length + 3}" class="hint">Ничего не найдено по фильтру.</td></tr>`;
+      return;
+    }
+    body.innerHTML = list.map((r, idx) => {
+      if (responsesEditingId === r.id) {
+        const cells = responsesCols.map((q) => `<td><input type="text" class="desk-response-edit-input" data-qtype="${q.qtype}" value="${esc(r.answers[q.qtype] ?? '')}"></td>`).join('');
+        return `<tr data-id="${r.id}">
+          <td>${idx + 1}</td>${cells}<td>${esc(formatSubmittedAt(r.submitted_at))}</td>
+          <td class="row" style="gap:4px;">
+            <button class="icon-btn desk-response-save" type="button" title="Сохранить">💾</button>
+            <button class="icon-btn desk-response-cancel" type="button" title="Отмена">✕</button>
+          </td>
+        </tr>`;
+      }
+      const cells = responsesCols.map((q) => `<td>${esc(r.answers[q.qtype] ?? '')}</td>`).join('');
+      return `<tr data-id="${r.id}">
+        <td>${idx + 1}</td>${cells}<td>${esc(formatSubmittedAt(r.submitted_at))}</td>
+        <td class="row" style="gap:4px;">
+          <button class="icon-btn desk-response-edit" type="button" title="Править строку">✎</button>
+          <button class="icon-btn desk-response-del" type="button" title="Удалить строку">✕</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    body.querySelectorAll('.desk-response-edit').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        responsesEditingId = parseInt(btn.closest('tr').dataset.id, 10);
+        renderResponsesBody();
+      });
+    });
+    body.querySelectorAll('.desk-response-cancel').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        responsesEditingId = null;
+        renderResponsesBody();
+      });
+    });
+    body.querySelectorAll('.desk-response-save').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const tr = btn.closest('tr');
+        const id = parseInt(tr.dataset.id, 10);
+        const original = responsesRaw.find((r) => r.id === id);
+        const answers = { ...(original ? original.answers : {}) };
+        tr.querySelectorAll('.desk-response-edit-input').forEach((input) => {
+          answers[input.dataset.qtype] = input.value;
+        });
+        try {
+          await apiSendJson(`/api/registration-desk/${DESK_ID}/responses/${id}`, 'PATCH', { answers });
+          responsesEditingId = null;
+          await loadResponses();
+        } catch (e) {
+          setStatus(document.getElementById('responsesStatus'), `Ошибка сохранения: ${e.message}`, 'error');
+        }
+      });
+    });
+    body.querySelectorAll('.desk-response-del').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Удалить этот ответ?')) return;
+        const id = parseInt(btn.closest('tr').dataset.id, 10);
+        try {
+          await apiDelete(`/api/registration-desk/${DESK_ID}/responses/${id}`);
+          await loadResponses();
+        } catch (e) {
+          setStatus(document.getElementById('responsesStatus'), `Ошибка удаления: ${e.message}`, 'error');
+        }
+      });
+    });
+  }
+
+  responsesFilterInput?.addEventListener('input', () => {
+    responsesFilterText = responsesFilterInput.value;
+    renderResponsesBody();
+  });
 
   async function loadResponses() {
     const responsesStatus = document.getElementById('responsesStatus');
-    const headRow = document.getElementById('responsesHeadRow');
-    const body = document.getElementById('responsesBody');
     try {
       const [questions, responses] = await Promise.all([
         apiGet(`/api/registration-desk/${DESK_ID}/questions`),
         apiGet(`/api/registration-desk/${DESK_ID}/responses`),
       ]);
-      const cols = questions.filter((q) => q.qtype !== AUTO_NUMBER_QTYPE);
-      headRow.innerHTML = `<th>№</th>${cols.map((q) => `<th>${esc(q.label)}</th>`).join('')}<th>Время отправки</th>`;
-
-      if (!responses.length) {
-        body.innerHTML = `<tr><td colspan="${cols.length + 2}" class="hint">Ответов пока нет.</td></tr>`;
-      } else {
-        body.innerHTML = responses.map((r, idx) => {
-          const cells = cols.map((q) => `<td>${esc(r.answers[q.qtype] ?? '')}</td>`).join('');
-          return `<tr><td>${idx + 1}</td>${cells}<td>${esc(formatSubmittedAt(r.submitted_at))}</td></tr>`;
-        }).join('');
-      }
+      responsesCols = questions.filter((q) => q.qtype !== AUTO_NUMBER_QTYPE);
+      responsesRaw = responses;
+      renderResponsesHead();
+      renderResponsesBody();
       setStatus(responsesStatus, '', 'muted');
     } catch (e) {
       setStatus(responsesStatus, `Ошибка загрузки ответов: ${e.message}`, 'error');

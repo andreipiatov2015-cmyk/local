@@ -63,9 +63,14 @@
       </div>
 
       <div class="desk-tab-panel" id="responsesPanel" hidden>
-        <div class="row wrap" style="margin-bottom: 12px;">
-          <button id="refreshResponsesBtn" class="btn btn-secondary" type="button">Обновить</button>
+        <div class="row wrap" style="margin-bottom: 12px; justify-content: space-between;">
+          <div class="row wrap">
+            <button id="refreshResponsesBtn" class="btn btn-secondary" type="button">Обновить</button>
+            <a id="exportResponsesBtn" class="btn btn-secondary" href="#" target="_blank" rel="noopener">Экспорт в Excel</a>
+          </div>
+          <input type="text" id="responsesFilterInput" placeholder="Поиск по ответам…" style="max-width:260px;">
         </div>
+        <p class="hint">Клик по заголовку столбца — сортировка. ✎ — правка строки, ✕ — удаление.</p>
         <p id="responsesStatus" class="status status-muted"></p>
         <div class="desk-responses-wrap">
           <table class="desk-responses-table" id="responsesTable">
@@ -101,6 +106,7 @@
     const AUTO_NUMBER_QTYPE = {{ auto_number_qtype | tojson }};
   </script>
   <script src="/static/layout.js"></script>
+  <script src="/static/date-format.js"></script>
   <script src="/static/registration_desk.js"></script>
 </body>
 </html>

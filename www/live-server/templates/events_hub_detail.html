@@ -19,8 +19,8 @@
 
     <section class="card page-card">
       <div class="form-field"><strong>Адрес:</strong> {{ event.address or "не указан" }}</div>
-      <div class="form-field"><strong>Дата начала:</strong> {{ event.start_date or "дата не указана" }}</div>
-      <div class="form-field"><strong>Дата окончания:</strong> {{ event.end_date or "дата не указана" }}</div>
+      <div class="form-field"><strong>Дата начала:</strong> {{ event.start_date|date_ru }}</div>
+      <div class="form-field"><strong>Дата окончания:</strong> {{ event.end_date|date_ru }}</div>
       <div class="form-field">
         <strong>Лист ответственных:</strong>
         {% if event.responsible_list %}
@@ -74,7 +74,7 @@
         {% if retention %}
           {% if retention.days_left > 0 %}
             <p class="hint">
-              Материалы будут автоматически удалены {{ retention.deletion_date }}
+              Материалы будут автоматически удалены {{ retention.deletion_date|date_ru }}
               (через {{ retention.days_left }} дн.) после окончания мероприятия.
             </p>
             <form method="post" action="/api/events-hub/{{ event.id }}/extend-retention">

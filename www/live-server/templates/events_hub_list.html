@@ -43,8 +43,8 @@
           <tr>
             <td><a href="/events-hub/{{ e.id }}">{{ e.title }}</a></td>
             <td>{{ e.address or "—" }}</td>
-            <td>{{ e.start_date or "дата не указана" }}</td>
-            <td>{{ e.end_date or "дата не указана" }}</td>
+            <td>{{ e.start_date|date_ru }}</td>
+            <td>{{ e.end_date|date_ru }}</td>
             <td>
               {% if e.responsible_list %}
                 {{ e.responsible_list | map(attribute="username") | join(", ") }}

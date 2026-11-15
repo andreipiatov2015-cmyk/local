@@ -1030,6 +1030,23 @@ def inject_current_user():
 # именно так.
 app.jinja_env.globals["current_site_user"] = get_current_user
 
+def _jinja_date_ru(value):
+    """Фильтр {{ value|date_ru }} — "2026-07-20" -> "20.07.2026", пусто/мусор
+    -> "дата не указана". Та же задача, что JS-хелпер formatDateRu() в
+    /static/date-format.js, но для серверного рендера (списки мероприятий)."""
+    text = (value or "").strip()
+    if not text:
+        return "дата не указана"
+    match = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text)
+    if not match:
+        return text
+    year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+    if not (1970 <= year <= 2200 and 1 <= month <= 12 and 1 <= day <= 31):
+        return "дата не указана"
+    return f"{day:02d}.{month:02d}.{year}"
+
+app.jinja_env.filters["date_ru"] = _jinja_date_ru
+
 # --- Видимость разделов меню (пересборка вокруг "Мероприятия") ---
 # Общий рубильник "хаб мероприятий ещё не готов для обычных пользователей" —
 # владелец переключит на True, когда согласует готовность. До этого разделы
@@ -4077,6 +4094,89 @@ def list_registration_desk_responses(desk_id):
             answers = {}
         responses.append({"id": r["id"], "submitted_at": r["submitted_at"], "answers": answers})
     return jsonify(responses)
+
+
+@app.route("/api/registration-desk/<int:desk_id>/responses/<int:response_id>", methods=["PATCH"])
+def update_registration_desk_response(desk_id, response_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    row = query_db(
+        "SELECT id FROM registration_desk_responses WHERE id=? AND desk_id=?",
+        (response_id, desk_id), one=True,
+    )
+    if not row:
+        return jsonify({"detail": "Ответ не найден"}), 404
+    data = request.get_json(silent=True) or {}
+    answers = data.get("answers")
+    if not isinstance(answers, dict):
+        return jsonify({"detail": "Ожидается объект answers"}), 400
+    query_db(
+        "UPDATE registration_desk_responses SET data_json=? WHERE id=?",
+        (json.dumps(answers, ensure_ascii=False), response_id),
+    )
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/registration-desk/<int:desk_id>/responses/<int:response_id>", methods=["DELETE"])
+def delete_registration_desk_response(desk_id, response_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    row = query_db(
+        "SELECT id FROM registration_desk_responses WHERE id=? AND desk_id=?",
+        (response_id, desk_id), one=True,
+    )
+    if not row:
+        return jsonify({"detail": "Ответ не найден"}), 404
+    query_db("DELETE FROM registration_desk_responses WHERE id=?", (response_id,))
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/registration-desk/<int:desk_id>/responses/export.xlsx", methods=["GET"])
+def export_registration_desk_responses_xlsx(desk_id):
+    user = table_user_from_request()
+    if not user:
+        return jsonify({"detail": "Не авторизован"}), 401
+    if not _registration_desk_owned_by_user(desk_id, user["id"]):
+        return jsonify({"detail": "Мероприятие не найдено"}), 404
+    if openpyxl is None:
+        return jsonify({"detail": "Экспорт в Excel недоступен на сервере (openpyxl не установлен)"}), 503
+
+    process_registration_drop_files()
+    desk = query_db("SELECT title FROM registration_desks WHERE id=?", (desk_id,), one=True)
+    questions = query_db(
+        "SELECT qtype, label FROM registration_desk_questions WHERE desk_id=? AND qtype != ? ORDER BY position, id",
+        (desk_id, REGISTRATION_AUTO_NUMBER_QTYPE),
+    )
+    rows = query_db(
+        "SELECT id, submitted_at, data_json FROM registration_desk_responses WHERE desk_id=? ORDER BY submitted_at, id",
+        (desk_id,),
+    )
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Ответы"
+    ws.append(["№"] + [q["label"] for q in questions] + ["Время отправки"])
+    for idx, r in enumerate(rows, start=1):
+        try:
+            answers = json.loads(r["data_json"])
+        except (json.JSONDecodeError, TypeError):
+            answers = {}
+        ws.append([idx] + [answers.get(q["qtype"], "") for q in questions] + [r["submitted_at"]])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"{(desk['title'] if desk else None) or 'responses'}.xlsx"
+    return send_file(
+        buf, as_attachment=True, download_name=filename,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 # =====================================================
 #               END СТОЙКА РЕГИСТРАЦИИ

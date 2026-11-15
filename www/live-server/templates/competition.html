@@ -128,6 +128,7 @@
                 if (e.target.classList.contains('remove-cross')) {
                     const entry = e.target.closest('.entry');
                     const id = parseInt(entry.querySelector('.entry-field').id.split('-')[2]);
+                    if (!confirm('Удалить этого участника из очереди?')) return;
                     fetch(`/delete_entry/${id}`, {
                         method: 'DELETE'
                     }).then(response => response.json())
