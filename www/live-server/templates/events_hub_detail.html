@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ event.title }} — Мероприятие</title>
+  <link rel="stylesheet" href="/static/admin.css" />
+  <link rel="stylesheet" href="/static/registration_desk.css" />
+</head>
+<body class="tables-page">
+  {% import "_sidebar.html" as nav %}
+  {{ nav.render_sidebar("events") }}
+
+  <main class="content container tables-content">
+    <div class="desk-detail-header">
+      <a href="/events-hub" class="btn btn-secondary">← К списку мероприятий</a>
+      <h1 class="page-title">{{ event.title }}</h1>
+    </div>
+
+    <section class="card page-card">
+      <div class="form-field"><strong>Адрес:</strong> {{ event.address or "не указан" }}</div>
+      <div class="form-field"><strong>Дата начала:</strong> {{ event.start_date or "дата не указана" }}</div>
+      <div class="form-field"><strong>Дата окончания:</strong> {{ event.end_date or "дата не указана" }}</div>
+      <div class="form-field">
+        <strong>Лист ответственных:</strong>
+        {% if event.responsible_list %}
+          {{ event.responsible_list | map(attribute="username") | join(", ") }}
+        {% else %}
+          не назначен
+        {% endif %}
+      </div>
+
+      {% if can_manage %}
+      <form method="post" action="/api/events-hub/{{ event.id }}/responsible" class="row wrap" style="margin-top:12px;">
+        <input type="text" name="usernames" placeholder="Логины через запятую"
+               value="{{ event.responsible_list | map(attribute='username') | join(', ') }}">
+        <button type="submit" class="btn btn-secondary">Сохранить лист ответственных</button>
+      </form>
+      {% endif %}
+    </section>
+
+    {% if can_manage %}
+    <section class="card page-card desk-builder" style="margin-top:20px;">
+      <h2 class="desk-section-title">Форма регистрации</h2>
+      {% if registration_desk %}
+        {% if registration_desk.is_owner %}
+          <p>
+            <a href="/registration-desk/{{ registration_desk.id }}" class="btn btn-primary">Открыть конструктор и ответы</a>
+          </p>
+        {% endif %}
+        {% if registration_desk.publish_url %}
+          <p class="hint">Ссылка для участников: <a href="{{ registration_desk.publish_url }}" target="_blank" rel="noopener">{{ registration_desk.publish_url }}</a></p>
+        {% else %}
+          <p class="status status-muted">Форма пока не опубликована{{ "" if registration_desk.is_owner else " — обратитесь к создателю формы" }}.</p>
+        {% endif %}
+      {% else %}
+        <p class="hint">У этого мероприятия ещё нет формы регистрации.</p>
+        <form method="post" action="/api/events-hub/{{ event.id }}/registration-desk">
+          <button type="submit" class="btn btn-primary">Создать форму регистрации</button>
+        </form>
+      {% endif %}
+    </section>
+
+    <p class="hint" style="margin-top:12px;">Вкладки «Заявки», «Очередь» и «Трансляция» появятся здесь на следующих этапах пересборки.</p>
+    {% endif %}
+  </main>
+
+  <script src="/static/layout.js"></script>
+</body>
+</html>

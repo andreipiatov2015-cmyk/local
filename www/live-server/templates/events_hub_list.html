@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Мероприятия</title>
+  <link rel="stylesheet" href="/static/admin.css" />
+</head>
+<body class="tables-page">
+  {% import "_sidebar.html" as nav %}
+  {{ nav.render_sidebar("events") }}
+
+  <main class="content container tables-content">
+    <section class="card page-card">
+      <div class="tables-list-header">
+        <div>
+          <h1 class="page-title">Мероприятия</h1>
+          <p class="page-subtitle">Все мероприятия, ближайшие — сверху. Прошедшие в списке не показываются.</p>
+        </div>
+      </div>
+
+      <form method="post" action="/api/events-hub" class="desk-create-form" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px;">
+        <input type="text" name="title" placeholder="Название мероприятия" required>
+        <input type="text" name="address" placeholder="Адрес">
+        <input type="date" name="start_date" title="Дата начала">
+        <input type="date" name="end_date" title="Дата окончания">
+        <button type="submit" class="btn btn-primary">Создать мероприятие</button>
+      </form>
+
+      {% if events %}
+      <table>
+        <thead>
+          <tr>
+            <th>Название</th>
+            <th>Адрес</th>
+            <th>Дата начала</th>
+            <th>Дата окончания</th>
+            <th>Лист ответственных</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in events %}
+          <tr>
+            <td><a href="/events-hub/{{ e.id }}">{{ e.title }}</a></td>
+            <td>{{ e.address or "—" }}</td>
+            <td>{{ e.start_date or "дата не указана" }}</td>
+            <td>{{ e.end_date or "дата не указана" }}</td>
+            <td>
+              {% if e.responsible_list %}
+                {{ e.responsible_list | map(attribute="username") | join(", ") }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="status status-muted">Мероприятий пока нет — создайте первое выше.</p>
+      {% endif %}
+    </section>
+  </main>
+
+  <script src="/static/layout.js"></script>
+</body>
+</html>
