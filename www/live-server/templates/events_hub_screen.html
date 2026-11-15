@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ event.title }} — экран трансляции</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+    }
+    h1 { font-size: 28px; font-weight: 400; color: #94a3b8; margin: 0 0 24px; }
+    .current-label { font-size: 20px; color: #38bdf8; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 12px; }
+    .current-name { font-size: 64px; font-weight: 700; margin: 0 0 48px; }
+    .next-label { font-size: 18px; color: #64748b; }
+    .next-name { font-size: 32px; color: #cbd5e1; margin-top: 8px; }
+    .empty { font-size: 28px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <h1>{{ event.title }}</h1>
+  <div id="content">
+    <p class="empty">Загрузка…</p>
+  </div>
+
+  <script>
+    const EVENT_ID = {{ event.id }};
+
+    async function refresh() {
+      try {
+        const resp = await fetch(`/api/events-hub/${EVENT_ID}/screen-state`);
+        const data = await resp.json();
+        const content = document.getElementById('content');
+        if (!data.current) {
+          content.innerHTML = '<p class="empty">Очередь пока не началась или уже завершена.</p>';
+          return;
+        }
+        content.innerHTML = `
+          <div class="current-label">Сейчас выступает</div>
+          <div class="current-name">${escapeHtml(data.current)}</div>
+          ${data.next ? `<div class="next-label">Далее</div><div class="next-name">${escapeHtml(data.next)}</div>` : ''}
+        `;
+      } catch (e) {
+        // молча пробуем снова на следующем тике — не шумим ошибками на
+        // экране, который может весь день висеть на проекторе
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    refresh();
+    setInterval(refresh, 1500);
+  </script>
+</body>
+</html>
