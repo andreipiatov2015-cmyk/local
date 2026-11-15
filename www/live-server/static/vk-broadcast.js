@@ -168,9 +168,10 @@ function initVkBroadcast() {
 
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
-      removeBtn.className = "btn btn-secondary";
+      removeBtn.className = "btn btn-danger";
       removeBtn.textContent = "Удалить";
       removeBtn.addEventListener("click", async () => {
+        if (!confirm(`Удалить направление «${target.name || "Без названия"}»?`)) return;
         const resp = await fetch(`/stream/targets/${target.id}`, { method: "DELETE" });
         if (resp.ok) {
           await loadVkStatus();

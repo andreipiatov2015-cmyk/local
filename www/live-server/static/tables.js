@@ -106,23 +106,17 @@ function parseDurationToSeconds(value, fallbackMinutes = 3) {
   return Math.round(asNumber * 60);
 }
 
-function formatDateRuLong(value) {
-  const text = (value || '').toString().trim();
-  if (!text) return '';
-  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return text;
-  const [, yRaw, mRaw, dRaw] = match;
-  const year = Number(yRaw);
-  const month = Number(mRaw);
-  const day = Number(dRaw);
-  const monthNames = [
-    'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
-  ];
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day) || month < 1 || month > 12 || day < 1 || day > 31) {
-    return text;
-  }
-  return `${day} ${monthNames[month - 1]} ${year} года`;
+// formatDateRuLong теперь в /static/date-format.js (общий модуль, подключён
+// на странице раньше этого файла).
+
+const TABLE_STATUS_LABELS_RU = {
+  new: 'Новая',
+  excel_loaded: 'Excel загружен',
+  error: 'Ошибка загрузки',
+};
+
+function formatTableStatusRu(status) {
+  return TABLE_STATUS_LABELS_RU[status] || status || 'новая';
 }
 
 async function initListPage() {
@@ -145,7 +139,7 @@ async function initListPage() {
       li.innerHTML = `
         <div class="table-main">
           <strong>${esc(t.title)}</strong>
-          <div class="hint">Создано: ${esc(t.created_at || '-')} · Изменено: ${esc(t.updated_at || '-')} · Статус: ${esc(t.status || 'new')}</div>
+          <div class="hint">Создано: ${esc(formatDateTimeRu(t.created_at))} · Изменено: ${esc(formatDateTimeRu(t.updated_at))} · Статус: ${esc(formatTableStatusRu(t.status))}</div>
         </div>
         <div class="row wrap">
           <a class="btn btn-secondary" href="/tables/${t.id}">Открыть</a>
