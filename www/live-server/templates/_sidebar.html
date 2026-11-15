@@ -11,19 +11,19 @@
      {% import "_sidebar.html" as nav %}
      {{ nav.render_sidebar("events") }}
 
-   Если странице нужно что-то дополнительное в подвале меню (как кнопка
-   "Настройка трансляции" на /editor) — через caller():
+   Подвал меню содержит постоянную ссылку "Настройка трансляции" → /editor
+   (там же сейчас и живёт реальный VK-модал настройки трансляции). На самой
+   странице /editor вместо неё показывается РЕАЛЬНАЯ кнопка, открывающая
+   модал на месте, а не просто переходящая по ссылке — через caller():
      {% call nav.render_sidebar("events") %}
        <button id="vkStreamButton" class="vk-btn">⚙️ Настройка трансляции</button>
      {% endcall %}
 #}
-{# Пункты, доступные обычному пользователю (роль != admin) — по прямому
-   запросу владельца: остальное показываем серым, некликабельным, с
-   подсказкой "В разработке - доступно только Администратору" и при
-   наведении, и при попытке клика. #}
-{% set viewer_allowed = ['broadcast', 'registration_desk'] %}
+{# Видимость пунктов меню по роли — логика в Python (menu_item_visible,
+   server.py), здесь только вызов. Один источник истины вместо дублирования
+   набора ролей в каждом шаблоне. #}
 {% macro menu_link(user, active, key, href, icon, label) %}
-{% if (user and user.role == 'admin') or key in viewer_allowed %}
+{% if menu_item_visible(key, user) %}
     <a class="menu-item{{ ' active' if active == key }}" href="{{ href }}">
       <span class="icon">{{ icon }}</span>
       <span class="text">{{ label }}</span>
@@ -46,19 +46,23 @@
   </div>
 
   <nav class="sidebar-menu">
-    {{ menu_link(user, active, 'events', '/editor', '📅', 'Мероприятие') }}
-    {{ menu_link(user, active, 'competition', '/competition', '🏆', 'Конкурс') }}
-    {{ menu_link(user, active, 'broadcast', '/broadcast', '📺', 'Трансляция') }}
-    {{ menu_link(user, active, 'staff', '/staff', '👥', 'Сотрудники') }}
-    {{ menu_link(user, active, 'tables', '/tables', '📋', 'Таблицы заявок') }}
+    {{ menu_link(user, active, 'events', '/editor', '📅', 'Мероприятия') }}
     {{ menu_link(user, active, 'registration_desk', '/registration-desk', '🛎️', 'Стойка регистрации') }}
+    {{ menu_link(user, active, 'staff', '/staff', '👥', 'Сотрудники') }}
+    {{ menu_link(user, active, 'ai_chat', '/ai-chat', '🤖', 'Помощник') }}
+    {{ menu_link(user, active, 'consent_check', '/consent-check', '📝', 'Проверка согласий') }}
     {{ menu_link(user, active, 'messenger', '/messenger', '💬', 'Мессенджер') }}
-    {{ menu_link(user, active, 'ai_chat', '/ai-chat', '🤖', 'Чат AI') }}
-    {{ menu_link(user, active, 'consent_check', '/consent-check', '📝', 'Проверка заполнения согласий') }}
   </nav>
 
   <div class="sidebar-footer">
-    {% if caller is defined %}{{ caller() }}{% endif %}
+    {% if caller is defined %}
+      {{ caller() }}
+    {% elif user %}
+      <a href="/editor" class="menu-item">
+        <span class="icon">⚙️</span>
+        <span class="text">Настройка трансляции</span>
+      </a>
+    {% endif %}
     <a href="/logout" class="menu-item logout">
       <span class="icon">🚪</span>
       <span class="text">Выход</span>

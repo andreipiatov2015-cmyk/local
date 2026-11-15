@@ -9,8 +9,9 @@
     {% import "_sidebar.html" as nav %}
     {{ nav.render_sidebar("staff") }}
 
+    {% set assignable_roles = ["admin", "editor", "manager", "department_head", "viewer"] if current_user.role == "admin" else ["manager", "department_head", "viewer"] %}
     <main class="content">
-        <div class="card" style="width:100%;max-width:1000px;">
+        <div class="card" style="width:100%;max-width:1100px;">
             <h1 class="page-title">Сотрудники</h1>
             <table>
                 <thead>
@@ -19,6 +20,7 @@
                         <th>Имя</th>
                         <th>Email</th>
                         <th>Роль</th>
+                        <th>Отдел</th>
                         <th>Подтверждён</th>
                         <th>Управление</th>
                     </tr>
@@ -30,14 +32,15 @@
                         <td>{{ u.username }}</td>
                         <td>{{ u.email }}</td>
                         <td>{{ u.role }}</td>
+                        <td>{{ u.department_name or "—" }}</td>
                         <td>{{ "Да" if u.is_verified else "Нет" }}</td>
                         <td>
                             <!-- Смена роли -->
                             <form method="post" action="/staff/change_role/{{ u.id }}">
                                 <select name="role">
-                                    <option value="viewer" {% if u.role=="viewer" %}selected{% endif %}>viewer</option>
-                                    <option value="editor" {% if u.role=="editor" %}selected{% endif %}>editor</option>
-                                    <option value="admin" {% if u.role=="admin" %}selected{% endif %}>admin</option>
+                                    {% for r in assignable_roles %}
+                                    <option value="{{ r }}" {% if u.role==r %}selected{% endif %}>{{ r }}</option>
+                                    {% endfor %}
                                 </select>
                                 <button type="submit" class="btn btn-secondary">Изменить</button>
                             </form>
@@ -47,12 +50,42 @@
                                 <input type="password" name="new_password" placeholder="Новый пароль">
                                 <button type="submit" class="btn btn-primary">Сменить</button>
                             </form>
+
+                            {% if current_user.role == "admin" %}
+                            <!-- Назначение отдела — только admin, см. staff_set_department -->
+                            <form method="post" action="/staff/set_department/{{ u.id }}">
+                                <select name="department_id">
+                                    <option value="">— без отдела —</option>
+                                    {% for d in departments %}
+                                    <option value="{{ d.id }}" {% if u.department_id==d.id %}selected{% endif %}>{{ d.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <button type="submit" class="btn btn-secondary">Отдел</button>
+                            </form>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
+
+        {% if current_user.role == "admin" %}
+        <div class="card" style="width:100%;max-width:1100px;margin-top:20px;">
+            <h2 class="page-title" style="font-size:18px;">Отделы</h2>
+            <ul>
+                {% for d in departments %}
+                <li>{{ d.name }}</li>
+                {% else %}
+                <li>Отделов пока нет.</li>
+                {% endfor %}
+            </ul>
+            <form method="post" action="/staff/departments">
+                <input type="text" name="name" placeholder="Название нового отдела" required>
+                <button type="submit" class="btn btn-primary">Добавить отдел</button>
+            </form>
+        </div>
+        {% endif %}
     </main>
 
     <script src="/static/layout.js"></script>
