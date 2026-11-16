@@ -1263,26 +1263,14 @@ def broadcast():
 def competition():
     return render_template("competition.html", stream_url=resolve_stream_url())
 
-# --- Мероприятия ---
-@app.route("/editor")
-@login_required
-def editor_list():
-    return render_template("editor.html", stream_url=resolve_stream_url())
-
-@app.route("/events")
-def get_events():
-    rows = query_db("SELECT * FROM events ORDER BY id DESC")
-    return jsonify([dict(r) for r in rows])
-
-@app.route("/create_event", methods=["POST"])
-@login_required
-def create_event():
-    data = request.json
-    query_db(
-        "INSERT INTO events (title, address, start_date, end_date) VALUES (?, ?, ?, ?)",
-        (data["title"], data["address"], data["start_date"], data["end_date"])
-    )
-    return jsonify({"status": "ok"})
+# Страница /editor (бывшая "Мероприятие" + настройки VK) и роуты
+# /events, /create_event для старой, независимой от хаба таблицы `events`
+# удалены — единственным реально используемым содержимым /editor была
+# модалка настройки трансляции, которая теперь открывается кнопкой в
+# подвале меню поверх любой страницы (см. _sidebar.html, vk-broadcast.js),
+# а сама таблица `events` была мёртвым UI (ничего, кроме этой же модалки,
+# там по сути не делало). Саму таблицу `events` в БД не трогаем — как и
+# с мёртвым v1-бэкендом table_workspaces, просто перестаём её использовать.
 
 # --- Хаб "Мероприятие" (пересборка вокруг мероприятия, этап 2) ---
 # ПОЛНОСТЬЮ независим от старой "events" выше (это настройки VK-трансляции)
@@ -1857,7 +1845,7 @@ def login():
             error_message = "Подтвердите e-mail."
             return render_template("login.html", error_message=error_message), 403
         session["user_id"] = row["id"]
-        return redirect(url_for("editor_list"))
+        return redirect(url_for("hub_events_list"))
     return render_template("login.html", error_message=error_message)
 
 @app.route("/logout")

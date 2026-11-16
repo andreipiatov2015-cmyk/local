@@ -436,6 +436,17 @@ tr:hover {
     background: #2563eb;
 }
 
+/* Пункт меню-кнопка (не <a>) — настройка трансляции открывает модал поверх
+   текущей страницы вместо перехода по ссылке, но должна выглядеть как
+   остальные пункты меню. */
+button.menu-item {
+    width: 100%;
+    background: none;
+    border: none;
+    text-align: left;
+    font: inherit;
+}
+
 .menu-item.disabled {
     color: #64748b;
     cursor: not-allowed;

@@ -10,14 +10,20 @@
    Использование:
      {% import "_sidebar.html" as nav %}
      {{ nav.render_sidebar("events") }}
+     <script src="/static/layout.js"></script>
+     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.12/dist/hls.min.js"></script>
+     <script src="/static/vk-broadcast.js"></script>
 
-   Подвал меню содержит постоянную ссылку "Настройка трансляции" → /editor
-   (там же сейчас и живёт реальный VK-модал настройки трансляции). На самой
-   странице /editor вместо неё показывается РЕАЛЬНАЯ кнопка, открывающая
-   модал на месте, а не просто переходящая по ссылке — через caller():
-     {% call nav.render_sidebar("events") %}
-       <button id="vkStreamButton" class="vk-btn">⚙️ Настройка трансляции</button>
-     {% endcall %}
+   "Настройка трансляции" в подвале меню — не ссылка на отдельную страницу,
+   а кнопка (#vkStreamButton), которая открывает модал настройки трансляции
+   ПРЯМО ПОВЕРХ текущей страницы (vk-broadcast.js сам вешает на неё клик).
+   Раньше модал жил только на отдельной странице /editor, и ссылка "Настройка
+   трансляции" с других страниц сначала переводила туда — /editor убрали
+   (его единственным настоящим содержимым и был этот модал, остальное было
+   мёртвой старой таблицей "Мероприятие"), а разметку модала перенесли сюда,
+   чтобы кнопка работала одинаково с любой страницы. Каждая страница, где
+   используется этот сайдбар, должна подключать hls.js + vk-broadcast.js
+   (см. пример выше), иначе кнопка будет видна, но не будет ничего делать.
 #}
 {# Видимость пунктов меню по роли — логика в Python (menu_item_visible,
    server.py), здесь только вызов. Один источник истины вместо дублирования
@@ -56,13 +62,11 @@
   </nav>
 
   <div class="sidebar-footer">
-    {% if caller is defined %}
-      {{ caller() }}
-    {% elif user %}
-      <a href="/editor" class="menu-item">
+    {% if user %}
+      <button id="vkStreamButton" type="button" class="menu-item">
         <span class="icon">⚙️</span>
         <span class="text">Настройка трансляции</span>
-      </a>
+      </button>
     {% endif %}
     <a href="/logout" class="menu-item logout">
       <span class="icon">🚪</span>
@@ -70,4 +74,102 @@
     </a>
   </div>
 </aside>
+
+{% if user %}
+<!-- Модал настройки трансляции — общий для всех страниц, открывается
+     кнопкой "Настройка трансляции" в подвале меню выше (см. vk-broadcast.js).
+     Рендерится здесь, а не на отдельной странице, именно чтобы открываться
+     поверх ЛЮБОЙ текущей страницы, без перехода куда-либо. -->
+<div id="vkModal" class="vk-modal">
+  <div class="vk-modal-content">
+    <div class="vk-modal-header">
+      <h3>Настройка трансляции</h3>
+      <button id="vkCloseBtn" class="icon-btn" type="button">✕</button>
+    </div>
+
+    <div class="vk-tabs">
+      <button class="vk-tab active" data-tab="settings" type="button">Настройки</button>
+      <button class="vk-tab" data-tab="targets" type="button">Сервера</button>
+    </div>
+
+    <div class="vk-tab-panel active" data-panel="settings">
+      <div class="vk-preview">
+        <div class="vk-preview-media">
+          <video id="vkPreviewVideo" controls muted></video>
+          <img id="vkPreviewImage" alt="Превью трансляции">
+        </div>
+
+        <div>
+          <div class="form-field">
+            <label for="vkTitle">Название</label>
+            <input id="vkTitle" type="text">
+          </div>
+
+          <div class="form-field">
+            <label for="vkDate">Дата (YYYY-MM-DD)</label>
+            <input id="vkDate" type="date">
+          </div>
+
+          <div class="form-field">
+            <label for="vkTime">Время (HH:MM)</label>
+            <input id="vkTime" type="time">
+          </div>
+
+          <div class="form-field">
+            <label for="vkImage">Превью (jpg/png)</label>
+            <input id="vkImage" type="file" accept="image/*">
+          </div>
+
+          <div class="vk-actions">
+            <button id="vkScheduleBtn" class="btn btn-secondary" type="button">Трансляция в</button>
+            <button id="vkStopBtn" class="btn btn-danger" type="button">Остановить трансляцию</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="vk-tab-panel" data-panel="targets">
+      <div class="vk-targets">
+        <div class="card">
+          <div class="form-field">
+            <label for="vkTargetName">Название направления</label>
+            <input id="vkTargetName" type="text" placeholder="Например, VK группа или Телевизоры">
+          </div>
+
+          <div class="form-field">
+            <label for="vkTargetUrl">RTMP URL (если требуется)</label>
+            <input id="vkTargetUrl" type="text" placeholder="rtmp://...">
+          </div>
+
+          <div class="vk-actions">
+            <button id="vkAddTargetBtn" class="btn btn-primary" type="button">+</button>
+            <span class="vk-hint">Добавить сервер</span>
+          </div>
+        </div>
+
+        <div id="vkTargetsList" class="vk-targets-list"></div>
+        <p id="vkTargetsEmpty" class="status-text"></p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="vkBroadcastModal" class="vk-modal">
+  <div class="vk-modal-content">
+    <div class="vk-modal-header">
+      <h3>Транслировать в</h3>
+      <button id="vkBroadcastClose" class="icon-btn" type="button">✕</button>
+    </div>
+
+    <div id="vkBroadcastList" class="vk-targets"></div>
+    <p id="vkBroadcastNotice" class="status-text"></p>
+
+    <div class="vk-actions">
+      <button id="vkBroadcastConfirm" class="btn btn-primary" type="button" disabled>Да</button>
+      <button id="vkBroadcastCancel" class="btn btn-secondary" type="button">Нет</button>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endmacro %}
