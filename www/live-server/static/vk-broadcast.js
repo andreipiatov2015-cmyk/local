@@ -243,7 +243,17 @@ function initVkBroadcast() {
         lastVkPreviewUrl = data.preview_url;
       }
     } else {
-      alert("Не удалось сохранить превью.");
+      // Тело ответа не всегда JSON от Flask - 413 "Request Entity Too
+      // Large" (слишком большой файл) отдаёт сам nginx HTML-страницей
+      // ошибки, .json() на ней упадёт. Показываем реальную причину, если
+      // она есть, вместо одной и той же надписи на любую ошибку.
+      let detail = "";
+      try {
+        detail = (await resp.json()).message || "";
+      } catch (e) {
+        // не JSON - оставляем detail пустым, ниже общий текст с кодом
+      }
+      alert(detail ? `Не удалось сохранить превью: ${detail}` : `Не удалось сохранить превью (код ${resp.status}).`);
     }
   });
 
